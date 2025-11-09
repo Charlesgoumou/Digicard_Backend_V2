@@ -196,7 +196,7 @@
 
             <!-- Bouton Découvrir Mon Profil (pour les comptes particuliers avec portfolio configuré) -->
             @if($portfolioConfigured)
-            <a href="{{ env('VITE_APP_URL_BACKEND', 'http://localhost:8000') }}/api/portfolio/{{ $user->username }}"
+            <a href="{{ config('app.url') }}/api/portfolio/{{ $user->username }}"
                target="_blank"
                rel="noopener noreferrer"
                class="btn block w-full font-bold py-3 px-4 rounded-lg shadow-md text-white"
@@ -215,7 +215,7 @@
                     if ($websiteFeaturedInServicesButton && $companyWebsiteUrl) {
                         $servicesButtonUrl = $companyWebsiteUrl;
                     } else {
-                        $servicesButtonUrl = env('VITE_APP_URL_FRONTEND', 'http://localhost:5173') . '/entreprise/' . $companyPageUsername;
+                        $servicesButtonUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173')) . '/entreprise/' . $companyPageUsername;
                     }
                 @endphp
             <a href="{{ $servicesButtonUrl }}"
