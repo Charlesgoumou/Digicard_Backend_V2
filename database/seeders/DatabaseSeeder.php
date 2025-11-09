@@ -17,9 +17,15 @@ class DatabaseSeeder extends Seeder
     {
         // User::factory(10)->create();
 
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
+        // Créer un utilisateur de test seulement s'il n'existe pas déjà
+        User::firstOrCreate(
+            ['email' => 'test@example.com', 'role' => 'individual'],
+            [
+                'name' => 'Test User',
+                'password' => \Illuminate\Support\Facades\Hash::make('password'),
+                'email_verified_at' => now(),
+                'initial_password_set' => true,
+            ]
+        );
     }
 }
