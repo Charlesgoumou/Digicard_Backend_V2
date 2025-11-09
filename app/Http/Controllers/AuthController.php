@@ -344,9 +344,95 @@ class AuthController extends Controller
     /**
      * Récupère l'utilisateur authentifié.
      */
+    /**
+     * Retourne l'utilisateur actuellement authentifié, ou null si non authentifié.
+     * Cette route est publique pour permettre au frontend de vérifier l'état d'authentification.
+     */
     public function user(Request $request)
     {
-        return $request->user();
+        // Cette route est publique et doit retourner null si aucun utilisateur n'est authentifié
+        // Pour éviter les problèmes de session "fantôme", nous vérifions uniquement :
+        // 1. Si un token Bearer est présent et valide
+        // 2. Si une session web authentifiée existe vraiment (pas juste une session créée)
+        
+        $user = null;
+        
+        // Vérifier d'abord si un token Bearer est présent
+        if ($request->bearerToken()) {
+            // Authentification via token Bearer
+            try {
+                $user = $request->user('sanctum');
+            } catch (\Exception $e) {
+                // Token invalide, continuer avec user = null
+                $user = null;
+            }
+        }
+        
+        // Si pas de token Bearer, vérifier la session web
+        // MAIS seulement si la session contient vraiment un utilisateur authentifié
+        if (!$user) {
+            // Utiliser Auth::guard('web')->check() qui vérifie vraiment l'authentification
+            // et non pas juste l'existence d'une session
+            try {
+                if (\Illuminate\Support\Facades\Auth::guard('web')->check()) {
+                    $sessionUser = \Illuminate\Support\Facades\Auth::guard('web')->user();
+                    // Vérifier que l'utilisateur existe toujours et n'est pas suspendu
+                    if ($sessionUser && !$sessionUser->is_suspended && $sessionUser->email_verified_at) {
+                        $user = $sessionUser;
+                    }
+                }
+            } catch (\Exception $e) {
+                // En cas d'erreur, continuer avec user = null
+                $user = null;
+            }
+        }
+        
+        // Si aucun utilisateur authentifié, retourner null
+        if (!$user) {
+            return response()->json(['user' => null], 200);
+        }
+
+        // Vérifier si l'utilisateur existe toujours dans la base de données
+        $userExists = \App\Models\User::where('id', $user->id)->exists();
+        
+        if (!$userExists) {
+            // L'utilisateur n'existe plus, révoquer le token et nettoyer la session
+            if ($user->currentAccessToken()) {
+                $user->currentAccessToken()->delete();
+            }
+            if ($request->hasSession()) {
+                $request->session()->invalidate();
+            }
+            return response()->json(['user' => null], 200);
+        }
+
+        // Vérifier si l'utilisateur est suspendu
+        if ($user->is_suspended) {
+            // Révoquer le token si l'utilisateur est suspendu
+            if ($user->currentAccessToken()) {
+                $user->currentAccessToken()->delete();
+            }
+            if ($request->hasSession()) {
+                $request->session()->invalidate();
+            }
+            return response()->json([
+                'user' => null,
+                'message' => 'Votre compte a été suspendu.'
+            ], 200);
+        }
+
+        return response()->json([
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->role,
+                'username' => $user->username,
+                'avatar_url' => $user->avatar_url,
+                'email_verified_at' => $user->email_verified_at,
+                'is_admin' => $user->is_admin ?? false,
+            ]
+        ], 200);
     }
 
     /**

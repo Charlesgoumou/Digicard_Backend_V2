@@ -20,6 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware) {
 
         // Ajouter le middleware CORS en premier pour toutes les requêtes API
+        // Cela garantit que toutes les routes API reçoivent les en-têtes CORS
         $middleware->api(prepend: [
             HandleCors::class,
             EnsureFrontendRequestsAreStateful::class,

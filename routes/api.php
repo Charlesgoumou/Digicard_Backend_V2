@@ -33,6 +33,8 @@ Route::post('/resend-verification', [AuthController::class, 'resendVerification'
 Route::get('/settings/pricing', [SettingsController::class, 'getPublicPricing'])->name('settings.pricing');
 // Contenu public d'accueil (CMS)
 Route::get('/homepage', [SettingsController::class, 'getPublicHomepage'])->name('homepage.public');
+// Route publique pour vérifier l'utilisateur actuel (retourne null si non authentifié)
+Route::get('/user', [AuthController::class, 'user'])->name('user.public');
 
 // Réinitialisation de mot de passe
 Route::post('/password/reset-link', [PasswordResetController::class, 'sendResetLink'])->name('password.reset-link');
@@ -42,10 +44,12 @@ Route::post('/password/verify-token', [PasswordResetController::class, 'verifyTo
 // Formulaire de contact
 Route::post('/contact', [ContactController::class, 'sendMessage'])->name('contact.send');
 
+// Route publique pour vérifier l'utilisateur actuel (retourne null si non authentifié)
+Route::get('/user', [AuthController::class, 'user'])->name('user');
+
 // --- Routes Protégées (Nécessitent une authentification Sanctum valide et compte non suspendu) ---
 Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
-    // Authentification & Utilisateur courant
-    Route::get('/user', [AuthController::class, 'user'])->name('user');
+    // Authentification & Déconnexion
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 
     // Gestion du Compte (Informations de connexion)
