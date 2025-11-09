@@ -15,7 +15,7 @@ return [
     |
     */
 
-    'paths' => ['api/*', 'sanctum/csrf-cookie', 'homepage', 'user', 'settings/*'], // Ensures API routes and Sanctum's cookie route are covered
+    'paths' => ['*', 'sanctum/csrf-cookie'], // Toutes les routes API sont couvertes (plus de préfixe /api)
 
     'allowed_methods' => ['*'], // Allows all HTTP methods (GET, POST, PUT, DELETE, etc.)
 

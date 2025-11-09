@@ -51,14 +51,16 @@ class HandleCors
         if ($request->getMethod() === 'OPTIONS') {
             $response = response('', 200);
             
+            // Toujours ajouter les en-têtes CORS pour les requêtes OPTIONS
+            // Si l'origine n'est pas autorisée, le navigateur bloquera la requête de toute façon
             if ($allowedOrigin) {
                 $response->headers->set('Access-Control-Allow-Origin', $allowedOrigin);
+                $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD');
+                $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN');
+                $response->headers->set('Access-Control-Allow-Credentials', 'true');
+                $response->headers->set('Access-Control-Max-Age', '86400');
+                $response->headers->set('Access-Control-Expose-Headers', 'Authorization');
             }
-            $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD');
-            $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN');
-            $response->headers->set('Access-Control-Allow-Credentials', 'true');
-            $response->headers->set('Access-Control-Max-Age', '86400');
-            $response->headers->set('Access-Control-Expose-Headers', 'Authorization');
             
             return $response;
         }
@@ -66,28 +68,20 @@ class HandleCors
         // Exécuter la requête normale
         $response = $next($request);
 
-        // Ajouter les en-têtes CORS à la réponse (toujours, même si l'origine n'est pas dans la liste)
-        // Cela permet de gérer les cas où l'origine n'est pas envoyée (requêtes same-origin)
+        // IMPORTANT: Toujours ajouter les en-têtes CORS à la réponse si une origine est autorisée
+        // C'est crucial pour que les requêtes POST/PUT/DELETE fonctionnent après le preflight
         if ($allowedOrigin) {
             $response->headers->set('Access-Control-Allow-Origin', $allowedOrigin);
-        } else {
-            // Si pas d'origine spécifiée mais que c'est une requête API, autoriser quand même
-            // (pour les requêtes same-origin ou sans en-tête Origin)
-            $origin = $request->headers->get('Origin');
-            if (!$origin && $request->is('api/*')) {
-                // Pas d'origine = requête same-origin, pas besoin d'en-têtes CORS
-            } elseif ($origin && !$allowedOrigin) {
-                // Origine non autorisée, ne pas ajouter les en-têtes CORS
-                // Le navigateur bloquera la requête de toute façon
-            }
-        }
-        
-        // Toujours ajouter les autres en-têtes CORS si une origine est autorisée
-        if ($allowedOrigin) {
             $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD');
             $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN');
             $response->headers->set('Access-Control-Allow-Credentials', 'true');
             $response->headers->set('Access-Control-Expose-Headers', 'Authorization');
+            
+            // Log pour le débogage (à retirer en production)
+            // \Log::info('CORS headers added', ['origin' => $origin, 'allowedOrigin' => $allowedOrigin, 'path' => $request->path()]);
+        } else if ($origin) {
+            // Si une origine est présente mais non autorisée, logger pour le débogage
+            // \Log::warning('CORS: Origin not allowed', ['origin' => $origin, 'path' => $request->path()]);
         }
 
         return $response;
