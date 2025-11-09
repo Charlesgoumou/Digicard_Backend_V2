@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use App\Http\Middleware\EnsureUserIsAdmin;
 use App\Http\Middleware\EnsureFrontendRequestsAreStateful;
+use App\Http\Middleware\HandleCors;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -18,10 +19,10 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
 
-        // Configuration pour Sanctum SPA : ajouter EnsureFrontendRequestsAreStateful au groupe API
-        // Cela gère automatiquement les cookies de session, CSRF et AuthenticateSession
+        // Ajouter le middleware CORS en premier pour toutes les requêtes API
         $middleware->api(prepend: [
-             EnsureFrontendRequestsAreStateful::class,
+            HandleCors::class,
+            EnsureFrontendRequestsAreStateful::class,
         ]);
 
         // Configuration du groupe API
