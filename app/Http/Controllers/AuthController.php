@@ -321,22 +321,73 @@ class AuthController extends Controller
 
      /**
      * Renvoie le code de vérification.
+     * 
+     * Cette méthode peut être utilisée pour :
+     * 1. Renvoyer le code lors de l'inscription (compte non vérifié)
+     * 2. Renvoyer le code 2FA lors de la connexion (compte vérifié mais 2FA requis)
      */
     public function resendVerification(Request $request)
     {
-        $request->validate(['email' => 'required|email|exists:users,email']);
+        $request->validate([
+            'email' => 'required|email|exists:users,email',
+            'account_type' => 'nullable|in:individual,business,employee',
+        ]);
 
-        // ✅ Trouver le compte le plus récemment créé et non vérifié avec cet email
-        $user = User::where('email', $request->email)
+        $email = $request->email;
+        $accountType = $request->account_type;
+
+        // Si un type de compte est spécifié, chercher ce compte spécifique
+        if ($accountType) {
+            $targetRole = null;
+            if ($accountType === 'business') {
+                $targetRole = 'business_admin';
+            } elseif ($accountType === 'individual') {
+                $targetRole = 'individual';
+            } elseif ($accountType === 'employee') {
+                $targetRole = 'employee';
+            }
+
+            if ($targetRole) {
+                $user = User::where('email', $email)
+                    ->where('role', $targetRole)
+                    ->first();
+
+                if ($user) {
+                    // Vérifier si l'utilisateur est suspendu
+                    if ($user->is_suspended) {
+                        return response()->json(['message' => 'Votre compte a été suspendu. Veuillez contacter l\'administrateur.'], 403);
+                    }
+
+                    // Renvoyer le code (même si le compte est vérifié, car c'est pour le 2FA de connexion)
+                    $this->sendVerificationCode($user);
+                    return response()->json(['message' => 'Un nouveau code de vérification a été envoyé.']);
+                }
+            }
+        }
+
+        // Si aucun type de compte n'est spécifié, chercher d'abord un compte non vérifié
+        $user = User::where('email', $email)
             ->whereNull('email_verified_at')
             ->orderBy('created_at', 'desc')
             ->first();
 
+        // Si aucun compte non vérifié n'est trouvé, chercher le compte le plus récent (pour le 2FA de connexion)
         if (!$user) {
-            // Tous les comptes avec cet email sont déjà vérifiés
-            return response()->json(['message' => 'Tous les comptes avec cet email sont déjà vérifiés.'], 400);
+            $user = User::where('email', $email)
+                ->orderBy('created_at', 'desc')
+                ->first();
         }
 
+        if (!$user) {
+            return response()->json(['message' => 'Aucun compte trouvé avec cet email.'], 404);
+        }
+
+        // Vérifier si l'utilisateur est suspendu
+        if ($user->is_suspended) {
+            return response()->json(['message' => 'Votre compte a été suspendu. Veuillez contacter l\'administrateur.'], 403);
+        }
+
+        // Renvoyer le code (même si le compte est vérifié, car c'est pour le 2FA de connexion)
         $this->sendVerificationCode($user);
         return response()->json(['message' => 'Un nouveau code de vérification a été envoyé.']);
     }
