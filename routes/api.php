@@ -44,9 +44,6 @@ Route::post('/password/verify-token', [PasswordResetController::class, 'verifyTo
 // Formulaire de contact
 Route::post('/contact', [ContactController::class, 'sendMessage'])->name('contact.send');
 
-// Route publique pour vérifier l'utilisateur actuel (retourne null si non authentifié)
-Route::get('/user', [AuthController::class, 'user'])->name('user');
-
 // --- Routes Protégées (Nécessitent une authentification Sanctum valide et compte non suspendu) ---
 Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     // Authentification & Déconnexion

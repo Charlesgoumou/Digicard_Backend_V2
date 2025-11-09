@@ -351,38 +351,87 @@ class AuthController extends Controller
     public function user(Request $request)
     {
         // Cette route est publique et doit retourner null si aucun utilisateur n'est authentifié
-        // Pour éviter les problèmes de session "fantôme", nous vérifions uniquement :
-        // 1. Si un token Bearer est présent et valide
-        // 2. Si une session web authentifiée existe vraiment (pas juste une session créée)
+        // IMPORTANT: Pour éviter les problèmes de session "fantôme", nous retournons null
+        // sauf si un token Bearer valide est présent OU si l'utilisateur est vraiment authentifié via session
+        // 
+        // Le problème : Le middleware EnsureFrontendRequestsAreStateful peut créer des sessions
+        // automatiquement, mais Auth::guard('web')->check() devrait retourner false si aucun
+        // utilisateur n'est vraiment authentifié via Auth::login()
         
         $user = null;
         
-        // Vérifier d'abord si un token Bearer est présent
+        // Méthode 1: Vérifier si un token Bearer est présent (authentification API)
         if ($request->bearerToken()) {
-            // Authentification via token Bearer
             try {
                 $user = $request->user('sanctum');
+                if ($user && !\App\Models\User::where('id', $user->id)->exists()) {
+                    $user = null;
+                }
             } catch (\Exception $e) {
-                // Token invalide, continuer avec user = null
                 $user = null;
             }
         }
         
-        // Si pas de token Bearer, vérifier la session web
-        // MAIS seulement si la session contient vraiment un utilisateur authentifié
-        if (!$user) {
-            // Utiliser Auth::guard('web')->check() qui vérifie vraiment l'authentification
-            // et non pas juste l'existence d'une session
+        // Méthode 2: Vérifier l'authentification via session web (SPA Sanctum)
+        // IMPORTANT: Pour éviter les sessions "fantôme", nous ne vérifions les sessions
+        // QUE si Auth::guard('web')->check() retourne true ET que l'utilisateur existe vraiment.
+        // 
+        // Le problème : Le middleware EnsureFrontendRequestsAreStateful peut créer des sessions
+        // automatiquement pour les requêtes stateful (via /sanctum/csrf-cookie), mais cela ne
+        // signifie PAS que l'utilisateur est authentifié. Auth::guard('web')->check() devrait
+        // retourner false dans ce cas, mais si des cookies de session d'un utilisateur précédent
+        // existent, cela peut créer une session "fantôme".
+        //
+        // Solution : Vérifier strictement que l'utilisateur existe vraiment dans la base de données
+        // et que la session contient vraiment un ID utilisateur valide.
+        if (!$user && $request->hasSession()) {
             try {
+                // Vérifier si l'utilisateur est authentifié via session
+                // Si Auth::guard('web')->check() retourne false, alors pas d'utilisateur authentifié
                 if (\Illuminate\Support\Facades\Auth::guard('web')->check()) {
-                    $sessionUser = \Illuminate\Support\Facades\Auth::guard('web')->user();
-                    // Vérifier que l'utilisateur existe toujours et n'est pas suspendu
-                    if ($sessionUser && !$sessionUser->is_suspended && $sessionUser->email_verified_at) {
-                        $user = $sessionUser;
+                    $sessionUserId = \Illuminate\Support\Facades\Auth::guard('web')->id();
+                    
+                    // Si un ID utilisateur est présent dans la session, vérifier qu'il existe vraiment
+                    if ($sessionUserId) {
+                        // Récupérer l'utilisateur depuis la base de données
+                        $freshUser = \App\Models\User::find($sessionUserId);
+                        
+                        // Vérifier que l'utilisateur existe toujours, n'est pas suspendu et a vérifié son email
+                        if ($freshUser && !$freshUser->is_suspended && $freshUser->email_verified_at) {
+                            // Vérification supplémentaire : s'assurer que Auth::guard('web')->user() 
+                            // retourne le même utilisateur (double vérification)
+                            $sessionUser = \Illuminate\Support\Facades\Auth::guard('web')->user();
+                            if ($sessionUser && $sessionUser->id == $freshUser->id) {
+                                $user = $freshUser;
+                            } else {
+                                // Incohérence : l'ID existe mais user() ne retourne pas le bon utilisateur
+                                // Invalider la session
+                                \Illuminate\Support\Facades\Auth::guard('web')->logout();
+                                $request->session()->invalidate();
+                                $request->session()->regenerateToken();
+                                $user = null;
+                            }
+                        } else {
+                            // L'utilisateur n'existe plus, est suspendu ou n'a pas vérifié son email
+                            // Invalider la session
+                            \Illuminate\Support\Facades\Auth::guard('web')->logout();
+                            $request->session()->invalidate();
+                            $request->session()->regenerateToken();
+                            $user = null;
+                        }
+                    } else {
+                        // Pas d'ID utilisateur dans la session, mais check() retourne true
+                        // Cela ne devrait pas arriver, mais au cas où, invalider la session
+                        \Illuminate\Support\Facades\Auth::guard('web')->logout();
+                        $request->session()->invalidate();
+                        $request->session()->regenerateToken();
+                        $user = null;
                     }
                 }
+                // Si Auth::guard('web')->check() retourne false, alors $user reste null
             } catch (\Exception $e) {
                 // En cas d'erreur, continuer avec user = null
+                // Ne pas logger l'erreur pour éviter de polluer les logs avec des erreurs attendues
                 $user = null;
             }
         }
@@ -392,28 +441,29 @@ class AuthController extends Controller
             return response()->json(['user' => null], 200);
         }
 
-        // Vérifier si l'utilisateur existe toujours dans la base de données
+        // Vérifications finales de sécurité
         $userExists = \App\Models\User::where('id', $user->id)->exists();
         
         if (!$userExists) {
-            // L'utilisateur n'existe plus, révoquer le token et nettoyer la session
             if ($user->currentAccessToken()) {
                 $user->currentAccessToken()->delete();
             }
             if ($request->hasSession()) {
+                \Illuminate\Support\Facades\Auth::guard('web')->logout();
                 $request->session()->invalidate();
+                $request->session()->regenerateToken();
             }
             return response()->json(['user' => null], 200);
         }
 
-        // Vérifier si l'utilisateur est suspendu
         if ($user->is_suspended) {
-            // Révoquer le token si l'utilisateur est suspendu
             if ($user->currentAccessToken()) {
                 $user->currentAccessToken()->delete();
             }
             if ($request->hasSession()) {
+                \Illuminate\Support\Facades\Auth::guard('web')->logout();
                 $request->session()->invalidate();
+                $request->session()->regenerateToken();
             }
             return response()->json([
                 'user' => null,
