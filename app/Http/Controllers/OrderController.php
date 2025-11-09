@@ -22,7 +22,11 @@ class OrderController extends Controller
         // Si l'utilisateur est un employé OU un business_admin qui s'est inclus dans une commande
         // On doit récupérer les commandes via order_employees
         $orderEmployees = OrderEmployee::where('employee_id', $user->id)
-            ->with('order')
+            ->with(['order' => function ($query) {
+                $query->with(['orderEmployees.employee' => function ($q) {
+                    $q->select('id', 'name', 'email', 'username', 'avatar_url', 'role');
+                }]);
+            }])
             ->orderBy('created_at', 'desc')
             ->get()
             // Exclure les commandes annulées du flux employé
@@ -150,7 +154,9 @@ class OrderController extends Controller
         if ($user->role === 'business_admin' || $user->role === 'individual') {
             $directOrders = $user->orders()
                 ->where('status', '!=', 'cancelled')
-                ->with('orderEmployees.employee')
+                ->with(['orderEmployees.employee' => function ($query) {
+                    $query->select('id', 'name', 'email', 'username', 'avatar_url', 'role');
+                }])
                 ->orderBy('created_at', 'desc')
                 ->get()
                 ->filter(function ($order) use ($ordersFromEmployees) {
@@ -245,7 +251,10 @@ class OrderController extends Controller
             $orders = $ordersFromEmployees;
         }
 
-        return response()->json($orders);
+        // S'assurer que $orders est toujours un tableau, même si vide
+        $ordersArray = $orders->toArray();
+        
+        return response()->json($ordersArray);
     }
 
     /**
