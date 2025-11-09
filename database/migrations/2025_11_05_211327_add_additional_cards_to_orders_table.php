@@ -12,8 +12,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('orders', function (Blueprint $table) {
-            $table->integer('additional_cards_count')->default(0)->after('card_quantity');
-            $table->decimal('additional_cards_total_price', 10, 2)->default(0)->after('additional_cards_count');
+            if (!Schema::hasColumn('orders', 'additional_cards_count')) {
+                $table->integer('additional_cards_count')->default(0)->after('card_quantity');
+            }
+            if (!Schema::hasColumn('orders', 'additional_cards_total_price')) {
+                $table->decimal('additional_cards_total_price', 10, 2)->default(0)->after('additional_cards_count');
+            }
         });
     }
 

@@ -12,9 +12,15 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('orders', function (Blueprint $table) {
-            $table->string('profile_name')->nullable()->after('order_avatar_url');
-            $table->string('profile_title')->nullable()->after('profile_name');
-            $table->string('profile_border_color', 7)->default('#facc15')->after('profile_title');
+            if (!Schema::hasColumn('orders', 'profile_name')) {
+                $table->string('profile_name')->nullable()->after('order_avatar_url');
+            }
+            if (!Schema::hasColumn('orders', 'profile_title')) {
+                $table->string('profile_title')->nullable()->after('profile_name');
+            }
+            if (!Schema::hasColumn('orders', 'profile_border_color')) {
+                $table->string('profile_border_color', 7)->default('#facc15')->after('profile_title');
+            }
         });
     }
 

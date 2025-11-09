@@ -14,7 +14,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('orders', function (Blueprint $table) {
-            $table->string('access_token', 64)->nullable()->unique()->after('status');
+            if (!Schema::hasColumn('orders', 'access_token')) {
+                $table->string('access_token', 64)->nullable()->unique()->after('status');
+            }
         });
 
         // Générer les tokens pour toutes les commandes validées existantes

@@ -12,8 +12,14 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('orders', function (Blueprint $table) {
-            $table->enum('order_type', ['personal', 'business'])->default('personal')->after('user_id');
-            $table->string('order_avatar_url')->nullable()->after('order_type');
+            // Vérifier si la colonne order_type existe déjà avant de l'ajouter
+            if (!Schema::hasColumn('orders', 'order_type')) {
+                $table->enum('order_type', ['personal', 'business'])->default('personal')->after('user_id');
+            }
+            // Vérifier si la colonne order_avatar_url existe déjà avant de l'ajouter
+            if (!Schema::hasColumn('orders', 'order_avatar_url')) {
+                $table->string('order_avatar_url')->nullable()->after('order_type');
+            }
         });
     }
 
