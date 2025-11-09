@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\CompanyPage;
 use App\Models\User;
 use App\Services\GeminiService;
+use App\Services\ImageCompressionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
@@ -273,12 +274,13 @@ class CompanyPageController extends Controller
                 Storage::disk('public')->delete(str_replace('/storage/', '', $companyPage->logo_url));
             }
 
-            // Stocker le nouveau logo
-            $path = $request->file('logo')->store('company_logos', 'public');
-            $url = '/storage/' . $path;
+            // Compresser et stocker le nouveau logo
+            $compressionService = new ImageCompressionService();
+            $result = $compressionService->compressImage($request->file('logo'), 'company_logos');
+            $url = '/storage/' . $result['path'];
 
             // Extraire les couleurs du logo
-            $colors = $this->extractColorsFromImage(storage_path('app/public/' . $path));
+            $colors = $this->extractColorsFromImage(storage_path('app/public/' . $result['path']));
 
             // Mettre à jour la page avec le logo et les couleurs
             $companyPage->update([

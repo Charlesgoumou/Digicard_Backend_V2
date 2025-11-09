@@ -6,6 +6,7 @@ use App\Models\Order;
 use App\Models\OrderEmployee;
 use App\Models\User;
 use App\Models\Setting;
+use App\Services\ImageCompressionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
@@ -731,9 +732,10 @@ class OrderController extends Controller
                     \Storage::disk('public')->delete(str_replace('/storage/', '', $orderEmployee->employee_avatar_url));
                 }
 
-                // Stocker la nouvelle photo
-                $path = $request->file('avatar')->store('employee_avatars', 'public');
-                $url = '/storage/' . $path;
+                // Compresser et stocker la nouvelle photo
+                $compressionService = new ImageCompressionService();
+                $result = $compressionService->compressImage($request->file('avatar'), 'employee_avatars');
+                $url = '/storage/' . $result['path'];
 
                 // Mettre à jour l'URL de l'avatar de l'employé
                 $orderEmployee->update(['employee_avatar_url' => $url]);
@@ -750,9 +752,10 @@ class OrderController extends Controller
                 \Storage::disk('public')->delete(str_replace('/storage/', '', $order->order_avatar_url));
             }
 
-            // Stocker la nouvelle photo
-            $path = $request->file('avatar')->store('order_avatars', 'public');
-            $url = '/storage/' . $path;
+            // Compresser et stocker la nouvelle photo
+            $compressionService = new ImageCompressionService();
+            $result = $compressionService->compressImage($request->file('avatar'), 'order_avatars');
+            $url = '/storage/' . $result['path'];
 
             // Mettre à jour l'URL de l'avatar de la commande
             $order->update(['order_avatar_url' => $url]);
@@ -941,9 +944,16 @@ class OrderController extends Controller
                 }
             }
 
-            // Stocker le fichier
-            $path = $file->store('custom_designs', 'public');
-            $url = '/storage/' . $path;
+            // Compresser et stocker le fichier (seulement si c'est une image)
+            if (in_array($file->getMimeType(), ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'])) {
+                $compressionService = new ImageCompressionService();
+                $result = $compressionService->compressImage($file, 'custom_designs');
+                $url = '/storage/' . $result['path'];
+            } else {
+                // Pour les fichiers non-image (PDF, SVG, etc.), stocker tel quel
+                $path = $file->store('custom_designs', 'public');
+                $url = '/storage/' . $path;
+            }
 
             // Si un order_id est fourni, mettre à jour la commande
             if ($orderId && isset($order)) {

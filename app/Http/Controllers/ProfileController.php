@@ -73,8 +73,10 @@ class ProfileController extends Controller
             $oldPath = str_replace(url('/storage'), '', $user->avatar_url);
             Storage::disk('public')->delete($oldPath);
         }
-        $path = $request->file('avatar')->store('avatars', 'public');
-        $user->avatar_url = Storage::disk('public')->url($path);
+        // Compresser et stocker l'avatar
+        $compressionService = new ImageCompressionService();
+        $result = $compressionService->compressImage($request->file('avatar'), 'avatars');
+        $user->avatar_url = Storage::disk('public')->url($result['path']);
         $user->save();
         return response()->json(['avatar_url' => $user->avatar_url]);
     }

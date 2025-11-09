@@ -491,9 +491,10 @@ class SettingsController extends Controller
             $file = $request->file('avatar');
             $filename = uniqid() . '_' . time() . '.' . $file->getClientOriginalExtension();
             
-            $path = Storage::disk('public')->putFileAs('testimonial_avatars', $file, $filename);
-            // Retourner le chemin au format /storage/... pour compatibilité
-            $url = '/storage/' . $path;
+            // Compresser et stocker l'avatar
+            $compressionService = new \App\Services\ImageCompressionService();
+            $result = $compressionService->compressImage($file, 'testimonial_avatars');
+            $url = '/storage/' . $result['path'];
 
             return response()->json([
                 'message' => 'Avatar uploadé avec succès',
