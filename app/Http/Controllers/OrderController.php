@@ -110,14 +110,27 @@ class OrderController extends Controller
                 $order->employee_order_employee_id = $orderEmployee->id;
 
                 // ✅ OPTIMISATION : Pour les business_admin, charger uniquement les données de design
-                // Les autres données seront chargées à la demande via show()
+                // Mais aussi charger les données de profil minimales nécessaires pour ProfileSelectionView
                 if ($isBusinessAdmin) {
+                    // Charger les données de profil minimales pour l'affichage dans ProfileSelectionView
+                    $order->profile_name = $orderEmployee->profile_name;
+                    $order->profile_title = $orderEmployee->profile_title;
+                    $order->profile_border_color = $orderEmployee->profile_border_color ?? '#facc15';
+                    $order->order_avatar_url = $orderEmployee->employee_avatar_url;
+                    
                     $order->employee_profile = [
                         'card_design_type' => $orderEmployee->card_design_type,
                         'card_design_number' => $orderEmployee->card_design_number,
                         'card_design_custom_url' => $orderEmployee->card_design_custom_url,
                         'no_design_yet' => $orderEmployee->no_design_yet,
+                        // Ajouter le username pour les liens de profil
+                        'username' => $user->username ?? null,
                     ];
+                    
+                    // Ajouter le username au niveau racine pour faciliter l'accès
+                    if ($user->username) {
+                        $order->profile_username = $user->username;
+                    }
                     
                     // Copier aussi les données de design au niveau racine de l'order
                     $order->card_design_type = $orderEmployee->card_design_type;
@@ -205,12 +218,17 @@ class OrderController extends Controller
                         'annual_subscription', 'subscription_start_date', 'status', 
                         'is_configured', 'access_token', 'created_at', 'updated_at');
             
-            // ✅ OPTIMISATION : Pour les business_admin, charger uniquement les données minimales des orderEmployees
+            // ✅ OPTIMISATION : Pour les business_admin, charger les données nécessaires des orderEmployees
+            // mais inclure les colonnes de profil pour détecter si l'admin est inclus
             if ($isBusinessAdmin) {
                 $directOrdersQuery->with(['orderEmployees' => function ($q) {
                     // Note: slot_number n'existe pas dans order_employees, il est dans employee_slots (JSON) de orders
+                    // ✅ CORRECTION : Charger aussi les colonnes de profil pour détecter si l'admin est inclus
                     $q->select('id', 'order_id', 'employee_id', 'employee_name', 'employee_email',
-                              'card_quantity', 'is_configured', 'created_at')
+                              'card_quantity', 'is_configured', 
+                              'profile_name', 'profile_title', 'employee_avatar_url', 'profile_border_color',
+                              'card_design_type', 'card_design_number', 'card_design_custom_url', 'no_design_yet',
+                              'created_at')
                       ->with(['employee' => function ($empQuery) {
                           $empQuery->select('id', 'username');
                       }]);
@@ -253,8 +271,15 @@ class OrderController extends Controller
                         // et seulement avec les données essentielles
                         $orderEmployee = $order->orderEmployees->firstWhere('employee_id', $user->id);
                         if ($orderEmployee && $order->order_type === 'business') {
-                            // ✅ OPTIMISATION : Charger employee_profile uniquement avec les données de design
-                            // Les autres données seront chargées à la demande via show()
+                            // ✅ CORRECTION : Charger aussi les données de profil minimales pour ProfileSelectionView
+                            $order->employee_card_quantity = $orderEmployee->card_quantity;
+                            $order->employee_is_configured = $orderEmployee->is_configured;
+                            $order->profile_name = $orderEmployee->profile_name;
+                            $order->profile_title = $orderEmployee->profile_title;
+                            $order->profile_border_color = $orderEmployee->profile_border_color ?? '#facc15';
+                            $order->order_avatar_url = $orderEmployee->employee_avatar_url;
+                            
+                            // ✅ OPTIMISATION : Charger employee_profile avec les données de design
                             $order->employee_profile = [
                                 'card_design_type' => $orderEmployee->card_design_type,
                                 'card_design_number' => $orderEmployee->card_design_number,
@@ -264,6 +289,7 @@ class OrderController extends Controller
                             
                             if ($user->username) {
                                 $order->employee_profile['username'] = $user->username;
+                                $order->profile_username = $user->username;
                             }
                             if ($order->access_token) {
                                 $order->employee_profile['access_token'] = $order->access_token;
@@ -522,13 +548,20 @@ class OrderController extends Controller
                 $employeeProfile['access_token'] = $order->access_token;
             }
             
-            // Si c'est un business admin inclus, copier aussi les données de design au niveau racine de l'order
+            // Si c'est un business admin inclus, copier aussi les données de design et de profil au niveau racine de l'order
             // pour que getDesignData dans OrdersView.vue puisse les trouver
             if ($user->role === 'business_admin' && $orderEmployee) {
                 $order->card_design_type = $orderEmployee->card_design_type;
                 $order->card_design_number = $orderEmployee->card_design_number;
                 $order->card_design_custom_url = $orderEmployee->card_design_custom_url;
                 $order->no_design_yet = $orderEmployee->no_design_yet;
+                // ✅ CORRECTION : Copier aussi les données de profil pour les business admin inclus
+                $order->employee_card_quantity = $orderEmployee->card_quantity;
+                $order->employee_is_configured = $orderEmployee->is_configured;
+                $order->profile_name = $orderEmployee->profile_name;
+                $order->profile_title = $orderEmployee->profile_title;
+                $order->profile_border_color = $orderEmployee->profile_border_color ?? '#facc15';
+                $order->order_avatar_url = $orderEmployee->employee_avatar_url; // ✅ Utiliser employee_avatar_url pour les business admin inclus
             }
             
             // Si c'est un employé dans une commande entreprise, vérifier si le business admin a un design défini
@@ -648,6 +681,7 @@ class OrderController extends Controller
                     'is_configured' => $oe->is_configured,
                     'profile_name' => $oe->profile_name,
                     'profile_title' => $oe->profile_title,
+                    'employee_avatar_url' => $oe->employee_avatar_url, // ✅ CORRECTION : Inclure employee_avatar_url dans order_employees
                     'employee' => $oe->relationLoaded('employee') && $oe->employee ? [
                         'id' => $oe->employee->id,
                         'name' => $oe->employee->name,
