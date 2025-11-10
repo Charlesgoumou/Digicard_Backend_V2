@@ -9,6 +9,7 @@ use App\Models\Setting;
 use App\Services\ImageCompressionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class OrderController extends Controller
@@ -821,17 +822,40 @@ class OrderController extends Controller
             if ($orderEmployee) {
                 // Mettre à jour dans order_employees
                 // Supprimer l'ancienne photo de l'employé si elle existe
-                if ($orderEmployee->employee_avatar_url && \Storage::disk('public')->exists(str_replace('/storage/', '', $orderEmployee->employee_avatar_url))) {
-                    \Storage::disk('public')->delete(str_replace('/storage/', '', $orderEmployee->employee_avatar_url));
+                if ($orderEmployee->employee_avatar_url) {
+                    $oldPath = str_replace('/storage/', '', $orderEmployee->employee_avatar_url);
+                    if (\Storage::disk('public')->exists($oldPath)) {
+                        \Storage::disk('public')->delete($oldPath);
+                    }
                 }
 
                 // Compresser et stocker la nouvelle photo
                 $compressionService = new ImageCompressionService();
                 $result = $compressionService->compressImage($request->file('avatar'), 'employee_avatars');
+                
+                // ✅ CORRECTION : Vérifier que le fichier a bien été créé
+                if (!isset($result['path']) || !Storage::disk('public')->exists($result['path'])) {
+                    Log::error('OrderController::uploadOrderAvatar - Fichier non créé après compression', [
+                        'result' => $result,
+                        'order_id' => $order->id,
+                        'employee_id' => $user->id,
+                    ]);
+                    return response()->json([
+                        'message' => 'Erreur lors du stockage de la photo.',
+                    ], 500);
+                }
+                
                 $url = '/storage/' . $result['path'];
 
                 // Mettre à jour l'URL de l'avatar de l'employé
                 $orderEmployee->update(['employee_avatar_url' => $url]);
+
+                Log::info('OrderController::uploadOrderAvatar - Photo uploadée avec succès', [
+                    'order_id' => $order->id,
+                    'employee_id' => $user->id,
+                    'avatar_url' => $url,
+                    'file_exists' => Storage::disk('public')->exists($result['path']),
+                ]);
 
                 return response()->json([
                     'message' => 'Photo de commande mise à jour avec succès.',
@@ -841,17 +865,40 @@ class OrderController extends Controller
 
             // Sinon, mettre à jour dans orders (pour les commandes sans order_employee)
             // Supprimer l'ancienne photo de commande si elle existe
-            if ($order->order_avatar_url && \Storage::disk('public')->exists(str_replace('/storage/', '', $order->order_avatar_url))) {
-                \Storage::disk('public')->delete(str_replace('/storage/', '', $order->order_avatar_url));
+            if ($order->order_avatar_url) {
+                $oldPath = str_replace('/storage/', '', $order->order_avatar_url);
+                if (\Storage::disk('public')->exists($oldPath)) {
+                    \Storage::disk('public')->delete($oldPath);
+                }
             }
 
             // Compresser et stocker la nouvelle photo
             $compressionService = new ImageCompressionService();
             $result = $compressionService->compressImage($request->file('avatar'), 'order_avatars');
+            
+            // ✅ CORRECTION : Vérifier que le fichier a bien été créé
+            if (!isset($result['path']) || !\Storage::disk('public')->exists($result['path'])) {
+                Log::error('OrderController::uploadOrderAvatar - Fichier non créé après compression', [
+                    'result' => $result,
+                    'order_id' => $order->id,
+                    'user_id' => $user->id,
+                ]);
+                return response()->json([
+                    'message' => 'Erreur lors du stockage de la photo.',
+                ], 500);
+            }
+            
             $url = '/storage/' . $result['path'];
 
             // Mettre à jour l'URL de l'avatar de la commande
             $order->update(['order_avatar_url' => $url]);
+
+            Log::info('OrderController::uploadOrderAvatar - Photo uploadée avec succès', [
+                'order_id' => $order->id,
+                'user_id' => $user->id,
+                'avatar_url' => $url,
+                'file_exists' => Storage::disk('public')->exists($result['path']),
+            ]);
 
             return response()->json([
                 'message' => 'Photo de commande mise à jour avec succès.',
@@ -1624,9 +1671,12 @@ class OrderController extends Controller
                         }
 
                         // Supprimer aussi l'avatar de la commande depuis order_employees
-                        if ($orderEmployee->employee_avatar_url && \Storage::disk('public')->exists(str_replace('/storage/', '', $orderEmployee->employee_avatar_url))) {
-                            \Storage::disk('public')->delete(str_replace('/storage/', '', $orderEmployee->employee_avatar_url));
-                        }
+                if ($orderEmployee->employee_avatar_url) {
+                    $oldPath = str_replace('/storage/', '', $orderEmployee->employee_avatar_url);
+                    if (Storage::disk('public')->exists($oldPath)) {
+                        Storage::disk('public')->delete($oldPath);
+                    }
+                }
 
                         \Log::info("Employé supprimé suite à l'annulation de la commande", [
                             'employee_id' => $employee->id,
