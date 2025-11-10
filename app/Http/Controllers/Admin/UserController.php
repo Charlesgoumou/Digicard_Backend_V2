@@ -269,8 +269,14 @@ class UserController extends Controller
         $user->tokens()->delete();
 
         // Supprimer l'avatar stocké si présent
-        if ($user->avatar_url && \Storage::disk('public')->exists(str_replace('/storage/', '', $user->avatar_url))) {
-            \Storage::disk('public')->delete(str_replace('/storage/', '', $user->avatar_url));
+        if ($user->avatar_url) {
+            // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
+            $oldPath = preg_replace('#^/api/storage/#', '', $user->avatar_url);
+            $oldPath = preg_replace('#^/storage/#', '', $oldPath);
+            $oldPath = preg_replace('#^https?://[^/]+/(api/)?storage/#', '', $oldPath);
+            if (Storage::disk('public')->exists($oldPath)) {
+                Storage::disk('public')->delete($oldPath);
+            }
         }
 
         // Logger l'action

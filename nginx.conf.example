@@ -1,0 +1,141 @@
+# Configuration Nginx pour Laravel - Digicard Backend
+# Ce fichier doit être placé dans /etc/nginx/sites-available/digicard-api
+# et créé comme lien symbolique dans /etc/nginx/sites-enabled/
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api.digicard.arccenciel.com;
+    
+    # Redirection HTTP vers HTTPS
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name api.digicard.arccenciel.com;
+
+    root /var/www/digicard-backend/public;
+    index index.php;
+
+    # SSL Configuration (à configurer avec Let's Encrypt ou votre certificat)
+    ssl_certificate /etc/letsencrypt/live/api.digicard.arccenciel.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.digicard.arccenciel.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    # Logs
+    access_log /var/log/nginx/digicard-api-access.log;
+    error_log /var/log/nginx/digicard-api-error.log;
+
+    # Taille maximale des uploads
+    client_max_body_size 20M;
+
+    # ✅ OPTION 1 : Servir les fichiers /storage/* directement depuis storage/app/public
+    # Cette option est plus performante mais nécessite que le lien symbolique fonctionne
+    location /storage {
+        alias /var/www/digicard-backend/storage/app/public;
+        try_files $uri $uri/ =404;
+        
+        # Headers pour les images
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        
+        # CORS Headers - Autoriser les origines du frontend
+        # Note: On ne peut pas utiliser "*" avec Access-Control-Allow-Credentials: true
+        # On doit donc spécifier les origines autorisées explicitement
+        set $cors_origin "";
+        if ($http_origin ~* "^https://(digicard|admin\.digicard)\.arccenciel\.com$") {
+            set $cors_origin $http_origin;
+        }
+        
+        # Si une origine autorisée est détectée, ajouter les en-têtes CORS
+        if ($cors_origin != "") {
+            add_header Access-Control-Allow-Origin $cors_origin always;
+            add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization" always;
+            add_header Access-Control-Allow-Credentials "true" always;
+        }
+        
+        # Gérer les requêtes OPTIONS (preflight)
+        if ($request_method = 'OPTIONS') {
+            if ($cors_origin != "") {
+                add_header Access-Control-Allow-Origin $cors_origin always;
+                add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+                add_header Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization" always;
+                add_header Access-Control-Allow-Credentials "true" always;
+            }
+            add_header Access-Control-Max-Age 86400;
+            add_header Content-Type 'text/plain charset=UTF-8';
+            add_header Content-Length 0;
+            return 204;
+        }
+        
+        # Types MIME
+        location ~* \.(jpg|jpeg|png|gif|ico|webp|svg)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+
+    # ✅ OPTION 2 : Laisser Laravel gérer toutes les requêtes /storage/*
+    # Décommentez cette section et commentez l'OPTION 1 si le lien symbolique ne fonctionne pas
+    # ou si vous préférez que Laravel serve tous les fichiers (moins performant mais plus fiable)
+    #
+    # location /storage {
+    #     try_files $uri $uri/ /index.php?$query_string;
+    # }
+
+    # Gestion des fichiers statiques
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # PHP-FPM Configuration
+    location ~ \.php$ {
+        fastcgi_pass unix:/var/run/php/php8.2-fpm.sock; # Ajuster selon votre version PHP
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+        fastcgi_hide_header X-Powered-By;
+        
+        # Headers pour les réponses PHP (nécessaires pour CORS)
+        fastcgi_param HTTP_ORIGIN $http_origin;
+    }
+
+    # Gestion des routes Laravel
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # Sécurité : Bloquer l'accès aux fichiers sensibles
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Sécurité : Bloquer l'accès aux dossiers sensibles (sauf /storage qui est nécessaire)
+    location ~ /(bootstrap/cache|config|database|resources|routes|tests)/ {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+    
+    # Bloquer l'accès direct à storage/app (seulement storage/app/public est accessible via /storage)
+    location ~ ^/storage/app/(?!public/) {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Headers de sécurité
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "no-referrer-when-downgrade" always;
+}
+

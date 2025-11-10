@@ -255,8 +255,14 @@ class EmployeeController extends Controller
             $employee->tokens()->delete();
 
             // Supprimer l'avatar de l'employé s'il existe
-            if ($employee->avatar_url && Storage::disk('public')->exists(str_replace('/storage/', '', $employee->avatar_url))) {
-                Storage::disk('public')->delete(str_replace('/storage/', '', $employee->avatar_url));
+            if ($employee->avatar_url) {
+                // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
+                $oldPath = preg_replace('#^/api/storage/#', '', $employee->avatar_url);
+                $oldPath = preg_replace('#^/storage/#', '', $oldPath);
+                $oldPath = preg_replace('#^https?://[^/]+/(api/)?storage/#', '', $oldPath);
+                if (Storage::disk('public')->exists($oldPath)) {
+                    Storage::disk('public')->delete($oldPath);
+                }
             }
 
             // Supprimer l'employé de la base de données

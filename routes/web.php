@@ -3,29 +3,28 @@
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Response;
+use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\PublicProfileController;
+use App\Http\Controllers\StorageController;
+
+// --- ROUTE DE TEST ---
+// Route de test pour vérifier que Laravel fonctionne
+Route::get('/test-storage-route', function () {
+    return response()->json([
+        'message' => 'Route Laravel accessible',
+        'timestamp' => now(),
+        'storage_path' => storage_path('app/public'),
+        'storage_exists' => file_exists(storage_path('app/public')),
+    ]);
+});
 
 // --- ROUTE POUR SERVIR LES FICHIERS DEPUIS STORAGE ---
-// ✅ CORRECTION : Route pour servir les fichiers depuis storage/app/public
+// ✅ CORRECTION : Utiliser un contrôleur dédié pour plus de fiabilité
 // Cette route est placée AVANT la route fallback pour qu'elle soit prioritaire
 // Utile pour Windows/XAMPP où les liens symboliques peuvent ne pas fonctionner correctement
-Route::get('/storage/{path}', function ($path) {
-    // Vérifier que le fichier existe
-    if (!Storage::disk('public')->exists($path)) {
-        abort(404, 'Fichier non trouvé');
-    }
-    
-    // Récupérer le fichier
-    $file = Storage::disk('public')->get($path);
-    $type = Storage::disk('public')->mimeType($path);
-    
-    // Retourner le fichier avec les en-têtes appropriés
-    return Response::make($file, 200, [
-        'Content-Type' => $type,
-        'Content-Disposition' => 'inline', // Afficher dans le navigateur plutôt que télécharger
-        'Cache-Control' => 'public, max-age=31536000', // Cache pour 1 an
-    ]);
-})->where('path', '.*');
+Route::get('/storage/{path}', [StorageController::class, 'serve'])
+    ->where('path', '.*')
+    ->name('storage.serve');
 
 // --- ROUTE DU PROFIL PUBLIC ---
 Route::get('/profil/{user:username}', [PublicProfileController::class, 'show'])
@@ -38,13 +37,16 @@ Route::get('/profil/{user:username}/vcard', [PublicProfileController::class, 'do
 
 
 // --- ROUTE FALLBACK POUR L'APPLICATION VUE.JS ---
-Route::get('/{any?}', function () {
+// ✅ CORRECTION : La route /storage/{path} est définie AVANT cette route fallback
+// donc elle sera toujours prioritaire. Cette route ne capturera que les routes qui
+// ne correspondent pas à /storage/*
+Route::get('/{any}', function ($any) {
     // S'assure que la vue 'index' (qui charge Vue) existe
     if (view()->exists('index')) {
         return view('index');
     }
     // Gère le cas où l'application Vue n'est pas configurée
     return "Application non trouvée. Assurez-vous d'avoir une vue 'index.blade.php' à la racine de 'resources/views'.";
-})->where('any', '.*'); // Capture toutes les autres routes
+})->where('any', '.*'); // Capture toutes les autres routes (mais /storage/{path} est prioritaire car défini avant)
 
 // L'accolade fermante en trop a été supprimée d'ici.

@@ -146,8 +146,9 @@ class OrderController extends Controller
                     $order->order_avatar_url = $orderEmployee->employee_avatar_url;
                     $order->is_configured = $orderEmployee->is_configured;
 
-                    // Ajouter employee_profile avec toutes les données de profil et de design
-                    $order->employee_profile = [
+                    // ✅ CORRECTION : Construire le tableau employee_profile complet avant de l'assigner
+                    // pour éviter l'erreur "Indirect modification of overloaded property"
+                    $employeeProfile = [
                         'profile_name' => $orderEmployee->profile_name,
                         'profile_title' => $orderEmployee->profile_title,
                         'employee_avatar_url' => $orderEmployee->employee_avatar_url,
@@ -185,22 +186,25 @@ class OrderController extends Controller
                                              ($businessAdminOrderEmployee->card_design_type === 'template' || 
                                               $businessAdminOrderEmployee->card_design_type === 'custom');
                             
-                            $order->employee_profile['is_design_locked_by_admin'] = true;
+                            $employeeProfile['is_design_locked_by_admin'] = true;
                             
                             if ($hasAdminDesign) {
-                                $order->employee_profile['admin_design'] = [
+                                $employeeProfile['admin_design'] = [
                                     'card_design_type' => $businessAdminOrderEmployee->card_design_type,
                                     'card_design_number' => $businessAdminOrderEmployee->card_design_number,
                                     'card_design_custom_url' => $businessAdminOrderEmployee->card_design_custom_url,
                                 ];
                                 
-                                $order->employee_profile['card_design_type'] = $businessAdminOrderEmployee->card_design_type;
-                                $order->employee_profile['card_design_number'] = $businessAdminOrderEmployee->card_design_number;
-                                $order->employee_profile['card_design_custom_url'] = $businessAdminOrderEmployee->card_design_custom_url;
-                                $order->employee_profile['no_design_yet'] = false;
+                                $employeeProfile['card_design_type'] = $businessAdminOrderEmployee->card_design_type;
+                                $employeeProfile['card_design_number'] = $businessAdminOrderEmployee->card_design_number;
+                                $employeeProfile['card_design_custom_url'] = $businessAdminOrderEmployee->card_design_custom_url;
+                                $employeeProfile['no_design_yet'] = false;
                             }
                         }
                     }
+                    
+                    // Assigner le tableau complet à employee_profile
+                    $order->employee_profile = $employeeProfile;
                 }
 
                 return $order;
@@ -212,12 +216,18 @@ class OrderController extends Controller
         // Si l'utilisateur est business_admin ou individual, récupérer aussi leurs commandes directes (non-business ou business sans inclusion)
         if ($user->role === 'business_admin' || $user->role === 'individual') {
             // ✅ OPTIMISATION : Utiliser select pour charger uniquement les colonnes nécessaires
+            // ✅ CORRECTION : Inclure les colonnes de profil pour les commandes individuelles
             $directOrdersQuery = $user->orders()
                 ->where('status', '!=', 'cancelled')
                 ->select('id', 'user_id', 'order_number', 'order_type', 'card_quantity', 
                         'total_employees', 'employee_slots', 'unit_price', 'total_price',
                         'annual_subscription', 'subscription_start_date', 'status', 
-                        'is_configured', 'access_token', 'created_at', 'updated_at');
+                        'is_configured', 'access_token',
+                        // ✅ CORRECTION : Colonnes de profil pour ProfileSelectionView
+                        'profile_name', 'profile_title', 'order_avatar_url', 'profile_border_color',
+                        'save_contact_button_color', 'services_button_color',
+                        'card_design_type', 'card_design_number', 'card_design_custom_url', 'no_design_yet',
+                        'created_at', 'updated_at');
             
             // ✅ OPTIMISATION : Pour les business_admin, charger les données nécessaires des orderEmployees
             // mais inclure les colonnes de profil pour détecter si l'admin est inclus
@@ -280,8 +290,8 @@ class OrderController extends Controller
                             $order->profile_border_color = $orderEmployee->profile_border_color ?? '#facc15';
                             $order->order_avatar_url = $orderEmployee->employee_avatar_url;
                             
-                            // ✅ OPTIMISATION : Charger employee_profile avec les données de design
-                            $order->employee_profile = [
+                            // ✅ CORRECTION : Construire employee_profile complet avant de l'assigner
+                            $employeeProfile = [
                                 'card_design_type' => $orderEmployee->card_design_type,
                                 'card_design_number' => $orderEmployee->card_design_number,
                                 'card_design_custom_url' => $orderEmployee->card_design_custom_url,
@@ -289,12 +299,15 @@ class OrderController extends Controller
                             ];
                             
                             if ($user->username) {
-                                $order->employee_profile['username'] = $user->username;
+                                $employeeProfile['username'] = $user->username;
                                 $order->profile_username = $user->username;
                             }
                             if ($order->access_token) {
-                                $order->employee_profile['access_token'] = $order->access_token;
+                                $employeeProfile['access_token'] = $order->access_token;
                             }
+                            
+                            // Assigner le tableau complet à employee_profile
+                            $order->employee_profile = $employeeProfile;
                             
                             // Copier aussi les données de design au niveau racine de l'order
                             $order->card_design_type = $orderEmployee->card_design_type;
@@ -340,6 +353,23 @@ class OrderController extends Controller
 
         // S'assurer que $orders est toujours un tableau, même si vide
         $ordersArray = $orders->toArray();
+        
+        // ✅ DEBUG : Logger les données pour vérifier que les colonnes de profil sont présentes
+        if (!empty($ordersArray)) {
+            \Log::info('OrderController::index - Données retournées', [
+                'total_orders' => count($ordersArray),
+                'first_order' => [
+                    'id' => $ordersArray[0]['id'] ?? null,
+                    'order_number' => $ordersArray[0]['order_number'] ?? null,
+                    'order_type' => $ordersArray[0]['order_type'] ?? null,
+                    'profile_name' => $ordersArray[0]['profile_name'] ?? null,
+                    'profile_title' => $ordersArray[0]['profile_title'] ?? null,
+                    'order_avatar_url' => $ordersArray[0]['order_avatar_url'] ?? null,
+                    'profile_border_color' => $ordersArray[0]['profile_border_color'] ?? null,
+                    'is_configured' => $ordersArray[0]['is_configured'] ?? null,
+                ],
+            ]);
+        }
         
         return response()->json($ordersArray);
     }
@@ -823,9 +853,12 @@ class OrderController extends Controller
                 // Mettre à jour dans order_employees
                 // Supprimer l'ancienne photo de l'employé si elle existe
                 if ($orderEmployee->employee_avatar_url) {
-                    $oldPath = str_replace('/storage/', '', $orderEmployee->employee_avatar_url);
-                    if (\Storage::disk('public')->exists($oldPath)) {
-                        \Storage::disk('public')->delete($oldPath);
+                    // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
+                    $oldPath = preg_replace('#^/api/storage/#', '', $orderEmployee->employee_avatar_url);
+                    $oldPath = preg_replace('#^/storage/#', '', $oldPath);
+                    $oldPath = preg_replace('#^https?://[^/]+/(api/)?storage/#', '', $oldPath);
+                    if (Storage::disk('public')->exists($oldPath)) {
+                        Storage::disk('public')->delete($oldPath);
                     }
                 }
 
@@ -845,7 +878,8 @@ class OrderController extends Controller
                     ], 500);
                 }
                 
-                $url = '/storage/' . $result['path'];
+                // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
+                $url = '/api/storage/' . $result['path'];
 
                 // Mettre à jour l'URL de l'avatar de l'employé
                 $orderEmployee->update(['employee_avatar_url' => $url]);
@@ -866,9 +900,12 @@ class OrderController extends Controller
             // Sinon, mettre à jour dans orders (pour les commandes sans order_employee)
             // Supprimer l'ancienne photo de commande si elle existe
             if ($order->order_avatar_url) {
-                $oldPath = str_replace('/storage/', '', $order->order_avatar_url);
-                if (\Storage::disk('public')->exists($oldPath)) {
-                    \Storage::disk('public')->delete($oldPath);
+                // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
+                $oldPath = preg_replace('#^/api/storage/#', '', $order->order_avatar_url);
+                $oldPath = preg_replace('#^/storage/#', '', $oldPath);
+                $oldPath = preg_replace('#^https?://[^/]+/(api/)?storage/#', '', $oldPath);
+                if (Storage::disk('public')->exists($oldPath)) {
+                    Storage::disk('public')->delete($oldPath);
                 }
             }
 
@@ -877,7 +914,7 @@ class OrderController extends Controller
             $result = $compressionService->compressImage($request->file('avatar'), 'order_avatars');
             
             // ✅ CORRECTION : Vérifier que le fichier a bien été créé
-            if (!isset($result['path']) || !\Storage::disk('public')->exists($result['path'])) {
+            if (!isset($result['path']) || !Storage::disk('public')->exists($result['path'])) {
                 Log::error('OrderController::uploadOrderAvatar - Fichier non créé après compression', [
                     'result' => $result,
                     'order_id' => $order->id,
@@ -888,7 +925,8 @@ class OrderController extends Controller
                 ], 500);
             }
             
-            $url = '/storage/' . $result['path'];
+            // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
+            $url = '/api/storage/' . $result['path'];
 
             // Mettre à jour l'URL de l'avatar de la commande
             $order->update(['order_avatar_url' => $url]);
@@ -1088,18 +1126,26 @@ class OrderController extends Controller
             if (in_array($file->getMimeType(), ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'])) {
                 $compressionService = new ImageCompressionService();
                 $result = $compressionService->compressImage($file, 'custom_designs');
-                $url = '/storage/' . $result['path'];
+                // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
+                $url = '/api/storage/' . $result['path'];
             } else {
                 // Pour les fichiers non-image (PDF, SVG, etc.), stocker tel quel
                 $path = $file->store('custom_designs', 'public');
-                $url = '/storage/' . $path;
+                // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
+                $url = '/api/storage/' . $path;
             }
 
             // Si un order_id est fourni, mettre à jour la commande
             if ($orderId && isset($order)) {
                 // Supprimer l'ancien design personnalisé si il existe
-                if ($order->card_design_custom_url && \Storage::disk('public')->exists(str_replace('/storage/', '', $order->card_design_custom_url))) {
-                    \Storage::disk('public')->delete(str_replace('/storage/', '', $order->card_design_custom_url));
+                if ($order->card_design_custom_url) {
+                    // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
+                    $oldPath = preg_replace('#^/api/storage/#', '', $order->card_design_custom_url);
+                    $oldPath = preg_replace('#^/storage/#', '', $oldPath);
+                    $oldPath = preg_replace('#^https?://[^/]+/(api/)?storage/#', '', $oldPath);
+                    if (Storage::disk('public')->exists($oldPath)) {
+                        Storage::disk('public')->delete($oldPath);
+                    }
                 }
                 $order->update([
                     'card_design_type' => 'custom',
@@ -1666,13 +1712,22 @@ class OrderController extends Controller
                         $employee->tokens()->delete();
 
                         // Supprimer l'avatar de l'employé s'il existe
-                        if ($employee->avatar_url && \Storage::disk('public')->exists(str_replace('/storage/', '', $employee->avatar_url))) {
-                            \Storage::disk('public')->delete(str_replace('/storage/', '', $employee->avatar_url));
+                        if ($employee->avatar_url) {
+                            // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
+                            $oldPath = preg_replace('#^/api/storage/#', '', $employee->avatar_url);
+                            $oldPath = preg_replace('#^/storage/#', '', $oldPath);
+                            $oldPath = preg_replace('#^https?://[^/]+/(api/)?storage/#', '', $oldPath);
+                            if (Storage::disk('public')->exists($oldPath)) {
+                                Storage::disk('public')->delete($oldPath);
+                            }
                         }
 
                         // Supprimer aussi l'avatar de la commande depuis order_employees
                 if ($orderEmployee->employee_avatar_url) {
-                    $oldPath = str_replace('/storage/', '', $orderEmployee->employee_avatar_url);
+                    // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
+                    $oldPath = preg_replace('#^/api/storage/#', '', $orderEmployee->employee_avatar_url);
+                    $oldPath = preg_replace('#^/storage/#', '', $oldPath);
+                    $oldPath = preg_replace('#^https?://[^/]+/(api/)?storage/#', '', $oldPath);
                     if (Storage::disk('public')->exists($oldPath)) {
                         Storage::disk('public')->delete($oldPath);
                     }

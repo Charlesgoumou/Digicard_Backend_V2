@@ -27,6 +27,12 @@ return Application::configure(basePath: dirname(__DIR__))
             EnsureFrontendRequestsAreStateful::class,
         ]);
 
+        // ✅ CORRECTION : Ajouter le middleware CORS aussi aux routes web pour /storage/*
+        // Cela permet aux images d'être chargées depuis le frontend sans erreur CORS
+        $middleware->web(append: [
+            HandleCors::class,
+        ]);
+
         // Configuration du groupe API
         $middleware->group('api', [
             'throttle:api',

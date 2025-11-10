@@ -74,10 +74,11 @@ class ProfileController extends Controller
         
         // ✅ CORRECTION : Nettoyer le chemin correctement pour supprimer l'ancienne photo
         if ($user->avatar_url) {
-            // Supprimer /storage/ du début si présent, puis supprimer le fichier
-            $oldPath = preg_replace('#^/storage/#', '', $user->avatar_url);
+            // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
+            $oldPath = preg_replace('#^/api/storage/#', '', $user->avatar_url);
+            $oldPath = preg_replace('#^/storage/#', '', $oldPath);
             // Supprimer aussi les URLs complètes (http://...) si présentes
-            $oldPath = preg_replace('#^https?://[^/]+/storage/#', '', $oldPath);
+            $oldPath = preg_replace('#^https?://[^/]+/(api/)?storage/#', '', $oldPath);
             if (Storage::disk('public')->exists($oldPath)) {
                 Storage::disk('public')->delete($oldPath);
             }
@@ -98,9 +99,10 @@ class ProfileController extends Controller
             ], 500);
         }
         
-        // ✅ CORRECTION : Utiliser le format /storage/ pour la cohérence avec OrderController
+        // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
+        // Cela garantit que Laravel gère la requête même si .htaccess ne fonctionne pas
         // Le frontend construira l'URL complète avec VITE_APP_URL_BACKEND
-        $user->avatar_url = '/storage/' . $result['path'];
+        $user->avatar_url = '/api/storage/' . $result['path'];
         $user->save();
         
         Log::info('ProfileController::updateAvatar - Photo uploadée avec succès', [

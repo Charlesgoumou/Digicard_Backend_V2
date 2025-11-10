@@ -494,7 +494,8 @@ class SettingsController extends Controller
             // Compresser et stocker l'avatar
             $compressionService = new \App\Services\ImageCompressionService();
             $result = $compressionService->compressImage($file, 'testimonial_avatars');
-            $url = '/storage/' . $result['path'];
+            // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
+            $url = '/api/storage/' . $result['path'];
 
             return response()->json([
                 'message' => 'Avatar uploadé avec succès',
@@ -523,8 +524,8 @@ class SettingsController extends Controller
             $filename = uniqid() . '_' . time() . '.' . $file->getClientOriginalExtension();
             
             $path = Storage::disk('public')->putFileAs('social_proof_logos', $file, $filename);
-            // Retourner le chemin au format /storage/... pour compatibilité
-            $url = '/storage/' . $path;
+            // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
+            $url = '/api/storage/' . $path;
 
             return response()->json([
                 'message' => 'Logo uploadé avec succès',

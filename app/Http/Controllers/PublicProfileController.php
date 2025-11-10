@@ -690,7 +690,10 @@ class PublicProfileController extends Controller
         if ($avatarUrl) {
             // Normaliser le chemin : enlever /storage/ du début si présent
             $relativePath = $avatarUrl;
-            if (str_starts_with($avatarUrl, '/storage/')) {
+            // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
+            if (str_starts_with($avatarUrl, '/api/storage/')) {
+                $relativePath = str_replace('/api/storage/', '', $avatarUrl);
+            } elseif (str_starts_with($avatarUrl, '/storage/')) {
                 $relativePath = str_replace('/storage/', '', $avatarUrl);
             } elseif (str_starts_with($avatarUrl, 'storage/')) {
                 $relativePath = str_replace('storage/', '', $avatarUrl);

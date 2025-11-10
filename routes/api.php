@@ -17,12 +17,20 @@ use App\Http\Controllers\Admin\UserController as AdminUserController;
 use App\Http\Controllers\Admin\OrderController as AdminOrderController;
 use App\Http\Controllers\Admin\CompanyPageController as AdminCompanyPageController;
 use App\Http\Controllers\Admin\SettingsController;
+use App\Http\Controllers\StorageController;
 
 /*
 |--------------------------------------------------------------------------
 | API Routes
 |--------------------------------------------------------------------------
 */
+
+// --- Route pour servir les fichiers depuis storage (publique) ---
+// ✅ CORRECTION : Route API pour servir les fichiers depuis storage/app/public
+// Cette route fonctionne même si .htaccess ne fonctionne pas correctement
+Route::get('/storage/{path}', [StorageController::class, 'serve'])
+    ->where('path', '.*')
+    ->name('api.storage.serve');
 
 // --- Routes Publiques ---
 Route::post('/register', [AuthController::class, 'register'])->name('register');

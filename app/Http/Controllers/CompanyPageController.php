@@ -270,14 +270,21 @@ class CompanyPageController extends Controller
             }
 
             // Supprimer l'ancien logo si il existe
-            if ($companyPage->logo_url && Storage::disk('public')->exists(str_replace('/storage/', '', $companyPage->logo_url))) {
-                Storage::disk('public')->delete(str_replace('/storage/', '', $companyPage->logo_url));
+            if ($companyPage->logo_url) {
+                // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
+                $oldPath = preg_replace('#^/api/storage/#', '', $companyPage->logo_url);
+                $oldPath = preg_replace('#^/storage/#', '', $oldPath);
+                $oldPath = preg_replace('#^https?://[^/]+/(api/)?storage/#', '', $oldPath);
+                if (Storage::disk('public')->exists($oldPath)) {
+                    Storage::disk('public')->delete($oldPath);
+                }
             }
 
             // Compresser et stocker le nouveau logo
             $compressionService = new ImageCompressionService();
             $result = $compressionService->compressImage($request->file('logo'), 'company_logos');
-            $url = '/storage/' . $result['path'];
+            // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
+            $url = '/api/storage/' . $result['path'];
 
             // Extraire les couleurs du logo
             $colors = $this->extractColorsFromImage(storage_path('app/public/' . $result['path']));
