@@ -71,7 +71,7 @@ class ProfileController extends Controller
         // ... (La logique updateAvatar reste identique) ...
         $request->validate(['avatar' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048']);
         $user = $request->user();
-        
+
         // ✅ CORRECTION : Nettoyer le chemin correctement pour supprimer l'ancienne photo
         if ($user->avatar_url) {
             // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
@@ -83,11 +83,11 @@ class ProfileController extends Controller
                 Storage::disk('public')->delete($oldPath);
             }
         }
-        
+
         // Compresser et stocker l'avatar
         $compressionService = new ImageCompressionService();
         $result = $compressionService->compressImage($request->file('avatar'), 'avatars');
-        
+
         // ✅ CORRECTION : Vérifier que le fichier a bien été créé
         if (!isset($result['path']) || !Storage::disk('public')->exists($result['path'])) {
             Log::error('ProfileController::updateAvatar - Fichier non créé après compression', [
@@ -98,19 +98,19 @@ class ProfileController extends Controller
                 'message' => 'Erreur lors du stockage de la photo.',
             ], 500);
         }
-        
-        // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
-        // Cela garantit que Laravel gère la requête même si .htaccess ne fonctionne pas
-        // Le frontend construira l'URL complète avec VITE_APP_URL_BACKEND
-        $user->avatar_url = '/api/storage/' . $result['path'];
+
+        // ✅ CORRECTION : Utiliser Storage::url() pour générer l'URL correcte
+        // Laravel génère automatiquement l'URL basée sur la configuration (config/filesystems.php)
+        // En production avec Nginx, cela génère /storage/avatars/image.jpg
+        $user->avatar_url = Storage::disk('public')->url($result['path']);
         $user->save();
-        
+
         Log::info('ProfileController::updateAvatar - Photo uploadée avec succès', [
             'user_id' => $user->id,
             'avatar_url' => $user->avatar_url,
             'file_exists' => Storage::disk('public')->exists($result['path']),
         ]);
-        
+
         return response()->json(['avatar_url' => $user->avatar_url]);
     }
 

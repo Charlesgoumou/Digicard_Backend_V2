@@ -283,8 +283,10 @@ class CompanyPageController extends Controller
             // Compresser et stocker le nouveau logo
             $compressionService = new ImageCompressionService();
             $result = $compressionService->compressImage($request->file('logo'), 'company_logos');
-            // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
-            $url = '/api/storage/' . $result['path'];
+            // ✅ CORRECTION : Utiliser Storage::url() pour générer l'URL correcte
+            // Laravel génère automatiquement l'URL basée sur la configuration (config/filesystems.php)
+            // En production avec Nginx, cela génère /storage/company_logos/image.jpg
+            $url = Storage::disk('public')->url($result['path']);
 
             // Extraire les couleurs du logo
             $colors = $this->extractColorsFromImage(storage_path('app/public/' . $result['path']));

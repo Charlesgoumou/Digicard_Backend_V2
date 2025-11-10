@@ -25,11 +25,11 @@ class OrderController extends Controller
         // et utiliser des select spécifiques pour éviter de charger toutes les colonnes
         $isBusinessAdmin = $user->role === 'business_admin';
         $isEmployee = $user->role === 'employee';
-        
+
         // Si l'utilisateur est un employé OU un business_admin qui s'est inclus dans une commande
         // On doit récupérer les commandes via order_employees
         $orderEmployees = OrderEmployee::where('employee_id', $user->id)
-            ->select('id', 'order_id', 'employee_id', 'card_quantity', 'is_configured', 
+            ->select('id', 'order_id', 'employee_id', 'card_quantity', 'is_configured',
                      'profile_name', 'profile_title', 'employee_avatar_url', 'profile_border_color',
                      'save_contact_button_color', 'services_button_color', 'phone_numbers', 'emails',
                      'birth_day', 'birth_month', 'website_url', 'address_neighborhood', 'address_commune',
@@ -40,9 +40,9 @@ class OrderController extends Controller
             ->with(['order' => function ($query) use ($isBusinessAdmin) {
                 // ✅ OPTIMISATION : Pour les business_admin, charger uniquement les colonnes essentielles
                 if ($isBusinessAdmin) {
-                    $query->select('id', 'user_id', 'order_number', 'order_type', 'card_quantity', 
+                    $query->select('id', 'user_id', 'order_number', 'order_type', 'card_quantity',
                                   'total_employees', 'employee_slots', 'unit_price', 'total_price',
-                                  'annual_subscription', 'subscription_start_date', 'status', 
+                                  'annual_subscription', 'subscription_start_date', 'status',
                                   'is_configured', 'access_token', 'created_at', 'updated_at');
                 }
                 // ✅ OPTIMISATION : Charger uniquement les colonnes essentielles des orderEmployees
@@ -77,7 +77,7 @@ class OrderController extends Controller
             // Précharger toutes les données nécessaires en une seule requête
             $orderIds = $orderEmployees->pluck('order_id')->unique();
             $businessAdminOrderEmployees = null;
-            
+
             if ($isEmployee) {
                 // Pour les employés, précharger les données du business admin pour toutes les commandes
                 // Récupérer les user_id des commandes depuis les orders déjà chargés
@@ -88,11 +88,11 @@ class OrderController extends Controller
                     }
                 }
                 $businessAdminIds = $businessAdminIds->unique()->filter();
-                
+
                 if ($businessAdminIds->isNotEmpty()) {
                     $businessAdminOrderEmployees = OrderEmployee::whereIn('order_id', $orderIds)
                         ->whereIn('employee_id', $businessAdminIds)
-                        ->select('id', 'order_id', 'employee_id', 'card_design_type', 'card_design_number', 
+                        ->select('id', 'order_id', 'employee_id', 'card_design_type', 'card_design_number',
                                 'card_design_custom_url', 'no_design_yet')
                         ->get()
                         ->keyBy('order_id');
@@ -100,7 +100,7 @@ class OrderController extends Controller
                     $businessAdminOrderEmployees = collect();
                 }
             }
-            
+
             // Mapper les commandes avec les informations spécifiques à l'employé/admin
             $ordersFromEmployees = $orderEmployees->map(function ($orderEmployee) use ($user, $isBusinessAdmin, $isEmployee, $businessAdminOrderEmployees) {
                 $order = $orderEmployee->order;
@@ -118,7 +118,7 @@ class OrderController extends Controller
                     $order->profile_title = $orderEmployee->profile_title;
                     $order->profile_border_color = $orderEmployee->profile_border_color ?? '#facc15';
                     $order->order_avatar_url = $orderEmployee->employee_avatar_url;
-                    
+
                     $order->employee_profile = [
                         'card_design_type' => $orderEmployee->card_design_type,
                         'card_design_number' => $orderEmployee->card_design_number,
@@ -127,12 +127,12 @@ class OrderController extends Controller
                         // Ajouter le username pour les liens de profil
                         'username' => $user->username ?? null,
                     ];
-                    
+
                     // Ajouter le username au niveau racine pour faciliter l'accès
                     if ($user->username) {
                         $order->profile_username = $user->username;
                     }
-                    
+
                     // Copier aussi les données de design au niveau racine de l'order
                     $order->card_design_type = $orderEmployee->card_design_type;
                     $order->card_design_number = $orderEmployee->card_design_number;
@@ -176,25 +176,25 @@ class OrderController extends Controller
                         'card_design_custom_url' => $orderEmployee->card_design_custom_url,
                         'no_design_yet' => $orderEmployee->no_design_yet,
                     ];
-                    
+
                     // ✅ OPTIMISATION : Utiliser les données préchargées au lieu de faire une requête par commande
                     if ($isEmployee && $order->order_type === 'business' && $order->user_id && $businessAdminOrderEmployees) {
                         $businessAdminOrderEmployee = $businessAdminOrderEmployees->get($order->id);
-                        
+
                         if ($businessAdminOrderEmployee) {
-                            $hasAdminDesign = !$businessAdminOrderEmployee->no_design_yet && 
-                                             ($businessAdminOrderEmployee->card_design_type === 'template' || 
+                            $hasAdminDesign = !$businessAdminOrderEmployee->no_design_yet &&
+                                             ($businessAdminOrderEmployee->card_design_type === 'template' ||
                                               $businessAdminOrderEmployee->card_design_type === 'custom');
-                            
+
                             $employeeProfile['is_design_locked_by_admin'] = true;
-                            
+
                             if ($hasAdminDesign) {
                                 $employeeProfile['admin_design'] = [
                                     'card_design_type' => $businessAdminOrderEmployee->card_design_type,
                                     'card_design_number' => $businessAdminOrderEmployee->card_design_number,
                                     'card_design_custom_url' => $businessAdminOrderEmployee->card_design_custom_url,
                                 ];
-                                
+
                                 $employeeProfile['card_design_type'] = $businessAdminOrderEmployee->card_design_type;
                                 $employeeProfile['card_design_number'] = $businessAdminOrderEmployee->card_design_number;
                                 $employeeProfile['card_design_custom_url'] = $businessAdminOrderEmployee->card_design_custom_url;
@@ -202,7 +202,7 @@ class OrderController extends Controller
                             }
                         }
                     }
-                    
+
                     // Assigner le tableau complet à employee_profile
                     $order->employee_profile = $employeeProfile;
                 }
@@ -219,16 +219,16 @@ class OrderController extends Controller
             // ✅ CORRECTION : Inclure les colonnes de profil pour les commandes individuelles
             $directOrdersQuery = $user->orders()
                 ->where('status', '!=', 'cancelled')
-                ->select('id', 'user_id', 'order_number', 'order_type', 'card_quantity', 
+                ->select('id', 'user_id', 'order_number', 'order_type', 'card_quantity',
                         'total_employees', 'employee_slots', 'unit_price', 'total_price',
-                        'annual_subscription', 'subscription_start_date', 'status', 
+                        'annual_subscription', 'subscription_start_date', 'status',
                         'is_configured', 'access_token',
                         // ✅ CORRECTION : Colonnes de profil pour ProfileSelectionView
                         'profile_name', 'profile_title', 'order_avatar_url', 'profile_border_color',
                         'save_contact_button_color', 'services_button_color',
                         'card_design_type', 'card_design_number', 'card_design_custom_url', 'no_design_yet',
                         'created_at', 'updated_at');
-            
+
             // ✅ OPTIMISATION : Pour les business_admin, charger les données nécessaires des orderEmployees
             // mais inclure les colonnes de profil pour détecter si l'admin est inclus
             if ($isBusinessAdmin) {
@@ -236,7 +236,7 @@ class OrderController extends Controller
                     // Note: slot_number n'existe pas dans order_employees, il est dans employee_slots (JSON) de orders
                     // ✅ CORRECTION : Charger aussi les colonnes de profil pour détecter si l'admin est inclus
                     $q->select('id', 'order_id', 'employee_id', 'employee_name', 'employee_email',
-                              'card_quantity', 'is_configured', 
+                              'card_quantity', 'is_configured',
                               'profile_name', 'profile_title', 'employee_avatar_url', 'profile_border_color',
                               'card_design_type', 'card_design_number', 'card_design_custom_url', 'no_design_yet',
                               'created_at')
@@ -250,7 +250,7 @@ class OrderController extends Controller
                     $query->select('id', 'name', 'email', 'username', 'avatar_url', 'role');
                 }]);
             }
-            
+
             $directOrders = $directOrdersQuery
                 ->orderBy('created_at', 'desc')
                 ->get()
@@ -277,7 +277,7 @@ class OrderController extends Controller
                         }, $order->employee_slots);
 
                         $order->employee_slots = $enrichedSlots;
-                        
+
                         // ✅ OPTIMISATION : Pour les business_admin, charger employee_profile uniquement si l'admin est inclus
                         // et seulement avec les données essentielles
                         $orderEmployee = $order->orderEmployees->firstWhere('employee_id', $user->id);
@@ -289,7 +289,7 @@ class OrderController extends Controller
                             $order->profile_title = $orderEmployee->profile_title;
                             $order->profile_border_color = $orderEmployee->profile_border_color ?? '#facc15';
                             $order->order_avatar_url = $orderEmployee->employee_avatar_url;
-                            
+
                             // ✅ CORRECTION : Construire employee_profile complet avant de l'assigner
                             $employeeProfile = [
                                 'card_design_type' => $orderEmployee->card_design_type,
@@ -297,7 +297,7 @@ class OrderController extends Controller
                                 'card_design_custom_url' => $orderEmployee->card_design_custom_url,
                                 'no_design_yet' => $orderEmployee->no_design_yet,
                             ];
-                            
+
                             if ($user->username) {
                                 $employeeProfile['username'] = $user->username;
                                 $order->profile_username = $user->username;
@@ -305,10 +305,10 @@ class OrderController extends Controller
                             if ($order->access_token) {
                                 $employeeProfile['access_token'] = $order->access_token;
                             }
-                            
+
                             // Assigner le tableau complet à employee_profile
                             $order->employee_profile = $employeeProfile;
-                            
+
                             // Copier aussi les données de design au niveau racine de l'order
                             $order->card_design_type = $orderEmployee->card_design_type;
                             $order->card_design_number = $orderEmployee->card_design_number;
@@ -335,12 +335,12 @@ class OrderController extends Controller
                             $order->employee_slots = $enrichedSlots;
                         }
                     }
-                    
+
                     // IMPORTANT: Pour toutes les commandes, s'assurer que le username est accessible
                     if ($user->username) {
                         $order->profile_username = $user->username;
                     }
-                    
+
                     return $order;
                 });
 
@@ -353,7 +353,7 @@ class OrderController extends Controller
 
         // S'assurer que $orders est toujours un tableau, même si vide
         $ordersArray = $orders->toArray();
-        
+
         // ✅ DEBUG : Logger les données pour vérifier que les colonnes de profil sont présentes
         if (!empty($ordersArray)) {
             \Log::info('OrderController::index - Données retournées', [
@@ -370,7 +370,7 @@ class OrderController extends Controller
                 ],
             ]);
         }
-        
+
         return response()->json($ordersArray);
     }
 
@@ -568,7 +568,7 @@ class OrderController extends Controller
                 'card_design_custom_url' => $orderEmployee->card_design_custom_url,
                 'no_design_yet' => $orderEmployee->no_design_yet,
             ];
-            
+
             // IMPORTANT: Inclure le username et access_token pour les employés
             // Le username vient de la relation employee
             if ($orderEmployee->employee && $orderEmployee->employee->username) {
@@ -578,7 +578,7 @@ class OrderController extends Controller
             if ($order->access_token) {
                 $employeeProfile['access_token'] = $order->access_token;
             }
-            
+
             // Si c'est un business admin inclus, copier aussi les données de design et de profil au niveau racine de l'order
             // pour que getDesignData dans OrdersView.vue puisse les trouver
             if ($user->role === 'business_admin' && $orderEmployee) {
@@ -594,7 +594,7 @@ class OrderController extends Controller
                 $order->profile_border_color = $orderEmployee->profile_border_color ?? '#facc15';
                 $order->order_avatar_url = $orderEmployee->employee_avatar_url; // ✅ Utiliser employee_avatar_url pour les business admin inclus
             }
-            
+
             // Si c'est un employé dans une commande entreprise, vérifier si le business admin a un design défini
             // et l'ajouter dans employee_profile pour verrouiller la section de design
             if ($user->role === 'employee' && $order->order_type === 'business' && $order->user_id) {
@@ -605,12 +605,12 @@ class OrderController extends Controller
                         'employee_user_id' => $user->id,
                         'order_type' => $order->order_type,
                     ]);
-                    
+
                     // Trouver le business admin de cette commande (user_id de l'order)
                     $businessAdminOrderEmployee = OrderEmployee::where('order_id', $order->id)
                         ->where('employee_id', $order->user_id)
                         ->first();
-                    
+
                     \Log::info("OrderController::show - Business admin OrderEmployee trouvé", [
                         'found' => !!$businessAdminOrderEmployee,
                         'business_admin_order_employee_id' => $businessAdminOrderEmployee?->id,
@@ -618,22 +618,22 @@ class OrderController extends Controller
                         'card_design_number' => $businessAdminOrderEmployee?->card_design_number,
                         'no_design_yet' => $businessAdminOrderEmployee?->no_design_yet,
                     ]);
-                    
+
                     if ($businessAdminOrderEmployee) {
                         // Vérifier si le business admin a un design défini (pas no_design_yet et a un card_design_type)
-                        $hasAdminDesign = !$businessAdminOrderEmployee->no_design_yet && 
-                                         ($businessAdminOrderEmployee->card_design_type === 'template' || 
+                        $hasAdminDesign = !$businessAdminOrderEmployee->no_design_yet &&
+                                         ($businessAdminOrderEmployee->card_design_type === 'template' ||
                                           $businessAdminOrderEmployee->card_design_type === 'custom');
-                        
+
                         \Log::info("OrderController::show - Vérification hasAdminDesign", [
                             'hasAdminDesign' => $hasAdminDesign,
                             'no_design_yet' => $businessAdminOrderEmployee->no_design_yet,
                             'card_design_type' => $businessAdminOrderEmployee->card_design_type,
                         ]);
-                        
+
                         // TOUJOURS verrouiller la section pour l'employé, même si le business admin n'a pas encore de design
                         $employeeProfile['is_design_locked_by_admin'] = true;
-                        
+
                         if ($hasAdminDesign) {
                             // Ajouter les informations du design du business admin dans employee_profile
                             $employeeProfile['admin_design'] = [
@@ -641,14 +641,14 @@ class OrderController extends Controller
                                 'card_design_number' => $businessAdminOrderEmployee->card_design_number,
                                 'card_design_custom_url' => $businessAdminOrderEmployee->card_design_custom_url,
                             ];
-                            
+
                             // Appliquer automatiquement le design du business admin à l'employé
                             // (le backend l'a déjà fait dans updateProfile, mais on s'assure que c'est visible)
                             $employeeProfile['card_design_type'] = $businessAdminOrderEmployee->card_design_type;
                             $employeeProfile['card_design_number'] = $businessAdminOrderEmployee->card_design_number;
                             $employeeProfile['card_design_custom_url'] = $businessAdminOrderEmployee->card_design_custom_url;
                             $employeeProfile['no_design_yet'] = false;
-                            
+
                             \Log::info("OrderController::show - Design du business admin appliqué à l'employé", [
                                 'is_design_locked_by_admin' => $employeeProfile['is_design_locked_by_admin'],
                                 'card_design_type' => $employeeProfile['card_design_type'],
@@ -681,22 +681,22 @@ class OrderController extends Controller
                     'order_user_id' => $order->user_id ?? null,
                 ]);
             }
-            
+
             // Assigner employee_profile à l'order après toutes les modifications
             $order->employee_profile = $employeeProfile;
-            
+
             \Log::info("OrderController::show - employee_profile final assigné", [
                 'is_design_locked_by_admin' => $order->employee_profile['is_design_locked_by_admin'] ?? null,
                 'has_admin_design' => isset($order->employee_profile['admin_design']),
             ]);
         }
-        
+
         // IMPORTANT: Pour toutes les commandes (particuliers, business_admin), s'assurer que le username et access_token sont accessibles
         // au niveau racine pour faciliter l'accès depuis le frontend
         if ($order->user && $order->user->username) {
             $order->profile_username = $order->user->username;
         }
-        
+
         // IMPORTANT: S'assurer que order_employees est bien inclus dans la réponse JSON
         // Laravel peut sérialiser la relation avec le nom de la méthode (orderEmployees) plutôt que order_employees
         // On s'assure que les deux formats sont disponibles pour compatibilité
@@ -865,7 +865,7 @@ class OrderController extends Controller
                 // Compresser et stocker la nouvelle photo
                 $compressionService = new ImageCompressionService();
                 $result = $compressionService->compressImage($request->file('avatar'), 'employee_avatars');
-                
+
                 // ✅ CORRECTION : Vérifier que le fichier a bien été créé
                 if (!isset($result['path']) || !Storage::disk('public')->exists($result['path'])) {
                     Log::error('OrderController::uploadOrderAvatar - Fichier non créé après compression', [
@@ -877,9 +877,11 @@ class OrderController extends Controller
                         'message' => 'Erreur lors du stockage de la photo.',
                     ], 500);
                 }
-                
-                // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
-                $url = '/api/storage/' . $result['path'];
+
+                // ✅ CORRECTION : Utiliser Storage::url() pour générer l'URL correcte
+                // Laravel génère automatiquement l'URL basée sur la configuration (config/filesystems.php)
+                // En production avec Nginx, cela génère /storage/order_avatars/image.jpg
+                $url = Storage::disk('public')->url($result['path']);
 
                 // Mettre à jour l'URL de l'avatar de l'employé
                 $orderEmployee->update(['employee_avatar_url' => $url]);
@@ -912,7 +914,7 @@ class OrderController extends Controller
             // Compresser et stocker la nouvelle photo
             $compressionService = new ImageCompressionService();
             $result = $compressionService->compressImage($request->file('avatar'), 'order_avatars');
-            
+
             // ✅ CORRECTION : Vérifier que le fichier a bien été créé
             if (!isset($result['path']) || !Storage::disk('public')->exists($result['path'])) {
                 Log::error('OrderController::uploadOrderAvatar - Fichier non créé après compression', [
@@ -924,9 +926,11 @@ class OrderController extends Controller
                     'message' => 'Erreur lors du stockage de la photo.',
                 ], 500);
             }
-            
-            // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
-            $url = '/api/storage/' . $result['path'];
+
+            // ✅ CORRECTION : Utiliser Storage::url() pour générer l'URL correcte
+            // Laravel génère automatiquement l'URL basée sur la configuration (config/filesystems.php)
+            // En production avec Nginx, cela génère /storage/order_avatars/image.jpg
+            $url = Storage::disk('public')->url($result['path']);
 
             // Mettre à jour l'URL de l'avatar de la commande
             $order->update(['order_avatar_url' => $url]);
@@ -1053,11 +1057,11 @@ class OrderController extends Controller
 
             // Si c'est un business admin qui sauvegarde son design dans une commande entreprise où il est inclus,
             // appliquer ce design aux employés de cette commande
-            if ($user->role === 'business_admin' && 
+            if ($user->role === 'business_admin' &&
                 ($order->order_type === 'business' || $order->order_type === 'entreprise') &&
-                isset($validatedData['card_design_type']) && 
+                isset($validatedData['card_design_type']) &&
                 !($validatedData['no_design_yet'] ?? false)) {
-                
+
                 // Appliquer le design du business admin à tous les employés de cette commande
                 $designData = [
                     'card_design_type' => $validatedData['card_design_type'],
@@ -1126,13 +1130,17 @@ class OrderController extends Controller
             if (in_array($file->getMimeType(), ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'])) {
                 $compressionService = new ImageCompressionService();
                 $result = $compressionService->compressImage($file, 'custom_designs');
-                // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
-                $url = '/api/storage/' . $result['path'];
+                // ✅ CORRECTION : Utiliser Storage::url() pour générer l'URL correcte
+                // Laravel génère automatiquement l'URL basée sur la configuration (config/filesystems.php)
+                // En production avec Nginx, cela génère /storage/custom_designs/image.jpg
+                $url = Storage::disk('public')->url($result['path']);
             } else {
                 // Pour les fichiers non-image (PDF, SVG, etc.), stocker tel quel
                 $path = $file->store('custom_designs', 'public');
-                // ✅ CORRECTION : Utiliser /api/storage/ pour que la route API soit utilisée
-                $url = '/api/storage/' . $path;
+                // ✅ CORRECTION : Utiliser Storage::url() pour générer l'URL correcte
+                // Laravel génère automatiquement l'URL basée sur la configuration (config/filesystems.php)
+                // En production avec Nginx, cela génère /storage/custom_designs/file.pdf
+                $url = Storage::disk('public')->url($path);
             }
 
             // Si un order_id est fourni, mettre à jour la commande
@@ -1294,7 +1302,7 @@ class OrderController extends Controller
                 $cleanedQuantity = max(0, (int) ($employeeQuantity ?? 0));
                 // Inclure même si c'est 0, car cela signifie explicitement que cet employé ne doit pas recevoir de cartes
                 $cleanedEmployeesDistribution[$employeeId] = $cleanedQuantity;
-                
+
                 \Log::info('Ajout de cartes - Nettoyage valeur employé', [
                     'order_id' => $order->id,
                     'employee_id' => $employeeId,
@@ -1339,13 +1347,13 @@ class OrderController extends Controller
             // Identifier les employés réguliers (non business_admin)
             $adminEmployeeId = $user->id;
             $regularEmployeeIds = [];
-            
+
             foreach ($order->orderEmployees as $oe) {
                 // Exclure le business admin lui-même
                 if ($oe->employee_id == $adminEmployeeId) {
                     continue;
                 }
-                
+
                 // Si la relation employee est chargée, vérifier le rôle
                 if ($oe->employee) {
                     // Inclure seulement les employés qui ne sont pas business_admin
@@ -1358,12 +1366,12 @@ class OrderController extends Controller
                     $regularEmployeeIds[] = $oe->employee_id;
                 }
             }
-            
+
             $employeeIdsInDistribution = array_keys($cleanedEmployeesDistribution);
-            
+
             // Vérifier si tous les employés (non-admin) reçoivent des cartes
             $employeesWithoutCards = array_diff($regularEmployeeIds, $employeeIdsInDistribution);
-            
+
             \Log::info('Ajout de cartes - Vérification des employés', [
                 'order_id' => $order->id,
                 'admin_employee_id' => $adminEmployeeId,
@@ -1379,7 +1387,7 @@ class OrderController extends Controller
             if (count($regularEmployeeIds) > 0) {
                 // Vérifier que tous les employés réguliers sont présents dans la distribution
                 $missingEmployees = array_diff($regularEmployeeIds, array_keys($cleanedEmployeesDistribution));
-                
+
                 if (count($missingEmployees) > 0) {
                     \Log::warning('Ajout de cartes - Employés manquants dans la distribution', [
                         'order_id' => $order->id,
@@ -1453,7 +1461,7 @@ class OrderController extends Controller
             foreach ($cleanedEmployeesDistribution as $employeeId => $employeeQuantity) {
                 // Convertir explicitement en entier pour éviter les problèmes de type
                 $employeeQuantityInt = (int) $employeeQuantity;
-                
+
                 // Si la quantité est 0 ou négative, ne rien faire (l'employé ne doit PAS recevoir de cartes)
                 if ($employeeQuantityInt <= 0) {
                     \Log::info('Ajout de cartes - Employé avec quantité 0, aucune carte ajoutée (SÉCURISÉ)', [
@@ -1477,11 +1485,11 @@ class OrderController extends Controller
                         'quantity_to_add' => $employeeQuantityInt,
                         'old_card_quantity' => $oldEmployeeCardQuantity,
                     ]);
-                    
+
                     // Utiliser increment avec la quantité convertie en entier pour éviter les problèmes
                     $employeeOrderEmployee->increment('card_quantity', $employeeQuantityInt);
                     $employeeOrderEmployee->refresh();
-                    
+
                     \Log::info('Ajout de cartes pour un employé - APRÈS increment', [
                         'order_id' => $order->id,
                         'employee_id' => $employeeId,
@@ -1499,7 +1507,7 @@ class OrderController extends Controller
                     ], 400);
                 }
             }
-            
+
             // Log récapitulatif : combien d'employés ont reçu des cartes
             \Log::info('Ajout de cartes - Récapitulatif distribution employés', [
                 'order_id' => $order->id,
@@ -1553,7 +1561,7 @@ class OrderController extends Controller
         $freshOrderEmployees = \App\Models\OrderEmployee::where('order_id', $order->id)
             ->with('employee:id,name,email,username,role')
             ->get();
-        
+
         \Log::info('Ajout de cartes - État APRÈS refresh final (depuis DB)', [
             'order_id' => $order->id,
             'order_employees_from_db' => $freshOrderEmployees->map(function ($oe) {
@@ -1574,7 +1582,7 @@ class OrderController extends Controller
                 ];
             })->toArray(),
         ]);
-        
+
         // Utiliser les données fraîches de la DB pour la réponse
         $order->setRelation('orderEmployees', $freshOrderEmployees);
 
