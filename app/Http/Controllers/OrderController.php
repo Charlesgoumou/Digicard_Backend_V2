@@ -20,12 +20,48 @@ class OrderController extends Controller
     {
         $user = $request->user();
 
+        // ✅ OPTIMISATION : Pour les business_admin, charger uniquement les données essentielles
+        // et utiliser des select spécifiques pour éviter de charger toutes les colonnes
+        $isBusinessAdmin = $user->role === 'business_admin';
+        $isEmployee = $user->role === 'employee';
+        
         // Si l'utilisateur est un employé OU un business_admin qui s'est inclus dans une commande
         // On doit récupérer les commandes via order_employees
         $orderEmployees = OrderEmployee::where('employee_id', $user->id)
-            ->with(['order' => function ($query) {
-                $query->with(['orderEmployees.employee' => function ($q) {
-                    $q->select('id', 'name', 'email', 'username', 'avatar_url', 'role');
+            ->select('id', 'order_id', 'employee_id', 'card_quantity', 'is_configured', 
+                     'profile_name', 'profile_title', 'employee_avatar_url', 'profile_border_color',
+                     'save_contact_button_color', 'services_button_color', 'phone_numbers', 'emails',
+                     'birth_day', 'birth_month', 'website_url', 'address_neighborhood', 'address_commune',
+                     'address_city', 'address_country', 'whatsapp_url', 'linkedin_url', 'facebook_url',
+                     'twitter_url', 'youtube_url', 'deezer_url', 'spotify_url',
+                     'card_design_type', 'card_design_number', 'card_design_custom_url', 'no_design_yet',
+                     'created_at', 'updated_at')
+            ->with(['order' => function ($query) use ($isBusinessAdmin) {
+                // ✅ OPTIMISATION : Pour les business_admin, charger uniquement les colonnes essentielles
+                if ($isBusinessAdmin) {
+                    $query->select('id', 'user_id', 'order_number', 'order_type', 'card_quantity', 
+                                  'total_employees', 'employee_slots', 'unit_price', 'total_price',
+                                  'annual_subscription', 'subscription_start_date', 'status', 
+                                  'is_configured', 'access_token', 'created_at', 'updated_at');
+                }
+                // ✅ OPTIMISATION : Charger uniquement les colonnes essentielles des orderEmployees
+                // Pour les business_admin, on n'a pas besoin de tous les détails des employés dans la liste
+                $query->with(['orderEmployees' => function ($q) use ($isBusinessAdmin) {
+                    if ($isBusinessAdmin) {
+                        // Pour les business_admin, charger uniquement les données minimales nécessaires
+                        // Note: slot_number n'existe pas dans order_employees, il est dans employee_slots (JSON) de orders
+                        $q->select('id', 'order_id', 'employee_id', 'employee_name', 'employee_email',
+                                  'card_quantity', 'is_configured', 'created_at');
+                    }
+                    // ✅ OPTIMISATION : Charger uniquement les colonnes essentielles de l'employee
+                    $q->with(['employee' => function ($empQuery) use ($isBusinessAdmin) {
+                        if ($isBusinessAdmin) {
+                            // Pour les business_admin, charger uniquement le username pour les liens
+                            $empQuery->select('id', 'username');
+                        } else {
+                            $empQuery->select('id', 'name', 'email', 'username', 'avatar_url', 'role');
+                        }
+                    }]);
                 }]);
             }])
             ->orderBy('created_at', 'desc')
@@ -36,8 +72,36 @@ class OrderController extends Controller
             });
 
         if ($orderEmployees->isNotEmpty()) {
+            // ✅ OPTIMISATION : Pour les business_admin, éviter les requêtes supplémentaires dans la boucle
+            // Précharger toutes les données nécessaires en une seule requête
+            $orderIds = $orderEmployees->pluck('order_id')->unique();
+            $businessAdminOrderEmployees = null;
+            
+            if ($isEmployee) {
+                // Pour les employés, précharger les données du business admin pour toutes les commandes
+                // Récupérer les user_id des commandes depuis les orders déjà chargés
+                $businessAdminIds = collect();
+                foreach ($orderEmployees as $oe) {
+                    if ($oe->order && $oe->order->user_id) {
+                        $businessAdminIds->push($oe->order->user_id);
+                    }
+                }
+                $businessAdminIds = $businessAdminIds->unique()->filter();
+                
+                if ($businessAdminIds->isNotEmpty()) {
+                    $businessAdminOrderEmployees = OrderEmployee::whereIn('order_id', $orderIds)
+                        ->whereIn('employee_id', $businessAdminIds)
+                        ->select('id', 'order_id', 'employee_id', 'card_design_type', 'card_design_number', 
+                                'card_design_custom_url', 'no_design_yet')
+                        ->get()
+                        ->keyBy('order_id');
+                } else {
+                    $businessAdminOrderEmployees = collect();
+                }
+            }
+            
             // Mapper les commandes avec les informations spécifiques à l'employé/admin
-            $ordersFromEmployees = $orderEmployees->map(function ($orderEmployee) use ($user) {
+            $ordersFromEmployees = $orderEmployees->map(function ($orderEmployee) use ($user, $isBusinessAdmin, $isEmployee, $businessAdminOrderEmployees) {
                 $order = $orderEmployee->order;
 
                 // Ajouter les informations spécifiques à l'employé/admin
@@ -45,103 +109,83 @@ class OrderController extends Controller
                 $order->employee_is_configured = $orderEmployee->is_configured;
                 $order->employee_order_employee_id = $orderEmployee->id;
 
-                // IMPORTANT : Enrichir avec les données de profil individuelles de l'employé/admin
-                // Remplacer les données de la commande par les données de l'employé/admin
-                $order->profile_name = $orderEmployee->profile_name;
-                $order->profile_title = $orderEmployee->profile_title;
-                $order->profile_border_color = $orderEmployee->profile_border_color ?? '#facc15';
-                $order->order_avatar_url = $orderEmployee->employee_avatar_url; // Avatar unique
-                $order->is_configured = $orderEmployee->is_configured; // Statut de configuration
-
-                // Ajouter employee_profile avec toutes les données de profil et de design
-                // Cela permet au frontend de récupérer facilement les données de design
-                $order->employee_profile = [
-                    'profile_name' => $orderEmployee->profile_name,
-                    'profile_title' => $orderEmployee->profile_title,
-                    'employee_avatar_url' => $orderEmployee->employee_avatar_url,
-                    'profile_border_color' => $orderEmployee->profile_border_color,
-                    'save_contact_button_color' => $orderEmployee->save_contact_button_color,
-                    'services_button_color' => $orderEmployee->services_button_color,
-                    'phone_numbers' => $orderEmployee->phone_numbers,
-                    'emails' => $orderEmployee->emails,
-                    'birth_day' => $orderEmployee->birth_day,
-                    'birth_month' => $orderEmployee->birth_month,
-                    'website_url' => $orderEmployee->website_url,
-                    'address_neighborhood' => $orderEmployee->address_neighborhood,
-                    'address_commune' => $orderEmployee->address_commune,
-                    'address_city' => $orderEmployee->address_city,
-                    'address_country' => $orderEmployee->address_country,
-                    'whatsapp_url' => $orderEmployee->whatsapp_url,
-                    'linkedin_url' => $orderEmployee->linkedin_url,
-                    'facebook_url' => $orderEmployee->facebook_url,
-                    'twitter_url' => $orderEmployee->twitter_url,
-                    'youtube_url' => $orderEmployee->youtube_url,
-                    'deezer_url' => $orderEmployee->deezer_url,
-                    'spotify_url' => $orderEmployee->spotify_url,
-                    // Inclure les données de design
-                    'card_design_type' => $orderEmployee->card_design_type,
-                    'card_design_number' => $orderEmployee->card_design_number,
-                    'card_design_custom_url' => $orderEmployee->card_design_custom_url,
-                    'no_design_yet' => $orderEmployee->no_design_yet,
-                ];
-                
-                // Si c'est un business admin inclus, copier aussi les données de design au niveau racine de l'order
-                // pour que getDesignData dans OrdersView.vue puisse les trouver
-                if ($user->role === 'business_admin' && $orderEmployee) {
+                // ✅ OPTIMISATION : Pour les business_admin, charger uniquement les données de design
+                // Les autres données seront chargées à la demande via show()
+                if ($isBusinessAdmin) {
+                    $order->employee_profile = [
+                        'card_design_type' => $orderEmployee->card_design_type,
+                        'card_design_number' => $orderEmployee->card_design_number,
+                        'card_design_custom_url' => $orderEmployee->card_design_custom_url,
+                        'no_design_yet' => $orderEmployee->no_design_yet,
+                    ];
+                    
+                    // Copier aussi les données de design au niveau racine de l'order
                     $order->card_design_type = $orderEmployee->card_design_type;
                     $order->card_design_number = $orderEmployee->card_design_number;
                     $order->card_design_custom_url = $orderEmployee->card_design_custom_url;
                     $order->no_design_yet = $orderEmployee->no_design_yet;
-                }
-                
-                // Si c'est un employé dans une commande entreprise, vérifier si le business admin a un design défini
-                // et l'ajouter dans employee_profile pour verrouiller la section de design
-                if ($user->role === 'employee' && $order->order_type === 'business' && $order->user_id) {
-                    try {
-                        // Trouver le business admin de cette commande (user_id de l'order)
-                        $businessAdminOrderEmployee = OrderEmployee::where('order_id', $order->id)
-                            ->where('employee_id', $order->user_id)
-                            ->first();
+                } else {
+                    // Pour les employés, charger toutes les données de profil
+                    $order->profile_name = $orderEmployee->profile_name;
+                    $order->profile_title = $orderEmployee->profile_title;
+                    $order->profile_border_color = $orderEmployee->profile_border_color ?? '#facc15';
+                    $order->order_avatar_url = $orderEmployee->employee_avatar_url;
+                    $order->is_configured = $orderEmployee->is_configured;
+
+                    // Ajouter employee_profile avec toutes les données de profil et de design
+                    $order->employee_profile = [
+                        'profile_name' => $orderEmployee->profile_name,
+                        'profile_title' => $orderEmployee->profile_title,
+                        'employee_avatar_url' => $orderEmployee->employee_avatar_url,
+                        'profile_border_color' => $orderEmployee->profile_border_color,
+                        'save_contact_button_color' => $orderEmployee->save_contact_button_color,
+                        'services_button_color' => $orderEmployee->services_button_color,
+                        'phone_numbers' => $orderEmployee->phone_numbers,
+                        'emails' => $orderEmployee->emails,
+                        'birth_day' => $orderEmployee->birth_day,
+                        'birth_month' => $orderEmployee->birth_month,
+                        'website_url' => $orderEmployee->website_url,
+                        'address_neighborhood' => $orderEmployee->address_neighborhood,
+                        'address_commune' => $orderEmployee->address_commune,
+                        'address_city' => $orderEmployee->address_city,
+                        'address_country' => $orderEmployee->address_country,
+                        'whatsapp_url' => $orderEmployee->whatsapp_url,
+                        'linkedin_url' => $orderEmployee->linkedin_url,
+                        'facebook_url' => $orderEmployee->facebook_url,
+                        'twitter_url' => $orderEmployee->twitter_url,
+                        'youtube_url' => $orderEmployee->youtube_url,
+                        'deezer_url' => $orderEmployee->deezer_url,
+                        'spotify_url' => $orderEmployee->spotify_url,
+                        'card_design_type' => $orderEmployee->card_design_type,
+                        'card_design_number' => $orderEmployee->card_design_number,
+                        'card_design_custom_url' => $orderEmployee->card_design_custom_url,
+                        'no_design_yet' => $orderEmployee->no_design_yet,
+                    ];
+                    
+                    // ✅ OPTIMISATION : Utiliser les données préchargées au lieu de faire une requête par commande
+                    if ($isEmployee && $order->order_type === 'business' && $order->user_id && $businessAdminOrderEmployees) {
+                        $businessAdminOrderEmployee = $businessAdminOrderEmployees->get($order->id);
                         
                         if ($businessAdminOrderEmployee) {
-                            // S'assurer que employee_profile est un tableau
-                            if (!is_array($order->employee_profile)) {
-                                $order->employee_profile = [];
-                            }
-                            
-                            // Vérifier si le business admin a un design défini (pas no_design_yet et a un card_design_type)
                             $hasAdminDesign = !$businessAdminOrderEmployee->no_design_yet && 
                                              ($businessAdminOrderEmployee->card_design_type === 'template' || 
                                               $businessAdminOrderEmployee->card_design_type === 'custom');
                             
+                            $order->employee_profile['is_design_locked_by_admin'] = true;
+                            
                             if ($hasAdminDesign) {
-                                // Ajouter les informations du design du business admin dans employee_profile
                                 $order->employee_profile['admin_design'] = [
                                     'card_design_type' => $businessAdminOrderEmployee->card_design_type,
                                     'card_design_number' => $businessAdminOrderEmployee->card_design_number,
                                     'card_design_custom_url' => $businessAdminOrderEmployee->card_design_custom_url,
                                 ];
-                                // Indiquer que le design est verrouillé par le business admin
-                                $order->employee_profile['is_design_locked_by_admin'] = true;
                                 
-                                // Appliquer automatiquement le design du business admin à l'employé
-                                // (le backend l'a déjà fait dans updateProfile, mais on s'assure que c'est visible)
                                 $order->employee_profile['card_design_type'] = $businessAdminOrderEmployee->card_design_type;
                                 $order->employee_profile['card_design_number'] = $businessAdminOrderEmployee->card_design_number;
                                 $order->employee_profile['card_design_custom_url'] = $businessAdminOrderEmployee->card_design_custom_url;
                                 $order->employee_profile['no_design_yet'] = false;
-                            } else {
-                                // Même si le business admin n'a pas encore de design, verrouiller la section pour l'employé
-                                $order->employee_profile['is_design_locked_by_admin'] = true;
                             }
                         }
-                    } catch (\Exception $e) {
-                        // En cas d'erreur, logger l'erreur mais continuer sans bloquer
-                        \Log::error("Erreur lors de la vérification du design du business admin pour l'employé", [
-                            'order_id' => $order->id,
-                            'user_id' => $user->id,
-                            'error' => $e->getMessage(),
-                        ]);
                     }
                 }
 
@@ -153,20 +197,41 @@ class OrderController extends Controller
 
         // Si l'utilisateur est business_admin ou individual, récupérer aussi leurs commandes directes (non-business ou business sans inclusion)
         if ($user->role === 'business_admin' || $user->role === 'individual') {
-            $directOrders = $user->orders()
+            // ✅ OPTIMISATION : Utiliser select pour charger uniquement les colonnes nécessaires
+            $directOrdersQuery = $user->orders()
                 ->where('status', '!=', 'cancelled')
-                ->with(['orderEmployees.employee' => function ($query) {
+                ->select('id', 'user_id', 'order_number', 'order_type', 'card_quantity', 
+                        'total_employees', 'employee_slots', 'unit_price', 'total_price',
+                        'annual_subscription', 'subscription_start_date', 'status', 
+                        'is_configured', 'access_token', 'created_at', 'updated_at');
+            
+            // ✅ OPTIMISATION : Pour les business_admin, charger uniquement les données minimales des orderEmployees
+            if ($isBusinessAdmin) {
+                $directOrdersQuery->with(['orderEmployees' => function ($q) {
+                    // Note: slot_number n'existe pas dans order_employees, il est dans employee_slots (JSON) de orders
+                    $q->select('id', 'order_id', 'employee_id', 'employee_name', 'employee_email',
+                              'card_quantity', 'is_configured', 'created_at')
+                      ->with(['employee' => function ($empQuery) {
+                          $empQuery->select('id', 'username');
+                      }]);
+                }]);
+            } else {
+                // Pour les individual, charger les données complètes
+                $directOrdersQuery->with(['orderEmployees.employee' => function ($query) {
                     $query->select('id', 'name', 'email', 'username', 'avatar_url', 'role');
-                }])
+                }]);
+            }
+            
+            $directOrders = $directOrdersQuery
                 ->orderBy('created_at', 'desc')
                 ->get()
                 ->filter(function ($order) use ($ordersFromEmployees) {
                     // Exclure les commandes qui sont déjà dans ordersFromEmployees
                     return !$ordersFromEmployees->contains('id', $order->id);
                 })
-                ->map(function ($order) use ($user) {
-                    // Enrichir les employee_slots avec le username si manquant
-                    if ($order->employee_slots && is_array($order->employee_slots)) {
+                ->map(function ($order) use ($user, $isBusinessAdmin) {
+                    // ✅ OPTIMISATION : Pour les business_admin, enrichir les employee_slots uniquement si nécessaire
+                    if ($isBusinessAdmin && $order->employee_slots && is_array($order->employee_slots)) {
                         $orderEmployees = $order->orderEmployees->keyBy('employee_id');
 
                         $enrichedSlots = array_map(function($slot) use ($orderEmployees) {
@@ -183,44 +248,20 @@ class OrderController extends Controller
                         }, $order->employee_slots);
 
                         $order->employee_slots = $enrichedSlots;
-                    }
-                    
-                    // Si c'est un business admin et qu'il est inclus dans cette commande (via order_employees),
-                    // ajouter employee_profile avec les données de design
-                    if ($user->role === 'business_admin' && $order->order_type === 'business') {
+                        
+                        // ✅ OPTIMISATION : Pour les business_admin, charger employee_profile uniquement si l'admin est inclus
+                        // et seulement avec les données essentielles
                         $orderEmployee = $order->orderEmployees->firstWhere('employee_id', $user->id);
-                        if ($orderEmployee) {
+                        if ($orderEmployee && $order->order_type === 'business') {
+                            // ✅ OPTIMISATION : Charger employee_profile uniquement avec les données de design
+                            // Les autres données seront chargées à la demande via show()
                             $order->employee_profile = [
-                                'profile_name' => $orderEmployee->profile_name,
-                                'profile_title' => $orderEmployee->profile_title,
-                                'employee_avatar_url' => $orderEmployee->employee_avatar_url,
-                                'profile_border_color' => $orderEmployee->profile_border_color,
-                                'save_contact_button_color' => $orderEmployee->save_contact_button_color,
-                                'services_button_color' => $orderEmployee->services_button_color,
-                                'phone_numbers' => $orderEmployee->phone_numbers,
-                                'emails' => $orderEmployee->emails,
-                                'birth_day' => $orderEmployee->birth_day,
-                                'birth_month' => $orderEmployee->birth_month,
-                                'website_url' => $orderEmployee->website_url,
-                                'address_neighborhood' => $orderEmployee->address_neighborhood,
-                                'address_commune' => $orderEmployee->address_commune,
-                                'address_city' => $orderEmployee->address_city,
-                                'address_country' => $orderEmployee->address_country,
-                                'whatsapp_url' => $orderEmployee->whatsapp_url,
-                                'linkedin_url' => $orderEmployee->linkedin_url,
-                                'facebook_url' => $orderEmployee->facebook_url,
-                                'twitter_url' => $orderEmployee->twitter_url,
-                                'youtube_url' => $orderEmployee->youtube_url,
-                                'deezer_url' => $orderEmployee->deezer_url,
-                                'spotify_url' => $orderEmployee->spotify_url,
-                                // Inclure les données de design
                                 'card_design_type' => $orderEmployee->card_design_type,
                                 'card_design_number' => $orderEmployee->card_design_number,
                                 'card_design_custom_url' => $orderEmployee->card_design_custom_url,
                                 'no_design_yet' => $orderEmployee->no_design_yet,
                             ];
                             
-                            // IMPORTANT: Inclure le username et access_token pour les business_admin
                             if ($user->username) {
                                 $order->employee_profile['username'] = $user->username;
                             }
@@ -234,10 +275,28 @@ class OrderController extends Controller
                             $order->card_design_custom_url = $orderEmployee->card_design_custom_url;
                             $order->no_design_yet = $orderEmployee->no_design_yet;
                         }
+                    } else {
+                        // Pour les individual, comportement original (mais optimisé)
+                        if ($order->employee_slots && is_array($order->employee_slots)) {
+                            $orderEmployees = $order->orderEmployees->keyBy('employee_id');
+
+                            $enrichedSlots = array_map(function($slot) use ($orderEmployees) {
+                                if (isset($slot['employee_id']) && isset($orderEmployees[$slot['employee_id']])) {
+                                    $orderEmployee = $orderEmployees[$slot['employee_id']];
+                                    $slot['is_configured'] = $orderEmployee->is_configured;
+
+                                    if (!isset($slot['employee_username']) && $orderEmployee->employee) {
+                                        $slot['employee_username'] = $orderEmployee->employee->username;
+                                    }
+                                }
+                                return $slot;
+                            }, $order->employee_slots);
+
+                            $order->employee_slots = $enrichedSlots;
+                        }
                     }
                     
-                    // IMPORTANT: Pour toutes les commandes, s'assurer que le username et access_token sont accessibles
-                    // au niveau racine pour faciliter l'accès depuis le frontend
+                    // IMPORTANT: Pour toutes les commandes, s'assurer que le username est accessible
                     if ($user->username) {
                         $order->profile_username = $user->username;
                     }
