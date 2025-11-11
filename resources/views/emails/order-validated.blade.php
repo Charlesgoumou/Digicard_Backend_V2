@@ -196,7 +196,7 @@
             <p style="margin: 0 0 20px; color: #1f2937; line-height: 1.6;">
                 Nous vous confirmons que votre commande de cartes de visite digitales a été validée avec succès.
             </p>
-            
+
             <p style="margin: 0 0 20px; color: #1f2937; line-height: 1.6;">
                 Votre numéro de commande est : <strong style="color: #0ea5e9;">#{{ $order->order_number }}</strong>
             </p>
@@ -263,7 +263,7 @@
                     Informations de livraison
                 </p>
                 <p style="margin: 0; color: #475569; line-height: 1.6;">
-                    Votre commande sera livrée dans un délai de <strong>48 heures</strong> après validation. 
+                    Votre commande sera livrée dans un délai de <strong>48 heures</strong> après validation.
                     La livraison est <strong>gratuite</strong> partout à Conakry.
                 </p>
             </div>
@@ -278,10 +278,10 @@
                     Accéder à mon espace
                 </a>
             </div>
-            
+
             <p style="margin-top: 30px; font-size: 14px; color: #64748b; text-align: center;">
-                Si vous avez des questions concernant votre commande, n'hésitez pas à nous contacter à 
-                <a href="mailto:contact@arccenciel.com" style="color: #0ea5e9; text-decoration: none;">contact@arccenciel.com</a> 
+                Si vous avez des questions concernant votre commande, n'hésitez pas à nous contacter à
+                <a href="mailto:contact@arccenciel.com" style="color: #0ea5e9; text-decoration: none;">contact@arccenciel.com</a>
                 ou par téléphone au <a href="tel:+224613615732" style="color: #0ea5e9; text-decoration: none;">+224 613615732</a>.
             </p>
 
@@ -328,9 +328,9 @@
                 <h3>Article 3 : Souscription et Tarifs</h3>
                 <p>L'accès au service est conditionné par une souscription :</p>
                 <ul>
-                    <li><strong>Première souscription :</strong> Le coût initial pour la création et la fourniture de la carte est de 180 000 GNF par utilisateur.</li>
-                    <li><strong>Abonnement annuel :</strong> Un abonnement de 40 000 GNF par an et par utilisateur est requis pour maintenir l'hébergement et l'accessibilité de la page de présentation digitale.</li>
-                    <li><strong>Duplicata :</strong> La production d'une ou plusieurs cartes pour les besoins de l'utilisateur, la production pour des cas de perte, de vol ou de dommage, est facturée à 45 000 GNF l'unité.</li>
+                    <li><strong>Première souscription :</strong> Le coût initial pour la création et la fourniture de la carte est de {{ number_format($basePrice, 0, ',', ' ') }} GNF par utilisateur.</li>
+                    <li><strong>Abonnement annuel :</strong> Un abonnement de {{ number_format($annualPrice, 0, ',', ' ') }} GNF par an et par utilisateur est requis pour maintenir l'hébergement et l'accessibilité de la page de présentation digitale.</li>
+                    <li><strong>Duplicata :</strong> La production d'une ou plusieurs cartes pour les besoins de l'utilisateur, la production pour des cas de perte, de vol ou de dommage, est facturée à {{ number_format($extraPrice, 0, ',', ' ') }} GNF l'unité.</li>
                 </ul>
 
                 <h3>Article 4 : Montant de votre commande</h3>
@@ -419,7 +419,7 @@
                 © {{ date('Y') }} ARCC EN CIEL SARLU. Tous droits réservés.
             </p>
             <p style="font-size: 11px; color: #64748b; margin: 15px 0 0; line-height: 1.5; padding-top: 15px; border-top: 1px solid #334155;">
-                Cet email transactionnel vous a été envoyé suite à la validation de votre commande #{{ $order->order_number }} sur notre plateforme. 
+                Cet email transactionnel vous a été envoyé suite à la validation de votre commande #{{ $order->order_number }} sur notre plateforme.
                 Si vous n'avez pas effectué cette action, veuillez nous contacter immédiatement à <a href="mailto:contact@arccenciel.com" style="color: #38bdf8; text-decoration: none;">contact@arccenciel.com</a>.
             </p>
         </div>
