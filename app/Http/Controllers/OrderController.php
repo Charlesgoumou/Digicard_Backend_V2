@@ -1223,20 +1223,31 @@ class OrderController extends Controller
             \Log::error('Erreur lors de la création de la notification admin: ' . $t->getMessage());
         }
 
-        // Envoyer l'email de confirmation avec les CGU (en queue pour éviter les lenteurs)
+        // Envoyer l'email de confirmation avec les CGU
+        // Utiliser send() directement exactement comme pour les codes 2FA (qui fonctionnent)
         try {
-            // Utiliser queue() pour mettre l'email en queue
-            // La classe OrderValidated implémente ShouldQueue, donc l'email sera traité en arrière-plan
-            // Cela ne bloque pas la réponse HTTP et améliore grandement les performances
-            \Mail::to($user->email)->queue(new \App\Mail\OrderValidated($order, $user));
+            \Mail::to($user->email)->send(new \App\Mail\OrderValidated($order, $user));
+            \Log::info('Email de validation envoyé avec succès', [
+                'user_id' => $user->id,
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'email' => $user->email
+            ]);
         } catch (\Exception $e) {
-            \Log::error('Erreur lors de l\'envoi de l\'email de validation: ' . $e->getMessage());
-            // Continuer même si l'email échoue
+            \Log::error('Erreur lors de l\'envoi de l\'email de validation', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => $user->id,
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'email' => $user->email
+            ]);
+            // Continuer même si l'email échoue pour ne pas bloquer la validation de la commande
         }
 
         // Retourner uniquement les données essentielles pour éviter de charger toutes les relations
         return response()->json([
-            'message' => 'Félicitations, votre commande a été validée ! Vous recevrez un email résumant votre commande et les conditions générales d\'utilisation.',
+            'message' => 'Félicitations, votre commande a été validée ! Vous recevrez un email résumant votre commande et les conditions générales d\'utilisation. Votre commande sera livrée dans un délai de 48h, la livraison est gratuite partout à Conakry.',
             'order' => [
                 'id' => $order->id,
                 'status' => $order->status,
