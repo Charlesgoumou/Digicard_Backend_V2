@@ -55,7 +55,7 @@ class EmployeeController extends Controller
 
             // --- Bloc d'envoi d'email sécurisé ---
             try {
-                $loginUrl = config('app.url_frontend', 'http://localhost:5173');
+                $loginUrl = config('app.url_frontend', 'https://digicard.arccenciel.com/');
 
                 Mail::to($employee->email)->send(new EmployeeWelcomeMail(
                     $temporaryPassword,
@@ -366,11 +366,11 @@ class EmployeeController extends Controller
                 $additionalCardPrice = \App\Helpers\PricingHelper::getExtraPrice();
                 $latestOrder->card_quantity += 1;
                 $latestOrder->total_price += $additionalCardPrice;
-                
+
                 // Mettre à jour aussi les compteurs de cartes supplémentaires
                 $latestOrder->increment('additional_cards_count', 1);
                 $latestOrder->increment('additional_cards_total_price', $additionalCardPrice);
-                
+
                 \Log::info('Commande validée mise à jour après ajout de carte', [
                     'order_id' => $latestOrder->id,
                     'new_card_quantity' => $latestOrder->card_quantity,
@@ -392,7 +392,7 @@ class EmployeeController extends Controller
 
                 $latestOrder->card_quantity = $totalCards;
                 $latestOrder->total_price = $totalPrice;
-                
+
                 \Log::info('Commande non validée mise à jour après ajout de carte', [
                     'order_id' => $latestOrder->id,
                     'new_card_quantity' => $latestOrder->card_quantity,
@@ -402,7 +402,7 @@ class EmployeeController extends Controller
             }
 
             $latestOrder->save();
-            
+
             // Recharger les relations pour s'assurer que les données sont à jour
             $latestOrder->refresh();
             $orderEmployee->refresh();
@@ -652,7 +652,7 @@ class EmployeeController extends Controller
 
                 // Envoyer l'email de bienvenue
                 try {
-                    $loginUrl = config('app.url_frontend', 'http://localhost:5173');
+                    $loginUrl = config('app.url_frontend', 'https://digicard.arccenciel.com/');
                     Mail::to($employee->email)->send(new EmployeeWelcomeMail(
                         $temporaryPassword,
                         $employee->email,
