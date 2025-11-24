@@ -78,17 +78,44 @@ class SocialController extends Controller
         // Cela garantit que le state OAuth est correctement stocké
         $request->session()->save();
         
+        // ✅ CORRECTION PRODUCTION: Construire l'URI de redirection correcte
+        // Utiliser l'URL de l'application actuelle (production ou développement)
+        $redirectUri = config('services.google.redirect');
+        
+        // Si l'URI de redirection contient localhost en production, la corriger
+        if (config('app.env') === 'production' && str_contains($redirectUri, 'localhost')) {
+            $appUrl = config('app.url', env('APP_URL', 'http://localhost'));
+            // S'assurer que l'URL ne contient pas localhost en production
+            if (str_contains($appUrl, 'localhost')) {
+                // Utiliser l'URL de la requête actuelle pour déterminer le domaine
+                $currentUrl = $request->getSchemeAndHttpHost();
+                $redirectUri = rtrim($currentUrl, '/') . '/auth/google/callback';
+            } else {
+                $redirectUri = rtrim($appUrl, '/') . '/auth/google/callback';
+            }
+        }
+        
         Log::info("Google OAuth: Redirecting to Google", [
             'action' => $action,
             'session_id' => $request->session()->getId(),
             'session_driver' => config('session.driver'),
+            'redirect_uri' => $redirectUri,
+            'app_url' => config('app.url'),
+            'app_env' => config('app.env'),
         ]);
         
         // ✅ MODIFICATION: Forcer Google à toujours afficher l'écran "Choisir un compte"
         // même si l'utilisateur a une session active, pour permettre le changement d'adresse email
-        return Socialite::driver('google')
-            ->with(['prompt' => 'select_account'])
-            ->redirect();
+        // ✅ CORRECTION PRODUCTION: Forcer l'URI de redirection si nécessaire
+        $socialite = Socialite::driver('google')
+            ->with(['prompt' => 'select_account']);
+        
+        // Si l'URI de redirection doit être forcée, l'appliquer
+        if ($redirectUri !== config('services.google.redirect')) {
+            $socialite->redirectUri($redirectUri);
+        }
+        
+        return $socialite->redirect();
     }
 
     /**

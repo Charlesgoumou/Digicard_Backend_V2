@@ -38,6 +38,8 @@ return [
     'google' => [
         'client_id' => env('GOOGLE_CLIENT_ID'),
         'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        // ✅ CORRECTION PRODUCTION: Utiliser GOOGLE_REDIRECT_URI si défini, sinon construire à partir de APP_URL
+        // En production, GOOGLE_REDIRECT_URI doit être défini dans le .env
         'redirect' => env('GOOGLE_REDIRECT_URI', rtrim(env('APP_URL', 'http://localhost'), '/') . '/auth/google/callback'),
     ],
 
