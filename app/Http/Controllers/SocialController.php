@@ -93,30 +93,27 @@ class SocialController extends Controller
                 'new_uri' => $redirectUri,
                 'current_url' => $currentUrl,
             ]);
+            
+            // ✅ CORRECTION: Modifier temporairement la configuration pour forcer l'URI de redirection
+            // Socialite n'a pas de méthode redirectUri(), on doit modifier la config
+            config(['services.google.redirect' => $redirectUri]);
         }
         
         Log::info("Google OAuth: Redirecting to Google", [
             'action' => $action,
             'session_id' => $request->session()->getId(),
             'session_driver' => config('session.driver'),
-            'redirect_uri' => $redirectUri,
+            'redirect_uri' => config('services.google.redirect'),
             'app_url' => config('app.url'),
             'app_env' => config('app.env'),
+            'is_production' => $isProduction,
         ]);
         
         // ✅ MODIFICATION: Forcer Google à toujours afficher l'écran "Choisir un compte"
         // même si l'utilisateur a une session active, pour permettre le changement d'adresse email
-        // ✅ CORRECTION PRODUCTION: Forcer l'URI de redirection en production
-        $socialite = Socialite::driver('google')
-            ->with(['prompt' => 'select_account']);
-        
-        // En production, toujours forcer l'URI de redirection pour garantir qu'elle pointe vers le bon domaine
-        // En développement, utiliser la config par défaut
-        if ($isProduction) {
-            $socialite->redirectUri($redirectUri);
-        }
-        
-        return $socialite->redirect();
+        return Socialite::driver('google')
+            ->with(['prompt' => 'select_account'])
+            ->redirect();
     }
 
     /**
