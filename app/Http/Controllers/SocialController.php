@@ -697,12 +697,26 @@ class SocialController extends Controller
                     ];
                 })->toArray();
                 
-                // ✅ CRITIQUE: Stocker les comptes disponibles dans la session APRÈS la régénération
-                // et AVANT la redirection pour garantir qu'ils sont disponibles
+                // ✅ CORRECTION: Stocker les données OAuth dans le cache ET dans la session
+                // Le cache garantit la persistance même si la session change
+                $selectionToken = Str::random(64);
+                \Illuminate\Support\Facades\Cache::put(
+                    'google_oauth_selection_' . $selectionToken,
+                    [
+                        'accounts' => $availableAccounts,
+                        'email' => $googleUser->getEmail(),
+                        'google_id' => $googleUser->getId(),
+                        'session_id' => $request->session()->getId(),
+                    ],
+                    now()->addMinutes(10) // Valide pendant 10 minutes
+                );
+                
+                // Stocker aussi dans la session pour compatibilité
                 session([
                     'google_oauth_pending_accounts' => $availableAccounts,
                     'google_oauth_email' => $googleUser->getEmail(),
                     'google_oauth_id' => $googleUser->getId(),
+                    'google_oauth_selection_token' => $selectionToken, // Token pour récupérer depuis le cache
                 ]);
                 
                 // ✅ CRITIQUE: Forcer la sauvegarde de la session après avoir stocké les données OAuth
@@ -713,10 +727,15 @@ class SocialController extends Controller
                     'accounts_count' => count($availableAccounts),
                     'account_ids' => $completeUsers->pluck('id')->toArray(),
                     'session_id' => $request->session()->getId(),
+                    'selection_token' => substr($selectionToken, 0, 10) . '...',
                     'session_saved' => true,
                 ]);
                 
-                return redirect($this->buildFrontendUrl('/selection-compte'));
+                // Rediriger vers la sélection avec le token en paramètre pour récupération depuis le cache si nécessaire
+                $selectionUrl = $this->buildFrontendUrl('/selection-compte');
+                $selectionUrl .= '?token=' . $selectionToken;
+                
+                return redirect($selectionUrl);
             }
 
             // ✅ LOGIQUE: Vérifier si le profil est complet
@@ -956,6 +975,19 @@ class SocialController extends Controller
             $sessionId = session()->getId();
             $allSessionData = session()->all();
             
+            // ✅ CORRECTION: Récupérer les données depuis le cache si un token est fourni
+            $selectionToken = $request->input('token') ?? session('google_oauth_selection_token');
+            $cacheData = null;
+            
+            if ($selectionToken) {
+                $cacheData = \Illuminate\Support\Facades\Cache::get('google_oauth_selection_' . $selectionToken);
+                if ($cacheData) {
+                    Log::info("Google OAuth selectAccount: Data found in cache", [
+                        'token_prefix' => substr($selectionToken, 0, 10) . '...',
+                    ]);
+                }
+            }
+            
             Log::info("Google OAuth selectAccount: Session check", [
                 'session_id' => $sessionId,
                 'session_driver' => config('session.driver'),
@@ -965,19 +997,30 @@ class SocialController extends Controller
                 'has_google_oauth_pending_accounts' => session()->has('google_oauth_pending_accounts'),
                 'has_google_oauth_email' => session()->has('google_oauth_email'),
                 'has_google_oauth_id' => session()->has('google_oauth_id'),
+                'has_selection_token' => !empty($selectionToken),
+                'cache_data_found' => !empty($cacheData),
                 'all_session_keys' => array_keys($allSessionData),
             ]);
             
-            // Récupérer les comptes disponibles depuis la session
-            $pendingAccounts = session('google_oauth_pending_accounts', []);
-            $googleEmail = session('google_oauth_email');
-            $googleId = session('google_oauth_id');
+            // Récupérer les comptes disponibles depuis la session ou le cache
+            if ($cacheData) {
+                // Utiliser les données du cache
+                $pendingAccounts = $cacheData['accounts'] ?? [];
+                $googleEmail = $cacheData['email'] ?? null;
+                $googleId = $cacheData['google_id'] ?? null;
+            } else {
+                // Utiliser les données de la session
+                $pendingAccounts = session('google_oauth_pending_accounts', []);
+                $googleEmail = session('google_oauth_email');
+                $googleId = session('google_oauth_id');
+            }
 
             Log::info("Google OAuth selectAccount: Session data", [
                 'pending_accounts_count' => count($pendingAccounts),
                 'google_email' => $googleEmail,
                 'google_id' => $googleId ? 'present' : 'missing',
                 'pending_accounts' => $pendingAccounts,
+                'data_source' => $cacheData ? 'cache' : 'session',
             ]);
 
             if (empty($pendingAccounts) || !$googleEmail || !$googleId) {
@@ -987,6 +1030,8 @@ class SocialController extends Controller
                     'google_email_missing' => empty($googleEmail),
                     'google_id_missing' => empty($googleId),
                     'all_session_keys' => array_keys($allSessionData),
+                    'has_selection_token' => !empty($selectionToken),
+                    'cache_data_found' => !empty($cacheData),
                 ]);
                 return response()->json([
                     'message' => 'Session expirée. Veuillez vous reconnecter avec Google.',
@@ -1094,8 +1139,13 @@ class SocialController extends Controller
             // Définir la session 2FA à true pour bypasser la vérification par email
             session(['2fa_verified' => true]);
 
-            // Nettoyer la session OAuth
-            session()->forget(['google_oauth_pending_accounts', 'google_oauth_email', 'google_oauth_id']);
+            // Nettoyer la session OAuth et le cache
+            session()->forget(['google_oauth_pending_accounts', 'google_oauth_email', 'google_oauth_id', 'google_oauth_selection_token']);
+            
+            // Nettoyer aussi le cache si un token était utilisé
+            if ($selectionToken) {
+                \Illuminate\Support\Facades\Cache::forget('google_oauth_selection_' . $selectionToken);
+            }
 
             // Vérifier si le profil est complet
             $isProfileComplete = $user->is_profile_complete
@@ -1163,19 +1213,36 @@ class SocialController extends Controller
     public function getPendingAccounts(Request $request)
     {
         try {
+            // ✅ CORRECTION: Récupérer les données depuis le cache si un token est fourni
+            $selectionToken = $request->input('token') ?? session('google_oauth_selection_token');
+            $cacheData = null;
+            
+            if ($selectionToken) {
+                $cacheData = \Illuminate\Support\Facades\Cache::get('google_oauth_selection_' . $selectionToken);
+            }
+            
             Log::info('Get pending accounts: Session check', [
                 'session_id' => session()->getId(),
                 'has_pending_accounts' => session()->has('google_oauth_pending_accounts'),
                 'has_google_email' => session()->has('google_oauth_email'),
+                'has_selection_token' => !empty($selectionToken),
+                'cache_data_found' => !empty($cacheData),
             ]);
 
-            $pendingAccounts = session('google_oauth_pending_accounts', []);
-            $googleEmail = session('google_oauth_email');
+            // Récupérer depuis le cache ou la session
+            if ($cacheData) {
+                $pendingAccounts = $cacheData['accounts'] ?? [];
+                $googleEmail = $cacheData['email'] ?? null;
+            } else {
+                $pendingAccounts = session('google_oauth_pending_accounts', []);
+                $googleEmail = session('google_oauth_email');
+            }
 
             if (empty($pendingAccounts) || !$googleEmail) {
                 Log::info('Get pending accounts: No pending accounts found', [
                     'pending_accounts_count' => count($pendingAccounts),
                     'has_google_email' => !empty($googleEmail),
+                    'data_source' => $cacheData ? 'cache' : 'session',
                 ]);
                 
                 // Retourner un 200 avec un tableau vide plutôt qu'un 404
@@ -1189,6 +1256,7 @@ class SocialController extends Controller
             Log::info('Get pending accounts: Success', [
                 'email' => $googleEmail,
                 'accounts_count' => count($pendingAccounts),
+                'data_source' => $cacheData ? 'cache' : 'session',
             ]);
 
             return response()->json([
