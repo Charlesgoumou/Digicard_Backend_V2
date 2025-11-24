@@ -79,20 +79,20 @@ class SocialController extends Controller
         $request->session()->save();
         
         // ✅ CORRECTION PRODUCTION: Construire l'URI de redirection correcte
-        // Utiliser l'URL de l'application actuelle (production ou développement)
+        // Détecter automatiquement l'environnement de production en vérifiant l'URL de la requête
         $redirectUri = config('services.google.redirect');
+        $currentUrl = $request->getSchemeAndHttpHost();
+        $isProduction = !str_contains($currentUrl, 'localhost') && !str_contains($currentUrl, '127.0.0.1');
         
-        // Si l'URI de redirection contient localhost en production, la corriger
-        if (config('app.env') === 'production' && str_contains($redirectUri, 'localhost')) {
-            $appUrl = config('app.url', env('APP_URL', 'http://localhost'));
-            // S'assurer que l'URL ne contient pas localhost en production
-            if (str_contains($appUrl, 'localhost')) {
-                // Utiliser l'URL de la requête actuelle pour déterminer le domaine
-                $currentUrl = $request->getSchemeAndHttpHost();
-                $redirectUri = rtrim($currentUrl, '/') . '/auth/google/callback';
-            } else {
-                $redirectUri = rtrim($appUrl, '/') . '/auth/google/callback';
-            }
+        // Si on est en production (URL ne contient pas localhost) et que l'URI de redirection contient localhost, la corriger
+        if ($isProduction && str_contains($redirectUri, 'localhost')) {
+            // Utiliser l'URL de la requête actuelle pour construire l'URI de redirection
+            $redirectUri = rtrim($currentUrl, '/') . '/auth/google/callback';
+            Log::warning("Google OAuth: URI de redirection corrigée automatiquement pour la production", [
+                'old_uri' => config('services.google.redirect'),
+                'new_uri' => $redirectUri,
+                'current_url' => $currentUrl,
+            ]);
         }
         
         Log::info("Google OAuth: Redirecting to Google", [
@@ -106,12 +106,13 @@ class SocialController extends Controller
         
         // ✅ MODIFICATION: Forcer Google à toujours afficher l'écran "Choisir un compte"
         // même si l'utilisateur a une session active, pour permettre le changement d'adresse email
-        // ✅ CORRECTION PRODUCTION: Forcer l'URI de redirection si nécessaire
+        // ✅ CORRECTION PRODUCTION: Forcer l'URI de redirection en production
         $socialite = Socialite::driver('google')
             ->with(['prompt' => 'select_account']);
         
-        // Si l'URI de redirection doit être forcée, l'appliquer
-        if ($redirectUri !== config('services.google.redirect')) {
+        // En production, toujours forcer l'URI de redirection pour garantir qu'elle pointe vers le bon domaine
+        // En développement, utiliser la config par défaut
+        if ($isProduction) {
             $socialite->redirectUri($redirectUri);
         }
         
