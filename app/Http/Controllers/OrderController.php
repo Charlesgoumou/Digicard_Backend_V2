@@ -1249,19 +1249,8 @@ class OrderController extends Controller
             // ✅ MODIFICATION: URL de retour après paiement : pointer vers le frontend Vue
             // En développement local, le frontend tourne sur localhost:5173, le backend sur localhost:8000
             // En production, ils sont généralement sur le même domaine (APP_URL)
-            $frontendUrl = env('FRONTEND_URL');
-            
-            // Si FRONTEND_URL n'est pas défini, utiliser APP_URL pour la production
-            // ou localhost:5173 pour le développement local
-            if (!$frontendUrl) {
-                if (app()->environment('production')) {
-                    // En production, utiliser APP_URL (même domaine que le backend)
-                    $frontendUrl = config('app.url');
-                } else {
-                    // En développement local, utiliser localhost:5173
-                    $frontendUrl = 'http://localhost:5173';
-                }
-            }
+            // ✅ CORRECTION: Utiliser config('app.frontend_url') qui gère déjà la logique de nettoyage
+            $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
             
             // ✅ CORRECTION: Nettoyer l'URL pour ne prendre que la première URL valide
             // Si plusieurs URLs sont séparées par une virgule, prendre seulement la première
@@ -1270,6 +1259,16 @@ class OrderController extends Controller
                 $frontendUrl = trim($urls[0]); // Prendre la première URL
             }
             $frontendUrl = trim($frontendUrl);
+            
+            // ✅ CRITIQUE: En production, s'assurer que l'URL pointe vers le frontend, pas le backend
+            if (app()->environment('production') && str_contains($frontendUrl, 'api.digicard.arccenciel.com')) {
+                // Remplacer api.digicard par digicard pour pointer vers le frontend
+                $frontendUrl = str_replace('api.digicard.arccenciel.com', 'digicard.arccenciel.com', $frontendUrl);
+                Log::warning("OrderController: Frontend URL corrigée pour pointer vers le frontend", [
+                    'original_url' => config('app.frontend_url'),
+                    'corrected_url' => $frontendUrl,
+                ]);
+            }
             
             $returnUrl = rtrim($frontendUrl, '/') . '/mes-commandes?payment=success&order_id=' . $order->id;
             $notifyUrl = url('/') . '/api/payment/webhook'; // URL du webhook (URL complète pour que Chap Chap Pay puisse l'appeler)
@@ -2603,14 +2602,8 @@ class OrderController extends Controller
             $amount = (int) $additionalCardsTotalPrice;
             
             // Construire les URLs
-            $frontendUrl = env('FRONTEND_URL');
-            if (!$frontendUrl) {
-                if (app()->environment('production')) {
-                    $frontendUrl = config('app.url');
-                } else {
-                    $frontendUrl = 'http://localhost:5173';
-                }
-            }
+            // ✅ CORRECTION: Utiliser config('app.frontend_url') qui gère déjà la logique de nettoyage
+            $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
             
             // ✅ CORRECTION: Nettoyer l'URL pour ne prendre que la première URL valide
             // Si plusieurs URLs sont séparées par une virgule, prendre seulement la première
@@ -2619,6 +2612,16 @@ class OrderController extends Controller
                 $frontendUrl = trim($urls[0]); // Prendre la première URL
             }
             $frontendUrl = trim($frontendUrl);
+            
+            // ✅ CRITIQUE: En production, s'assurer que l'URL pointe vers le frontend, pas le backend
+            if (app()->environment('production') && str_contains($frontendUrl, 'api.digicard.arccenciel.com')) {
+                // Remplacer api.digicard par digicard pour pointer vers le frontend
+                $frontendUrl = str_replace('api.digicard.arccenciel.com', 'digicard.arccenciel.com', $frontendUrl);
+                Log::warning("OrderController: Frontend URL corrigée pour pointer vers le frontend (additional cards)", [
+                    'original_url' => config('app.frontend_url'),
+                    'corrected_url' => $frontendUrl,
+                ]);
+            }
             
             $returnUrl = rtrim($frontendUrl, '/') . '/mes-commandes?payment=success&additional_payment_id=' . $additionalPayment->id;
             $notifyUrl = url('/') . '/api/payment/webhook-additional-cards';
