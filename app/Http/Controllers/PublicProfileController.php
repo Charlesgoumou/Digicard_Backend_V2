@@ -409,6 +409,7 @@ class PublicProfileController extends Controller
         }
 
         // Vérifier si le business_admin a une page entreprise publiée
+        // IMPORTANT: Utiliser la page entreprise de la commande spécifique si disponible
         $companyPagePublished = false;
         $companyPageUsername = null; // Pour stocker le username du business admin
         $companyWebsiteUrl = null; // URL du site web de l'entreprise
@@ -419,9 +420,27 @@ class PublicProfileController extends Controller
         
         if ($user->role === 'business_admin') {
             // Pour un business_admin, vérifier sa propre page
-            $companyPage = CompanyPage::where('user_id', $user->id)
-                ->where('is_published', true)
-                ->first();
+            // Si une commande est fournie, utiliser la page entreprise de cette commande spécifique
+            if ($order && $order->id) {
+                $companyPage = CompanyPage::where('order_id', $order->id)
+                    ->where('user_id', $user->id)
+                    ->where('is_published', true)
+                    ->first();
+                
+                // Si pas de page pour cette commande, fallback sur une page sans order_id
+                if (!$companyPage) {
+                    $companyPage = CompanyPage::where('user_id', $user->id)
+                        ->whereNull('order_id')
+                        ->where('is_published', true)
+                        ->first();
+                }
+            } else {
+                // Pas de commande spécifique, utiliser la logique par défaut
+                $companyPage = CompanyPage::where('user_id', $user->id)
+                    ->where('is_published', true)
+                    ->first();
+            }
+            
             $companyPagePublished = !is_null($companyPage);
             if ($companyPagePublished) {
                 $companyPageUsername = $user->username;
@@ -430,19 +449,44 @@ class PublicProfileController extends Controller
             }
         } elseif ($user->role === 'employee') {
             // Pour un employé, trouver son business admin via order_employees
-            $employeeOrder = \App\Models\OrderEmployee::where('employee_id', $user->id)
-                ->where('is_configured', true)
-                ->first();
+            // Utiliser la commande spécifique si disponible (orderEmployee), sinon chercher
+            $targetOrderId = null;
+            
+            if ($orderEmployee && $orderEmployee->order_id) {
+                // Si un orderEmployee est fourni, utiliser sa commande
+                $targetOrderId = $orderEmployee->order_id;
+            } elseif ($order && $order->id) {
+                // Sinon, utiliser la commande fournie directement
+                $targetOrderId = $order->id;
+            } else {
+                // Fallback : chercher la première commande de l'employé
+                $employeeOrder = \App\Models\OrderEmployee::where('employee_id', $user->id)
+                    ->where('is_configured', true)
+                    ->first();
+                if ($employeeOrder) {
+                    $targetOrderId = $employeeOrder->order_id;
+                }
+            }
 
-            if ($employeeOrder) {
-                $businessAdminOrder = Order::find($employeeOrder->order_id);
+            if ($targetOrderId) {
+                $businessAdminOrder = Order::find($targetOrderId);
                 if ($businessAdminOrder) {
                     $businessAdmin = User::find($businessAdminOrder->user_id);
                     if ($businessAdmin && $businessAdmin->role === 'business_admin') {
-                        // Vérifier si le business admin a une page publiée
-                        $companyPage = CompanyPage::where('user_id', $businessAdmin->id)
+                        // Utiliser la page entreprise de la commande spécifique
+                        $companyPage = CompanyPage::where('order_id', $targetOrderId)
+                            ->where('user_id', $businessAdmin->id)
                             ->where('is_published', true)
                             ->first();
+                        
+                        // Si pas de page pour cette commande, fallback sur une page sans order_id
+                        if (!$companyPage) {
+                            $companyPage = CompanyPage::where('user_id', $businessAdmin->id)
+                                ->whereNull('order_id')
+                                ->where('is_published', true)
+                                ->first();
+                        }
+                        
                         $companyPagePublished = !is_null($companyPage);
                         if ($companyPagePublished) {
                             $companyPageUsername = $businessAdmin->username;

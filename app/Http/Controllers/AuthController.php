@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Mail;
 use App\Mail\VerificationCodeMail;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 
 class AuthController extends Controller
 {
@@ -48,6 +49,8 @@ class AuthController extends Controller
 
         $role = ($request->user_type === 'business') ? 'business_admin' : 'individual';
         $companyName = ($role === 'business_admin') ? $request->company_name : null;
+        // ✅ MODIFICATION: Définir account_type en fonction de user_type pour l'inscription classique
+        $accountType = ($request->user_type === 'business') ? 'company' : 'individual';
 
         // ✅ Vérifier l'unicité de la combinaison (email, role)
         $existingUser = User::where('email', $request->email)
@@ -79,6 +82,7 @@ class AuthController extends Controller
             'password' => Hash::make($validatedData['password']),
             'username' => $username, // <-- Ajout du username généré
             'role' => $role,
+            'account_type' => $accountType, // ✅ MODIFICATION: Définir account_type lors de l'inscription classique
             'company_name' => $companyName,
             'initial_password_set' => ($role !== 'employee'),
             // Sauvegarder le téléphone principal et l'ajouter aussi dans la liste JSON
@@ -532,6 +536,9 @@ class AuthController extends Controller
                 'avatar_url' => $user->avatar_url,
                 'email_verified_at' => $user->email_verified_at,
                 'is_admin' => $user->is_admin ?? false,
+                'is_profile_complete' => $user->is_profile_complete ?? false,
+                'account_type' => $user->account_type, // ✅ MODIFICATION: Inclure account_type pour permettre le verrouillage dans FinalizeRegistrationView
+                'google_id' => $user->google_id, // ✅ MODIFICATION: Inclure google_id pour détecter les inscriptions classiques vs Google
             ]
         ], 200);
     }
@@ -545,5 +552,568 @@ class AuthController extends Controller
         $request->session()->invalidate();
         $request->session()->regenerateToken();
         return response()->json(['message' => 'Déconnexion réussie.']);
+    }
+
+    /**
+     * Finalise le profil d'un utilisateur Google (après connexion OAuth).
+     * 
+     * Règles métier:
+     * - Téléphone obligatoire pour tous
+     * - Type de compte obligatoire (individual ou company)
+     * - Si type = company, nom de l'entreprise obligatoire
+     * - Met à jour is_profile_complete à true
+     */
+    public function completeProfile(Request $request)
+    {
+        $request->validate([
+            'phone' => ['required', 'string', 'regex:/^\+224[0-9]{9}$/'],
+            'account_type' => 'required|in:individual,company,employee',
+            'company_name' => 'required_if:account_type,company|nullable|string|max:255',
+        ]);
+
+        $user = Auth::user();
+
+        if (!$user) {
+            return response()->json(['message' => 'Utilisateur non authentifié.'], 401);
+        }
+
+        // ✅ Si l'utilisateur est un employé invité, forcer account_type à 'employee'
+        // et s'assurer que le rôle est 'employee'
+        if ($user->role === 'employee') {
+            $request->merge(['account_type' => 'employee']);
+        }
+
+        // Déterminer le rôle en fonction du type de compte
+        if ($request->account_type === 'employee') {
+            $role = 'employee';
+            $companyName = null;
+        } elseif ($request->account_type === 'company') {
+            $role = 'business_admin';
+            $companyName = $request->company_name;
+        } else {
+            $role = 'individual';
+            $companyName = null;
+        }
+
+        // Utiliser une transaction pour garantir l'intégrité des données
+        return DB::transaction(function () use ($user, $request, $role, $companyName) {
+            // ✅ Pour les employés invités, ne pas faire de fusion de comptes
+            // Un employé est déjà créé par le business admin et ne doit pas fusionner avec d'autres comptes
+            if ($user->role === 'employee') {
+                // Pour un employé, on met simplement à jour le téléphone et is_profile_complete
+                // Pas de logique de fusion ni de changement de rôle
+                $user = User::where('id', $user->id)->lockForUpdate()->first();
+                
+                $updateData = [
+                    'phone' => $request->phone,
+                    'is_profile_complete' => true,
+                    'updated_at' => now(),
+                ];
+                
+                // Synchroniser avec vcard_phone si nécessaire
+                if (!$user->vcard_phone) {
+                    $updateData['vcard_phone'] = $request->phone;
+                }
+                
+                // Ajouter le téléphone dans phone_numbers si ce n'est pas déjà le cas
+                $phoneNumbers = $user->phone_numbers ?? [];
+                if (!in_array($request->phone, $phoneNumbers)) {
+                    $phoneNumbers[] = $request->phone;
+                    $updateData['phone_numbers'] = json_encode($phoneNumbers);
+                }
+                
+                // Mettre à jour uniquement les champs nécessaires
+                DB::table('users')
+                    ->where('id', $user->id)
+                    ->update($updateData);
+                
+                // Rafraîchir l'utilisateur depuis la base de données
+                $user = $user->fresh();
+                
+                return response()->json([
+                    'message' => 'Profil d\'employé finalisé avec succès. Vous pouvez maintenant accéder à votre tableau de bord.',
+                    'user' => $user,
+                ]);
+            }
+            
+            // ✅ ÉTAPE 1: Récupérer le google_id de l'utilisateur actuel (AVANT toute modification)
+            $googleId = $user->google_id;
+
+            // ✅ ÉTAPE 2: Vérifier le "Google ID Owner" (PRIORITÉ ABSOLUE)
+            // Chercher si un autre utilisateur (excluant l'actuel) possède déjà ce google_id
+            // Cette vérification doit être faite AVANT toute modification de $user
+            $owner = null;
+            if ($googleId) {
+                $owner = User::where('google_id', $googleId)
+                    ->where('id', '!=', $user->id)
+                    ->lockForUpdate() // Verrouiller la ligne pour éviter les conditions de course
+                    ->first();
+            }
+
+            // ✅ BRANCHING LOGIC - IF: Google ID Owner existe (MERGE SCENARIO)
+            if ($owner) {
+                Log::info("Account merge: Google ID owner found", [
+                    'current_user_id' => $user->id,
+                    'owner_user_id' => $owner->id,
+                    'google_id' => $googleId
+                ]);
+
+                // Mettre à jour le owner avec les nouvelles données (seulement si vides)
+                if (!$owner->phone) {
+                    $owner->phone = $request->phone;
+                }
+                if (!$owner->account_type) {
+                    $owner->account_type = $request->account_type;
+                    $owner->role = $role;
+                }
+                if (!$owner->company_name && $companyName) {
+                    $owner->company_name = $companyName;
+                }
+                $owner->is_profile_complete = true;
+                
+                // Synchroniser avec vcard_phone si nécessaire
+                if (!$owner->vcard_phone) {
+                    $owner->vcard_phone = $request->phone;
+                }
+                
+                // Ajouter le téléphone dans phone_numbers si ce n'est pas déjà le cas
+                $phoneNumbers = $owner->phone_numbers ?? [];
+                if (!in_array($request->phone, $phoneNumbers)) {
+                    $phoneNumbers[] = $request->phone;
+                    $owner->phone_numbers = $phoneNumbers;
+                }
+
+                // Sauvegarder le owner
+                $owner->save();
+
+                // Supprimer l'utilisateur temporaire actuel
+                $tempUserId = $user->id;
+                $user->delete();
+                Log::info("Account merge: Temporary user deleted", ['deleted_user_id' => $tempUserId]);
+
+                // Connecter le owner
+                Auth::login($owner);
+
+                // Retourner la réponse
+                return response()->json([
+                    'message' => 'Profil finalisé avec succès. Compte fusionné avec votre compte existant.',
+                    'user' => $owner->fresh(),
+                ]);
+            }
+
+            // ✅ BRANCHING LOGIC - ELSE IF: Vérifier la collision Email + Role
+            $target = User::where('email', $user->email)
+                ->where('role', $role)
+                ->where('id', '!=', $user->id)
+                ->first();
+
+            if ($target) {
+                Log::info("Account merge: Email + Role collision found", [
+                    'current_user_id' => $user->id,
+                    'target_user_id' => $target->id,
+                    'email' => $user->email,
+                    'role' => $role
+                ]);
+
+                // ✅ CRITIQUE: Vérifier si le google_id est déjà pris par un autre utilisateur
+                // (qui n'est ni le current user ni le target)
+                if ($googleId && !$target->google_id) {
+                    $googleIdOwner = User::where('google_id', $googleId)
+                        ->where('id', '!=', $user->id)
+                        ->where('id', '!=', $target->id)
+                        ->lockForUpdate() // Verrouiller la ligne pour éviter les conditions de course
+                        ->first();
+                    
+                    if ($googleIdOwner) {
+                        // Le google_id est déjà pris par un autre utilisateur
+                        // On ne peut pas l'assigner au target, on doit fusionner vers le googleIdOwner
+                        Log::info("Account merge: Google ID already owned by another user, redirecting merge", [
+                            'google_id_owner_id' => $googleIdOwner->id,
+                            'target_user_id' => $target->id,
+                            'current_user_id' => $user->id
+                        ]);
+                        
+                        // Mettre à jour le googleIdOwner avec les nouvelles données
+                        if (!$googleIdOwner->phone) {
+                            $googleIdOwner->phone = $request->phone;
+                        }
+                        if (!$googleIdOwner->account_type) {
+                            $googleIdOwner->account_type = $request->account_type;
+                            $googleIdOwner->role = $role;
+                        }
+                        if (!$googleIdOwner->company_name && $companyName) {
+                            $googleIdOwner->company_name = $companyName;
+                        }
+                        $googleIdOwner->is_profile_complete = true;
+                        
+                        // Synchroniser avec vcard_phone si nécessaire
+                        if (!$googleIdOwner->vcard_phone) {
+                            $googleIdOwner->vcard_phone = $request->phone;
+                        }
+                        
+                        // Ajouter le téléphone dans phone_numbers si ce n'est pas déjà le cas
+                        $phoneNumbers = $googleIdOwner->phone_numbers ?? [];
+                        if (!in_array($request->phone, $phoneNumbers)) {
+                            $phoneNumbers[] = $request->phone;
+                            $googleIdOwner->phone_numbers = $phoneNumbers;
+                        }
+                        
+                        // Sauvegarder le googleIdOwner
+                        $googleIdOwner->save();
+                        
+                        // Supprimer l'utilisateur temporaire actuel
+                        $tempUserId = $user->id;
+                        $user->delete();
+                        Log::info("Account merge: Temporary user deleted", ['deleted_user_id' => $tempUserId]);
+                        
+                        // Connecter le googleIdOwner
+                        Auth::login($googleIdOwner);
+                        
+                        // Retourner la réponse
+                        return response()->json([
+                            'message' => 'Profil finalisé avec succès. Compte fusionné avec votre compte existant.',
+                            'user' => $googleIdOwner->fresh(),
+                        ]);
+                    }
+                    
+                    // Le google_id n'est pas pris, on peut l'assigner au target
+                    // On l'ajoutera dans updateData ci-dessous
+                }
+
+                // ✅ DERNIÈRE VÉRIFICATION: Vérifier une dernière fois juste avant la mise à jour
+                // pour éviter toute condition de course avec le google_id
+                if ($googleId && !$target->google_id) {
+                    $finalGoogleIdCheck = User::where('google_id', $googleId)
+                        ->where('id', '!=', $user->id)
+                        ->where('id', '!=', $target->id)
+                        ->lockForUpdate()
+                        ->first();
+                    
+                    if ($finalGoogleIdCheck) {
+                        // Le google_id est maintenant pris (condition de course détectée)
+                        // Fusionner vers le finalGoogleIdCheck
+                        Log::info("Account merge: Google ID collision detected in ELSE IF final check", [
+                            'current_user_id' => $user->id,
+                            'target_user_id' => $target->id,
+                            'final_google_id_owner_id' => $finalGoogleIdCheck->id,
+                            'google_id' => $googleId
+                        ]);
+                        
+                        // Mettre à jour le finalGoogleIdCheck avec les nouvelles données
+                        if (!$finalGoogleIdCheck->phone) {
+                            $finalGoogleIdCheck->phone = $request->phone;
+                        }
+                        if (!$finalGoogleIdCheck->account_type) {
+                            $finalGoogleIdCheck->account_type = $request->account_type;
+                            $finalGoogleIdCheck->role = $role;
+                        }
+                        if (!$finalGoogleIdCheck->company_name && $companyName) {
+                            $finalGoogleIdCheck->company_name = $companyName;
+                        }
+                        $finalGoogleIdCheck->is_profile_complete = true;
+                        
+                        if (!$finalGoogleIdCheck->vcard_phone) {
+                            $finalGoogleIdCheck->vcard_phone = $request->phone;
+                        }
+                        
+                        $phoneNumbers = $finalGoogleIdCheck->phone_numbers ?? [];
+                        if (!in_array($request->phone, $phoneNumbers)) {
+                            $phoneNumbers[] = $request->phone;
+                            $finalGoogleIdCheck->phone_numbers = $phoneNumbers;
+                        }
+                        
+                        $finalGoogleIdCheck->save();
+                        
+                        $tempUserId = $user->id;
+                        $user->delete();
+                        Log::info("Account merge: Temporary user deleted", ['deleted_user_id' => $tempUserId]);
+                        
+                        Auth::login($finalGoogleIdCheck);
+                        
+                        return response()->json([
+                            'message' => 'Profil finalisé avec succès. Compte fusionné avec votre compte existant.',
+                            'user' => $finalGoogleIdCheck->fresh(),
+                        ]);
+                    }
+                }
+                
+                // Préparer les données à mettre à jour
+                $updateData = [
+                    'phone' => $request->phone,
+                    'account_type' => $request->account_type,
+                    'company_name' => $companyName,
+                    'is_profile_complete' => true,
+                    'updated_at' => now(),
+                ];
+                
+                // Ajouter le google_id seulement si on a vérifié qu'il n'est pas pris (vérification finale incluse)
+                if ($googleId && !$target->google_id) {
+                    // Double vérification : s'assurer que le google_id n'est toujours pas pris
+                    $stillAvailable = !User::where('google_id', $googleId)
+                        ->where('id', '!=', $user->id)
+                        ->where('id', '!=', $target->id)
+                        ->exists();
+                    
+                    if ($stillAvailable) {
+                        $updateData['google_id'] = $googleId;
+                    } else {
+                        Log::warning("Google ID became unavailable between checks, skipping assignment", [
+                            'google_id' => $googleId,
+                            'target_id' => $target->id
+                        ]);
+                    }
+                }
+                
+                // Synchroniser avec vcard_phone si nécessaire
+                if (!$target->vcard_phone) {
+                    $updateData['vcard_phone'] = $request->phone;
+                }
+                
+                // Ajouter le téléphone dans phone_numbers si ce n'est pas déjà le cas
+                $phoneNumbers = $target->phone_numbers ?? [];
+                if (!in_array($request->phone, $phoneNumbers)) {
+                    $phoneNumbers[] = $request->phone;
+                }
+                // Encoder phone_numbers en JSON pour DB::table()
+                $updateData['phone_numbers'] = json_encode($phoneNumbers);
+
+                // ✅ CRITIQUE: Utiliser DB::table() directement au lieu de User::where()->update()
+                // pour éviter que Laravel n'inclue des champs "dirty" de l'objet Eloquent.
+                // Le google_id n'est inclus que si toutes les vérifications ont passé.
+                DB::table('users')
+                    ->where('id', $target->id)
+                    ->update($updateData);
+                
+                // Rafraîchir le target depuis la base de données
+                $target = $target->fresh();
+
+                // Supprimer l'utilisateur temporaire actuel
+                $tempUserId = $user->id;
+                $user->delete();
+                Log::info("Account merge: Temporary user deleted", ['deleted_user_id' => $tempUserId]);
+
+                // Connecter le target
+                Auth::login($target);
+
+                // Retourner la réponse
+                return response()->json([
+                    'message' => 'Profil finalisé avec succès. Compte fusionné avec votre compte existant.',
+                    'user' => $target->fresh(),
+                ]);
+            }
+
+            // ✅ BRANCHING LOGIC - ELSE: Pas de collision (STANDARD SCENARIO)
+            // ✅ CRITIQUE: Vérifier une dernière fois si le google_id est déjà pris
+            // (double vérification pour éviter les conditions de course)
+            if ($googleId) {
+                $googleIdOwner = User::where('google_id', $googleId)
+                    ->where('id', '!=', $user->id)
+                    ->lockForUpdate() // Verrouiller la ligne pour éviter les conditions de course
+                    ->first();
+                
+                if ($googleIdOwner) {
+                    // Le google_id est déjà pris par un autre utilisateur
+                    // On doit fusionner vers le googleIdOwner au lieu de mettre à jour le current user
+                    Log::info("Account merge: Google ID collision detected in STANDARD scenario", [
+                        'current_user_id' => $user->id,
+                        'google_id_owner_id' => $googleIdOwner->id,
+                        'google_id' => $googleId
+                    ]);
+                    
+                    // Mettre à jour le googleIdOwner avec les nouvelles données
+                    if (!$googleIdOwner->phone) {
+                        $googleIdOwner->phone = $request->phone;
+                    }
+                    if (!$googleIdOwner->account_type) {
+                        $googleIdOwner->account_type = $request->account_type;
+                        $googleIdOwner->role = $role;
+                    }
+                    if (!$googleIdOwner->company_name && $companyName) {
+                        $googleIdOwner->company_name = $companyName;
+                    }
+                    $googleIdOwner->is_profile_complete = true;
+                    
+                    // Synchroniser avec vcard_phone si nécessaire
+                    if (!$googleIdOwner->vcard_phone) {
+                        $googleIdOwner->vcard_phone = $request->phone;
+                    }
+                    
+                    // Ajouter le téléphone dans phone_numbers si ce n'est pas déjà le cas
+                    $phoneNumbers = $googleIdOwner->phone_numbers ?? [];
+                    if (!in_array($request->phone, $phoneNumbers)) {
+                        $phoneNumbers[] = $request->phone;
+                        $googleIdOwner->phone_numbers = $phoneNumbers;
+                    }
+                    
+                    // Sauvegarder le googleIdOwner
+                    $googleIdOwner->save();
+                    
+                    // Supprimer l'utilisateur temporaire actuel
+                    $tempUserId = $user->id;
+                    $user->delete();
+                    Log::info("Account merge: Temporary user deleted", ['deleted_user_id' => $tempUserId]);
+                    
+                    // Connecter le googleIdOwner
+                    Auth::login($googleIdOwner);
+                    
+                    // Retourner la réponse
+                    return response()->json([
+                        'message' => 'Profil finalisé avec succès. Compte fusionné avec votre compte existant.',
+                        'user' => $googleIdOwner->fresh(),
+                    ]);
+                }
+            }
+            
+            // Pas de collision : mettre à jour l'utilisateur actuel normalement
+            // ✅ CRITIQUE: Recharger l'utilisateur depuis la base de données AVANT toute opération
+            // pour éviter que Laravel n'inclue des champs "dirty" dans la mise à jour
+            $user = User::where('id', $user->id)->lockForUpdate()->first();
+            
+            // ✅ DERNIÈRE VÉRIFICATION: Vérifier une dernière fois juste avant la mise à jour
+            // pour éviter toute condition de course
+            if ($googleId) {
+                $finalCheck = User::where('google_id', $googleId)
+                    ->where('id', '!=', $user->id)
+                    ->lockForUpdate()
+                    ->exists();
+                
+                if ($finalCheck) {
+                    // Le google_id est maintenant pris (condition de course détectée)
+                    // Recharger depuis la base de données et refaire la vérification
+                    $user = User::where('id', $user->id)->lockForUpdate()->first();
+                    $googleId = $user->google_id;
+                    
+                    $finalOwner = User::where('google_id', $googleId)
+                        ->where('id', '!=', $user->id)
+                        ->lockForUpdate()
+                        ->first();
+                    
+                    if ($finalOwner) {
+                        // Fusionner vers le finalOwner
+                        Log::info("Account merge: Google ID collision detected in final check (race condition)", [
+                            'current_user_id' => $user->id,
+                            'final_owner_id' => $finalOwner->id,
+                            'google_id' => $googleId
+                        ]);
+                        
+                        // Mettre à jour le finalOwner avec les nouvelles données
+                        if (!$finalOwner->phone) {
+                            $finalOwner->phone = $request->phone;
+                        }
+                        if (!$finalOwner->account_type) {
+                            $finalOwner->account_type = $request->account_type;
+                            $finalOwner->role = $role;
+                        }
+                        if (!$finalOwner->company_name && $companyName) {
+                            $finalOwner->company_name = $companyName;
+                        }
+                        $finalOwner->is_profile_complete = true;
+                        
+                        if (!$finalOwner->vcard_phone) {
+                            $finalOwner->vcard_phone = $request->phone;
+                        }
+                        
+                        $phoneNumbers = $finalOwner->phone_numbers ?? [];
+                        if (!in_array($request->phone, $phoneNumbers)) {
+                            $phoneNumbers[] = $request->phone;
+                            $finalOwner->phone_numbers = $phoneNumbers;
+                        }
+                        
+                        $finalOwner->save();
+                        
+                        $tempUserId = $user->id;
+                        $user->delete();
+                        Log::info("Account merge: Temporary user deleted", ['deleted_user_id' => $tempUserId]);
+                        
+                        Auth::login($finalOwner);
+                        
+                        return response()->json([
+                            'message' => 'Profil finalisé avec succès. Compte fusionné avec votre compte existant.',
+                            'user' => $finalOwner->fresh(),
+                        ]);
+                    }
+                }
+            }
+            
+            // ✅ CRITIQUE: Utiliser DB::table() directement pour éviter que Laravel n'inclue
+            // des champs "dirty" de l'objet Eloquent. Cela garantit qu'on ne met à jour
+            // QUE les champs explicitement listés dans $updateData.
+            
+            // Pour les autres types de comptes (non employés), mettre à jour normalement
+            // (Les employés sont déjà gérés plus haut dans la transaction)
+            $updateData = [
+                'phone' => $request->phone,
+                'account_type' => $request->account_type,
+                'role' => $role,
+                'company_name' => $companyName,
+                'is_profile_complete' => true,
+                'updated_at' => now(),
+            ];
+            
+            // Synchroniser avec vcard_phone si nécessaire
+            $currentVcardPhone = $user->vcard_phone;
+            if (!$currentVcardPhone) {
+                $updateData['vcard_phone'] = $request->phone;
+            }
+            
+            // Ajouter le téléphone dans phone_numbers si ce n'est pas déjà le cas
+            $phoneNumbers = $user->phone_numbers ?? [];
+            if (!in_array($request->phone, $phoneNumbers)) {
+                $phoneNumbers[] = $request->phone;
+                $updateData['phone_numbers'] = json_encode($phoneNumbers); // DB::table() nécessite JSON encodé
+            }
+            // Si le téléphone existe déjà, on ne modifie pas phone_numbers (pas besoin de l'inclure dans updateData)
+
+            // ✅ CRITIQUE: Utiliser DB::table() directement au lieu de User::where()->update()
+            // Cela évite complètement l'objet Eloquent et garantit qu'on ne met à jour
+            // QUE les champs explicitement listés. Le google_id ne sera JAMAIS inclus.
+            DB::table('users')
+                ->where('id', $user->id)
+                ->update($updateData);
+            
+            // Rafraîchir l'utilisateur depuis la base de données
+            $user = $user->fresh();
+
+            return response()->json([
+                'message' => 'Profil finalisé avec succès.',
+                'user' => $user->fresh(),
+            ]);
+        });
+    }
+
+    /**
+     * API: Vérifier les types de comptes existants pour l'utilisateur actuel.
+     * Utilisé pour restreindre les choix lors de la finalisation du profil.
+     */
+    public function getExistingAccountTypes(Request $request)
+    {
+        $user = Auth::user();
+
+        if (!$user) {
+            return response()->json(['message' => 'Utilisateur non authentifié.'], 401);
+        }
+
+        // Récupérer tous les comptes avec le même email
+        $existingAccounts = User::where('email', $user->email)
+            ->where('id', '!=', $user->id) // Exclure le compte actuel (temporaire/incomplet)
+            ->where('is_profile_complete', true) // Seulement les comptes complets
+            ->get(['id', 'account_type', 'role']);
+
+        $hasIndividual = $existingAccounts->contains(function ($account) {
+            return $account->account_type === 'individual' || $account->role === 'individual';
+        });
+
+        $hasCompany = $existingAccounts->contains(function ($account) {
+            return $account->account_type === 'company' || $account->role === 'business_admin';
+        });
+
+        return response()->json([
+            'has_individual' => $hasIndividual,
+            'has_company' => $hasCompany,
+            'available_types' => [
+                'individual' => !$hasIndividual, // Disponible si pas déjà créé
+                'company' => !$hasCompany, // Disponible si pas déjà créé
+            ],
+        ]);
     }
 }

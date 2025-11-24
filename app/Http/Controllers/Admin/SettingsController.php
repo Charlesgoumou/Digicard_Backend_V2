@@ -54,14 +54,31 @@ class SettingsController extends Controller
             'subscription_price' => '40000',
         ];
 
+        // Récupérer TOUS les settings depuis la base de données
         $settings = Setting::whereIn('key', array_keys($defaults))
             ->pluck('value', 'key')
             ->toArray();
 
+        // IMPORTANT: Les valeurs de la base de données (settings) doivent remplacer les valeurs par défaut
+        // array_merge avec defaults en premier, puis settings, garantit que les valeurs de la DB prennent le dessus
         $pricing = array_merge($defaults, $settings);
 
+        // Vérifier explicitement que additional_card_price existe dans la DB
+        $additionalCardPriceFromDB = Setting::where('key', 'additional_card_price')->first();
+        
         // Cast en int pour le front
         $pricing = array_map(fn($v) => (int) $v, $pricing);
+
+        // Logger pour déboguer - vérifier que le prix est bien celui de la base de données
+        \Log::info('getPublicPricing - Prix récupérés', [
+            'additional_card_price_from_db_raw' => $additionalCardPriceFromDB ? $additionalCardPriceFromDB->value : 'NON TROUVÉ EN DB',
+            'additional_card_price_from_db_array' => $settings['additional_card_price'] ?? 'non défini dans array',
+            'additional_card_price_final' => $pricing['additional_card_price'],
+            'additional_card_price_default' => $defaults['additional_card_price'],
+            'is_using_db_value' => isset($settings['additional_card_price']),
+            'all_settings_from_db' => $settings,
+            'all_pricing_final' => $pricing,
+        ]);
 
         return response()->json(['pricing' => $pricing]);
     }
@@ -228,6 +245,12 @@ class SettingsController extends Controller
                 $value = $value ? 'true' : 'false';
             }
 
+            // IMPORTANT: Convertir les valeurs numériques en chaînes pour garantir la cohérence
+            // Les prix doivent être stockés comme des chaînes dans la base de données
+            if (is_numeric($value)) {
+                $value = (string) $value;
+            }
+
             // Mettre à jour ou créer le paramètre
             Setting::updateOrCreate(
                 ['key' => $key],
@@ -237,11 +260,14 @@ class SettingsController extends Controller
             $updatedSettings[$key] = $value;
         }
 
-        // Logger l'action
+        // Logger l'action avec les valeurs sauvegardées (surtout pour additional_card_price)
         Log::info('Admin settings updated', [
             'admin_id' => auth()->id(),
             'admin_email' => auth()->user()->email,
             'updated_settings' => array_keys($updatedSettings),
+            'additional_card_price_saved' => $updatedSettings['additional_card_price'] ?? 'non modifié',
+            'card_price_saved' => $updatedSettings['card_price'] ?? 'non modifié',
+            'all_updated_values' => $updatedSettings,
             'timestamp' => now(),
         ]);
 

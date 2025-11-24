@@ -61,6 +61,11 @@ class User extends Authenticatable implements MustVerifyEmail
         'pending_email',
         'email_change_code',
         'email_change_code_expires_at',
+        // --- Champs Google OAuth ---
+        'google_id',
+        'phone',
+        'account_type',
+        'is_profile_complete',
     ];
 
     /**
@@ -90,6 +95,7 @@ class User extends Authenticatable implements MustVerifyEmail
             'phone_numbers' => 'array', // Convertit JSON en tableau PHP
             'emails' => 'array', // Convertit JSON en tableau PHP
             'email_change_code_expires_at' => 'datetime',
+            'is_profile_complete' => 'boolean',
         ];
     }
 

@@ -17,6 +17,12 @@ class PasswordResetController extends Controller
      */
     public function sendResetLink(Request $request)
     {
+        \Log::info('Password reset link request received', [
+            'email' => $request->email,
+            'ip' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+        ]);
+
         $request->validate([
             'email' => 'required|email|exists:users,email',
         ], [
@@ -48,16 +54,29 @@ class PasswordResetController extends Controller
         // Envoyer l'email avec le lien de réinitialisation
         try {
             Mail::to($email)->send(new \App\Mail\ResetPassword($user, $token));
+            \Log::info('Password reset email sent successfully', [
+                'email' => $email,
+                'user_id' => $user->id,
+            ]);
         } catch (\Exception $e) {
-            \Log::error('Erreur lors de l\'envoi de l\'email de réinitialisation: ' . $e->getMessage());
+            \Log::error('Erreur lors de l\'envoi de l\'email de réinitialisation', [
+                'email' => $email,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
             return response()->json([
                 'message' => 'Erreur lors de l\'envoi de l\'email. Veuillez réessayer.',
             ], 500);
         }
 
+        \Log::info('Password reset link response sent', [
+            'email' => $email,
+        ]);
+
         return response()->json([
             'message' => 'Un lien de réinitialisation a été envoyé à votre adresse email.',
-        ]);
+            'success' => true,
+        ], 200);
     }
 
     /**

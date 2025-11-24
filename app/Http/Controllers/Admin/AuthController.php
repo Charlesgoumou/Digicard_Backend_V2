@@ -20,22 +20,21 @@ class AuthController extends Controller
             'password' => 'required',
         ]);
 
-        // Tentative de connexion
-        if (!Auth::attempt($request->only('email', 'password'))) {
+        // IMPORTANT: Chercher spécifiquement un compte admin ou super_admin avec cet email
+        // Car un même email peut avoir plusieurs rôles (individual, business_admin, super_admin)
+        $user = User::where('email', $request->email)
+            ->whereIn('role', ['admin', 'super_admin'])
+            ->first();
+
+        // Vérifier que l'utilisateur existe et que le mot de passe est correct
+        if (!$user || !Hash::check($request->password, $user->password)) {
             return response()->json([
                 'message' => 'Les identifiants sont incorrects.'
             ], 401);
         }
 
-        $user = Auth::user();
-
-        // Vérifier que l'utilisateur est admin ou super_admin
-        if (!in_array($user->role, ['admin', 'super_admin'])) {
-            Auth::logout();
-            return response()->json([
-                'message' => 'Accès refusé. Vous devez être administrateur.'
-            ], 403);
-        }
+        // Connecter l'utilisateur manuellement
+        Auth::login($user);
 
         // Créer un token Sanctum
         $token = $user->createToken('admin-token')->plainTextToken;

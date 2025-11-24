@@ -119,7 +119,7 @@
             </div>
 
             <div class="button-container">
-                <a href="{{ config('app.frontend_url') }}/reset-password?email={{ urlencode($user->email) }}&token={{ $token }}" class="button">
+                <a href="{{ $frontendUrl }}/reset-password?email={{ urlencode($user->email) }}&token={{ $token }}" class="button">
                     Réinitialiser mon mot de passe
                 </a>
             </div>
@@ -132,7 +132,7 @@
                 <strong>Problème avec le bouton ?</strong><br>
                 Copiez et collez ce lien dans votre navigateur :<br>
                 <span style="color: #0ea5e9; word-break: break-all;">
-                    {{ config('app.frontend_url') }}/reset-password?email={{ urlencode($user->email) }}&token={{ $token }}
+                    {{ $frontendUrl }}/reset-password?email={{ urlencode($user->email) }}&token={{ $token }}
                 </span>
             </p>
 

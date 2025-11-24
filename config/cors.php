@@ -15,13 +15,15 @@ return [
     |
     */
 
-    'paths' => ['api/*', 'sanctum/csrf-cookie'], // Routes API avec le préfixe /api
+    'paths' => ['api/*', 'sanctum/csrf-cookie', 'login', 'logout', 'auth/*'], // Routes API avec le préfixe /api + routes d'authentification Google
 
     'allowed_methods' => ['*'], // Allows all HTTP methods (GET, POST, PUT, DELETE, etc.)
 
     'allowed_origins' => [
         'http://localhost:5173',
-        'http://192.168.1.126:5173', // Permet l'accès depuis le réseau local pour tester sur smartphone
+        'http://localhost:5174', // ✅ Frontend Admin (port 5174)
+        'http://localhost:8000', // ✅ AJOUT: Autoriser localhost:8000 pour les rechargements de page
+        'http://192.168.1.126:5173',
         'https://digicard.arccenciel.com',
         'https://admin.digicard.arccenciel.com',
     ],

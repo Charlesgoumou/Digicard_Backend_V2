@@ -35,4 +35,15 @@ return [
         ],
     ],
 
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect' => env('GOOGLE_REDIRECT_URI', rtrim(env('APP_URL', 'http://localhost'), '/') . '/auth/google/callback'),
+    ],
+
+    'chapchappay' => [
+        'base_url' => env('CHAP_CHAP_BASE_URL', 'https://api.chapchappay.com/api'),
+        'public_key' => env('CHAP_CHAP_PUBLIC_KEY'),
+    ],
+
 ];

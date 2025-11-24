@@ -13,22 +13,42 @@ class AdminSeeder extends Seeder
      */
     public function run(): void
     {
-        // Créer un compte super admin par défaut si il n'existe pas
-        User::firstOrCreate(
-            ['email' => 'charlesgabrielgoumou@gmail.com'],
-            [
-                'name' => 'Charles Gabriel Goumou',
+        // IMPORTANT: Utiliser (email, role) comme clé car la contrainte unique est sur (email, role)
+        // Cela permet à un même email d'avoir plusieurs rôles (individual, business_admin, super_admin)
+        $email = 'charlesgabrielgoumou@gmail.com';
+        $role = 'super_admin';
+        
+        // Vérifier si un compte super_admin existe déjà avec cet email
+        $admin = User::where('email', $email)
+            ->where('role', $role)
+            ->first();
+        
+        if ($admin) {
+            // Mettre à jour le mot de passe si nécessaire
+            $admin->update([
                 'password' => Hash::make('Charles2022'),
-                'role' => 'super_admin',
                 'is_admin' => true,
                 'email_verified_at' => now(),
                 'initial_password_set' => true,
-            ]
-        );
+            ]);
+            $this->command->info('Compte super admin mis à jour!');
+        } else {
+            // Créer le compte super admin
+            User::create([
+                'email' => $email,
+                'name' => 'Charles Gabriel Goumou',
+                'password' => Hash::make('Charles2022'),
+                'role' => $role,
+                'is_admin' => true,
+                'email_verified_at' => now(),
+                'initial_password_set' => true,
+            ]);
+            $this->command->info('Compte super admin créé avec succès!');
+        }
 
-        $this->command->info('Compte admin créé avec succès!');
-        $this->command->info('Email: charlesgabrielgoumou@gmail.com');
+        $this->command->info('Email: ' . $email);
         $this->command->info('Mot de passe: Charles2022');
+        $this->command->info('Rôle: ' . $role);
     }
 }
 

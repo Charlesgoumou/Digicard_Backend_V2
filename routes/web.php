@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Response;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\PublicProfileController;
 use App\Http\Controllers\StorageController;
+use App\Http\Controllers\SocialController;
 
 // --- ROUTE DE TEST ---
 // Route de test pour vérifier que Laravel fonctionne
@@ -35,6 +36,20 @@ Route::get('/profil/{user:username}', [PublicProfileController::class, 'show'])
 Route::get('/profil/{user:username}/vcard', [PublicProfileController::class, 'downloadVcard'])
      ->name('profile.public.vcard');
 
+// --- ROUTES GOOGLE OAUTH ---
+Route::get('/auth/google', [SocialController::class, 'redirect'])->name('google.redirect');
+Route::get('/auth/google/callback', [SocialController::class, 'callback'])->name('google.callback');
+
+// --- ROUTE RACINE POUR L'APPLICATION VUE.JS ---
+// ✅ AJOUT: Route spécifique pour la racine '/' pour éviter l'erreur ArgumentCountError
+Route::get('/', function () {
+    // S'assure que la vue 'index' (qui charge Vue) existe
+    if (view()->exists('index')) {
+        return view('index');
+    }
+    // Gère le cas où l'application Vue n'est pas configurée
+    return "Application non trouvée. Assurez-vous d'avoir une vue 'index.blade.php' à la racine de 'resources/views'.";
+});
 
 // --- ROUTE FALLBACK POUR L'APPLICATION VUE.JS ---
 // ✅ CORRECTION : La route /storage/{path} est définie AVANT cette route fallback

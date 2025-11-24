@@ -211,11 +211,33 @@
             @if($companyPagePublished && $companyPageUsername)
                 @php
                     // Si le site web est configuré pour être mis en avant dans le bouton, utiliser l'URL du site web
-                    // Sinon, rediriger vers la page entreprise
+                    // Sinon, rediriger vers la page entreprise de la commande spécifique si disponible
                     if ($websiteFeaturedInServicesButton && $companyWebsiteUrl) {
                         $servicesButtonUrl = $companyWebsiteUrl;
                     } else {
-                        $servicesButtonUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173')) . '/entreprise/' . $companyPageUsername;
+                        // ✅ CORRECTION: Parser FRONTEND_URL pour extraire uniquement la première URL valide
+                        $frontendUrlRaw = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
+                        $frontendUrl = $frontendUrlRaw;
+                        
+                        // Si FRONTEND_URL contient plusieurs URLs séparées par des virgules, prendre la première
+                        if (strpos($frontendUrlRaw, ',') !== false) {
+                            $urls = array_map('trim', explode(',', $frontendUrlRaw));
+                            foreach ($urls as $url) {
+                                // Vérifier que l'URL est valide
+                                if (filter_var($url, FILTER_VALIDATE_URL)) {
+                                    $frontendUrl = $url;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        $servicesButtonUrl = $frontendUrl . '/entreprise/' . $companyPageUsername;
+                        // Ajouter l'order_id à l'URL si une commande est fournie pour afficher le contenu spécifique de cette commande
+                        if ($order && $order->id) {
+                            $servicesButtonUrl .= '?order=' . $order->id;
+                        } elseif ($orderEmployee && $orderEmployee->order_id) {
+                            $servicesButtonUrl .= '?order=' . $orderEmployee->order_id;
+                        }
                     }
                 @endphp
             <a href="{{ $servicesButtonUrl }}"

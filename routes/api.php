@@ -18,6 +18,7 @@ use App\Http\Controllers\Admin\OrderController as AdminOrderController;
 use App\Http\Controllers\Admin\CompanyPageController as AdminCompanyPageController;
 use App\Http\Controllers\Admin\SettingsController;
 use App\Http\Controllers\StorageController;
+use App\Http\Controllers\SocialController;
 
 /*
 |--------------------------------------------------------------------------
@@ -42,7 +43,19 @@ Route::get('/settings/pricing', [SettingsController::class, 'getPublicPricing'])
 // Contenu public d'accueil (CMS)
 Route::get('/homepage', [SettingsController::class, 'getPublicHomepage'])->name('homepage.public');
 // Route publique pour vérifier l'utilisateur actuel (retourne null si non authentifié)
-Route::get('/user', [AuthController::class, 'user'])->name('user.public');
+// ✅ AJOUT: Utiliser le middleware 'web' et 'EnsureFrontendRequestsAreStateful' 
+// pour établir correctement la session lors des rechargements de page
+Route::middleware(['web', \App\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
+    ->get('/user', [AuthController::class, 'user'])
+    ->name('user.public');
+
+// Routes Google OAuth - Sélection de compte (publiques, appelées avant connexion)
+// CRITIQUE: Utiliser le middleware 'web' et 'EnsureFrontendRequestsAreStateful' pour avoir accès à la session Laravel
+Route::middleware(['web', \App\Http\Middleware\EnsureFrontendRequestsAreStateful::class])->group(function () {
+    Route::get('/google/pending-accounts', [SocialController::class, 'getPendingAccounts'])->name('google.pending-accounts');
+    Route::post('/google/select-account', [SocialController::class, 'selectAccount'])->name('google.select-account');
+    Route::post('/google/validate-token', [SocialController::class, 'validateToken'])->name('google.validate-token');
+});
 
 // Réinitialisation de mot de passe
 Route::post('/password/reset-link', [PasswordResetController::class, 'sendResetLink'])->name('password.reset-link');
@@ -52,10 +65,18 @@ Route::post('/password/verify-token', [PasswordResetController::class, 'verifyTo
 // Formulaire de contact
 Route::post('/contact', [ContactController::class, 'sendMessage'])->name('contact.send');
 
+// Webhook pour Chap Chap Pay (publique, sans authentification)
+Route::post('/payment/webhook', [OrderController::class, 'paymentWebhook'])->name('api.payment.webhook');
+Route::post('/payment/webhook-additional-cards', [OrderController::class, 'paymentWebhookAdditionalCards'])->name('api.payment.webhook.additional.cards');
+
 // --- Routes Protégées (Nécessitent une authentification Sanctum valide et compte non suspendu) ---
 Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     // Authentification & Déconnexion
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
+    
+    // Finalisation du profil (pour utilisateurs Google)
+    Route::post('/complete-profile', [AuthController::class, 'completeProfile'])->name('profile.complete');
+    Route::get('/existing-account-types', [AuthController::class, 'getExistingAccountTypes'])->name('account.types');
 
     // Gestion du Compte (Informations de connexion)
     Route::put('/account', [AccountController::class, 'update'])->name('account.update');     // Mettre à jour nom, email, téléphone, mot de passe
@@ -84,6 +105,8 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
     Route::post('/orders', [OrderController::class, 'store'])->name('orders.store');
     Route::get('/orders/{order}', [OrderController::class, 'show'])->name('orders.show');
+    Route::get('/orders/{order}/check-payment', [OrderController::class, 'checkPaymentStatus'])->name('orders.check-payment');
+    Route::get('/additional-payments/{additionalPaymentId}/check-status', [OrderController::class, 'checkAdditionalPaymentStatus'])->name('additional-payments.check-status');
     Route::patch('/orders/{order}/configure', [OrderController::class, 'markAsConfigured'])->name('orders.configure');
     Route::patch('/orders/{order}/profile', [OrderController::class, 'updateProfile'])->name('orders.profile.update');
     Route::post('/orders/{order}/avatar', [OrderController::class, 'uploadOrderAvatar'])->name('orders.avatar.upload');

@@ -15,6 +15,7 @@ class ResetPassword extends Mailable
 
     public $user;
     public $token;
+    public $frontendUrl;
 
     /**
      * Create a new message instance.
@@ -23,6 +24,15 @@ class ResetPassword extends Mailable
     {
         $this->user = $user;
         $this->token = $token;
+        
+        // ✅ CORRECTION: Nettoyer l'URL pour ne prendre que la première URL valide
+        // Si plusieurs URLs sont séparées par une virgule, prendre seulement la première
+        $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
+        if (strpos($frontendUrl, ',') !== false) {
+            $urls = explode(',', $frontendUrl);
+            $frontendUrl = trim($urls[0]); // Prendre la première URL
+        }
+        $this->frontendUrl = trim($frontendUrl);
     }
 
     /**

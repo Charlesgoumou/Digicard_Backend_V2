@@ -29,9 +29,9 @@ class CompanyPageController extends Controller
 
         if ($orderId) {
             // Vérifier que la commande appartient bien à l'utilisateur
+            // Un business_admin peut configurer "Nos Services" pour toutes ses commandes (business ou personal)
             $order = \App\Models\Order::where('id', $orderId)
                 ->where('user_id', $user->id)
-                ->where('order_type', 'business')
                 ->first();
 
             if (!$order) {
@@ -146,9 +146,9 @@ class CompanyPageController extends Controller
         // Trouver ou créer la page entreprise
         if ($orderId) {
             // Vérifier que la commande appartient bien à l'utilisateur
+            // Un business_admin peut configurer "Nos Services" pour toutes ses commandes (business ou personal)
             $order = \App\Models\Order::where('id', $orderId)
                 ->where('user_id', $user->id)
-                ->where('order_type', 'business')
                 ->first();
 
             if (!$order) {
@@ -166,6 +166,11 @@ class CompanyPageController extends Controller
             );
         }
 
+        // Cas spécial : Si le site web est renseigné ET la case est cochée pour le mettre en avant,
+        // on permet la sauvegarde même si les autres champs sont vides
+        $websiteFeatured = isset($validated['website_featured_in_services_button']) && $validated['website_featured_in_services_button'] === true;
+        $hasWebsite = !empty($validated['company_website_url']) && trim($validated['company_website_url']) !== '';
+        
         // Filtrer les valeurs pour ne mettre à jour que les champs qui ont des valeurs significatives
         // Cela préserve les données existantes pour les champs vides
         $updateData = [];
@@ -177,7 +182,7 @@ class CompanyPageController extends Controller
             if ($value !== null) {
                 if (is_bool($value) || is_array($value)) {
                     $updateData[$key] = $value;
-                } elseif (is_string($value) && $value !== '') {
+                } elseif (is_string($value) && trim($value) !== '') {
                     $updateData[$key] = $value;
                 } elseif (!is_string($value)) {
                     // Pour les autres types (int, float, etc.)
@@ -186,8 +191,29 @@ class CompanyPageController extends Controller
             }
         }
 
+        // Si le site web est mis en avant, forcer l'inclusion des champs nécessaires même si vides
+        // Cela permet la publication minimale avec juste le site web
+        if ($websiteFeatured && $hasWebsite) {
+            // S'assurer que website_featured_in_services_button est bien dans updateData
+            $updateData['website_featured_in_services_button'] = true;
+            $updateData['company_website_url'] = trim($validated['company_website_url']);
+            // S'assurer que is_published peut être défini
+            if (isset($validated['is_published'])) {
+                $updateData['is_published'] = $validated['is_published'];
+            }
+        }
+
         // Mettre à jour la page avec les données filtrées
-        if (!empty($updateData)) {
+        // Si on a des données à mettre à jour OU si c'est le cas spécial du site web mis en avant
+        if (!empty($updateData) || ($websiteFeatured && $hasWebsite)) {
+            // Si c'est seulement le cas spécial, s'assurer qu'on a au moins les données minimales
+            if (empty($updateData) && $websiteFeatured && $hasWebsite) {
+                $updateData = [
+                    'website_featured_in_services_button' => true,
+                    'company_website_url' => trim($validated['company_website_url']),
+                    'is_published' => $validated['is_published'] ?? true,
+                ];
+            }
             $companyPage->update($updateData);
         }
 
@@ -249,9 +275,9 @@ class CompanyPageController extends Controller
             
             if ($orderId) {
                 // Vérifier que la commande appartient bien à l'utilisateur
+                // Un business_admin peut configurer "Nos Services" pour toutes ses commandes (business ou personal)
                 $order = \App\Models\Order::where('id', $orderId)
                     ->where('user_id', $user->id)
-                    ->where('order_type', 'business')
                     ->first();
 
                 if (!$order) {
@@ -397,27 +423,99 @@ class CompanyPageController extends Controller
 
     /**
      * Affiche la page publique de l'entreprise
+     * Si un order_id est fourni en paramètre, affiche la page entreprise de cette commande spécifique
      */
-    public function show($username)
+    public function show(Request $request, $username)
     {
         // Trouver l'utilisateur par username
         $user = User::where('username', $username)
             ->where('role', 'business_admin')
             ->firstOrFail();
 
-        // Récupérer sa page entreprise
-        $companyPage = CompanyPage::where('user_id', $user->id)
-            ->where('is_published', true)
-            ->firstOrFail();
+        // Récupérer order_id depuis la requête si fourni
+        $orderId = $request->query('order');
 
-        // Récupérer les informations de contact depuis le premier OrderEmployee configuré
-        $contactInfo = \App\Models\OrderEmployee::where('employee_id', $user->id)
-            ->where('is_configured', true)
-            ->first();
+        $companyPage = null;
+        $contactInfo = null;
+
+        // Si un order_id est fourni, utiliser la page entreprise de cette commande spécifique
+        if ($orderId) {
+            // Vérifier que la commande appartient bien à cet utilisateur
+            $order = \App\Models\Order::where('id', $orderId)
+                ->where('user_id', $user->id)
+                ->first();
+
+            if ($order) {
+                // Récupérer la page entreprise de cette commande spécifique
+                $companyPage = CompanyPage::where('order_id', $orderId)
+                    ->where('user_id', $user->id)
+                    ->where('is_published', true)
+                    ->first();
+
+                // Si pas de page pour cette commande, fallback sur une page sans order_id
+                if (!$companyPage) {
+                    $companyPage = CompanyPage::where('user_id', $user->id)
+                        ->whereNull('order_id')
+                        ->where('is_published', true)
+                        ->first();
+                }
+
+                // Récupérer les informations de contact depuis OrderEmployee de cette commande spécifique
+                // Pour un business_admin, chercher dans OrderEmployee si il est inclus dans la commande
+                // Sinon, utiliser les données de Order directement
+                if ($companyPage) {
+                    // D'abord essayer OrderEmployee si le business_admin est inclus dans cette commande
+                    $contactInfo = \App\Models\OrderEmployee::where('order_id', $orderId)
+                        ->where('employee_id', $user->id)
+                        ->where('is_configured', true)
+                        ->first();
+                    
+                    // Si pas trouvé dans OrderEmployee, utiliser les données de Order directement
+                    if (!$contactInfo && $order) {
+                        // Créer un objet avec les données de Order pour compatibilité avec formatPageData
+                        $contactInfo = (object)[
+                            'profile_name' => $order->profile_name ?? $user->name,
+                            'address_neighborhood' => $order->address_neighborhood ?? null,
+                            'address_commune' => $order->address_commune ?? null,
+                            'address_city' => $order->address_city ?? null,
+                            'address_country' => $order->address_country ?? null,
+                            'phone_numbers' => $order->phone_numbers ?? null,
+                            'emails' => $order->emails ?? null,
+                            'website_url' => $order->website_url ?? null,
+                            'whatsapp_url' => $order->whatsapp_url ?? null,
+                            'linkedin_url' => $order->linkedin_url ?? null,
+                            'facebook_url' => $order->facebook_url ?? null,
+                            'twitter_url' => $order->twitter_url ?? null,
+                            'youtube_url' => $order->youtube_url ?? null,
+                            'deezer_url' => $order->deezer_url ?? null,
+                            'spotify_url' => $order->spotify_url ?? null,
+                        ];
+                    }
+                }
+            }
+        }
+
+        // Si pas de page trouvée ou pas d'order_id, utiliser la logique par défaut
+        if (!$companyPage) {
+            // Récupérer sa page entreprise (sans order_id ou la première publiée)
+            $companyPage = CompanyPage::where('user_id', $user->id)
+                ->where('is_published', true)
+                ->orderBy('order_id', 'asc') // Préférer les pages sans order_id d'abord
+                ->firstOrFail();
+
+            // Récupérer les informations de contact depuis le premier OrderEmployee configuré
+            if (!$contactInfo) {
+                $contactInfo = \App\Models\OrderEmployee::where('employee_id', $user->id)
+                    ->where('is_configured', true)
+                    ->first();
+            }
+        }
 
         // Log pour debug
         Log::info('Company Page Show - Contact Info', [
             'user_id' => $user->id,
+            'order_id' => $orderId,
+            'company_page_order_id' => $companyPage->order_id ?? null,
             'has_contact_info' => $contactInfo ? 'yes' : 'no',
             'whatsapp' => $contactInfo->whatsapp_url ?? 'N/A',
             'linkedin' => $contactInfo->linkedin_url ?? 'N/A',
@@ -548,9 +646,9 @@ class CompanyPageController extends Controller
 
         if ($orderId) {
             // Vérifier que la commande appartient bien à l'utilisateur
+            // Un business_admin peut configurer "Nos Services" pour toutes ses commandes (business ou personal)
             $order = \App\Models\Order::where('id', $orderId)
                 ->where('user_id', $user->id)
-                ->where('order_type', 'business')
                 ->first();
 
             if (!$order) {
@@ -672,7 +770,7 @@ class CompanyPageController extends Controller
         }
 
         $request->validate([
-            'presentation' => 'required|file|mimes:pdf,jpeg,png,jpg|max:10240', // Max 10MB
+            'presentation' => 'required|file|mimes:pdf,jpeg,png,jpg|max:2048', // Max 2MB
         ]);
 
         try {
