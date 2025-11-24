@@ -301,10 +301,14 @@ class SocialController extends Controller
                             'google_oauth_id' => $googleUser->getId(),
                         ]);
                         
+                        // ✅ CRITIQUE: Forcer la sauvegarde de la session après avoir stocké les données OAuth
+                        $request->session()->save();
+                        
                         Log::info("Google OAuth: Multiple complete accounts found (user already logged in), redirecting to selection", [
                             'email' => $googleEmail,
                             'accounts_count' => count($availableAccounts),
-                            'account_ids' => $completeUsers->pluck('id')->toArray()
+                            'account_ids' => $completeUsers->pluck('id')->toArray(),
+                            'session_id' => $request->session()->getId(),
                         ]);
                         
                         return redirect($this->buildFrontendUrl('/selection-compte'));
@@ -538,6 +542,15 @@ class SocialController extends Controller
                                 'google_oauth_id' => $googleUser->getId(),
                             ]);
                             
+                            // ✅ CRITIQUE: Forcer la sauvegarde de la session après avoir stocké les données OAuth
+                            $request->session()->save();
+                            
+                            Log::info("Google OAuth: User already has both account types, redirecting to selection", [
+                                'email' => $googleUser->getEmail(),
+                                'accounts_count' => count($availableAccounts),
+                                'session_id' => $request->session()->getId(),
+                            ]);
+                            
                             return redirect($this->buildFrontendUrl('/selection-compte'));
                         }
                         
@@ -684,17 +697,23 @@ class SocialController extends Controller
                     ];
                 })->toArray();
                 
-                // Stocker les comptes disponibles dans la session
+                // ✅ CRITIQUE: Stocker les comptes disponibles dans la session APRÈS la régénération
+                // et AVANT la redirection pour garantir qu'ils sont disponibles
                 session([
                     'google_oauth_pending_accounts' => $availableAccounts,
                     'google_oauth_email' => $googleUser->getEmail(),
                     'google_oauth_id' => $googleUser->getId(),
                 ]);
                 
+                // ✅ CRITIQUE: Forcer la sauvegarde de la session après avoir stocké les données OAuth
+                $request->session()->save();
+                
                 Log::info("Google OAuth: Multiple complete accounts found AFTER login, redirecting to selection", [
                     'email' => $googleUser->getEmail(),
                     'accounts_count' => count($availableAccounts),
-                    'account_ids' => $completeUsers->pluck('id')->toArray()
+                    'account_ids' => $completeUsers->pluck('id')->toArray(),
+                    'session_id' => $request->session()->getId(),
+                    'session_saved' => true,
                 ]);
                 
                 return redirect($this->buildFrontendUrl('/selection-compte'));
@@ -933,6 +952,22 @@ class SocialController extends Controller
                 'account_id' => 'required|integer',
             ]);
 
+            // ✅ CRITIQUE: Vérifier que la session est accessible
+            $sessionId = session()->getId();
+            $allSessionData = session()->all();
+            
+            Log::info("Google OAuth selectAccount: Session check", [
+                'session_id' => $sessionId,
+                'session_driver' => config('session.driver'),
+                'session_domain' => config('session.domain'),
+                'session_secure' => config('session.secure'),
+                'session_same_site' => config('session.same_site'),
+                'has_google_oauth_pending_accounts' => session()->has('google_oauth_pending_accounts'),
+                'has_google_oauth_email' => session()->has('google_oauth_email'),
+                'has_google_oauth_id' => session()->has('google_oauth_id'),
+                'all_session_keys' => array_keys($allSessionData),
+            ]);
+            
             // Récupérer les comptes disponibles depuis la session
             $pendingAccounts = session('google_oauth_pending_accounts', []);
             $googleEmail = session('google_oauth_email');
@@ -941,11 +976,18 @@ class SocialController extends Controller
             Log::info("Google OAuth selectAccount: Session data", [
                 'pending_accounts_count' => count($pendingAccounts),
                 'google_email' => $googleEmail,
-                'google_id' => $googleId ? 'present' : 'missing'
+                'google_id' => $googleId ? 'present' : 'missing',
+                'pending_accounts' => $pendingAccounts,
             ]);
 
             if (empty($pendingAccounts) || !$googleEmail || !$googleId) {
-                Log::warning("Google OAuth selectAccount: Session expirée ou incomplète");
+                Log::warning("Google OAuth selectAccount: Session expirée ou incomplète", [
+                    'session_id' => $sessionId,
+                    'pending_accounts_empty' => empty($pendingAccounts),
+                    'google_email_missing' => empty($googleEmail),
+                    'google_id_missing' => empty($googleId),
+                    'all_session_keys' => array_keys($allSessionData),
+                ]);
                 return response()->json([
                     'message' => 'Session expirée. Veuillez vous reconnecter avec Google.',
                 ], 400);
