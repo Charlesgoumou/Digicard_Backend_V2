@@ -13,6 +13,9 @@ return [
     | authentication cookies. Typically, these should include your local
     | and production domains which access your API via a frontend SPA.
     |
+    | ✅ IMPORTANT: Inclure localhost:5173 (frontend) pour permettre l'authentification
+    | après les redirections externes (paiements).
+    |
     */
 
     'stateful' => array_filter(array_map('trim', array_merge(
@@ -20,7 +23,8 @@ return [
         [
             'localhost',
             'localhost:3000',
-            'localhost:5173',
+            'localhost:5173', // ✅ Frontend Public (port 5173)
+            'localhost:5174', // ✅ Frontend Admin (port 5174)
             '127.0.0.1',
             '127.0.0.1:8000',
             '::1',

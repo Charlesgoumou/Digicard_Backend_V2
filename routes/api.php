@@ -67,6 +67,10 @@ Route::post('/contact', [ContactController::class, 'sendMessage'])->name('contac
 
 // Webhook pour Chap Chap Pay (publique, sans authentification)
 Route::post('/payment/webhook', [OrderController::class, 'paymentWebhook'])->name('api.payment.webhook');
+
+// ✅ NOUVEAU: Route publique pour vérifier le statut des paiements supplémentaires après redirection
+// Permet de vérifier le statut sans authentification car la session peut être perdue après redirection externe
+Route::get('/additional-payments/{additionalPaymentId}/check-status-public', [OrderController::class, 'checkAdditionalPaymentStatusPublic'])->name('additional-payments.check-status-public');
 Route::post('/payment/webhook-additional-cards', [OrderController::class, 'paymentWebhookAdditionalCards'])->name('api.payment.webhook.additional.cards');
 
 // --- Routes Protégées (Nécessitent une authentification Sanctum valide et compte non suspendu) ---

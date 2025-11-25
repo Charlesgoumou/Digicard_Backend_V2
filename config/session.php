@@ -93,16 +93,22 @@ return [
     | Session Cookie Domain
     |--------------------------------------------------------------------------
     | ... (description) ...
+    | 
+    | ✅ IMPORTANT: Pour localhost, laissez cette valeur à null (ne pas définir SESSION_DOMAIN dans .env)
+    | Définir un domaine peut causer des problèmes avec les cookies sur localhost
     */
-    'domain' => env('SESSION_DOMAIN'),
+    'domain' => env('SESSION_DOMAIN', null),
 
     /*
     |--------------------------------------------------------------------------
     | HTTPS Only Cookies
     |--------------------------------------------------------------------------
     | ... (description) ...
+    | 
+    | ✅ IMPORTANT: En développement local (HTTP), cette valeur doit être false ou null
+    | En production (HTTPS), cette valeur doit être true
     */
-    'secure' => env('SESSION_SECURE_COOKIE'),
+    'secure' => env('SESSION_SECURE_COOKIE', null),
 
     /*
     |--------------------------------------------------------------------------
@@ -118,6 +124,11 @@ return [
     |--------------------------------------------------------------------------
     | ... (description) ...
     | Supported: "lax", "strict", "none", null
+    | 
+    | ✅ IMPORTANT: 'lax' permet aux cookies d'être envoyés lors des redirections GET
+    | depuis des domaines externes (comme après un paiement Chap Chap Pay).
+    | 'strict' bloquerait les cookies lors des redirections externes.
+    | 'none' nécessite Secure=true (HTTPS uniquement).
     */
 
     'same_site' => env('SESSION_SAME_SITE', 'lax'),
