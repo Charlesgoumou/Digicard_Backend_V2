@@ -125,10 +125,22 @@ return [
     | ... (description) ...
     | Supported: "lax", "strict", "none", null
     | 
-    | ✅ IMPORTANT: 'lax' permet aux cookies d'être envoyés lors des redirections GET
-    | depuis des domaines externes (comme après un paiement Chap Chap Pay).
-    | 'strict' bloquerait les cookies lors des redirections externes.
-    | 'none' nécessite Secure=true (HTTPS uniquement).
+    | ✅ IMPORTANT: 
+    | - 'lax' (défaut) : Permet aux cookies d'être envoyés lors des redirections GET
+    |   depuis des domaines externes (comme après un paiement Chap Chap Pay).
+    |   Convient pour le développement local et certaines configurations de production.
+    | 
+    | - 'strict' : Bloque les cookies lors des redirections externes.
+    |   Ne convient pas pour les paiements avec redirections externes.
+    | 
+    | - 'none' : Nécessite SESSION_SECURE_COOKIE=true (HTTPS uniquement).
+    |   ✅ RECOMMANDÉ pour la production mobile et les applications cross-site.
+    |   Permet aux cookies d'être envoyés dans tous les contextes cross-site.
+    |   ⚠️ OBLIGATOIRE: SESSION_SECURE_COOKIE=true doit être défini en production.
+    | 
+    | Configuration recommandée pour production mobile :
+    |   SESSION_SAME_SITE=none
+    |   SESSION_SECURE_COOKIE=true
     */
 
     'same_site' => env('SESSION_SAME_SITE', 'lax'),
