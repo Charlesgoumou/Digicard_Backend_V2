@@ -52,15 +52,33 @@ class AuthController extends Controller
         // ✅ MODIFICATION: Définir account_type en fonction de user_type pour l'inscription classique
         $accountType = ($request->user_type === 'business') ? 'company' : 'individual';
 
-        // ✅ Vérifier l'unicité de la combinaison (email, role)
+        // ✅ Vérifier l'unicité de la combinaison (email, role) - SEULEMENT pour les comptes COMPLETS
+        // Les comptes incomplets (créés via Google OAuth par exemple) ne doivent pas bloquer l'inscription
         $existingUser = User::where('email', $request->email)
             ->where('role', $role)
+            ->where('is_profile_complete', true) // ✅ MODIFICATION: Exclure les comptes incomplets
             ->first();
 
         if ($existingUser) {
             throw ValidationException::withMessages([
                 'email' => ['Vous avez déjà un compte ' . ($role === 'individual' ? 'personnel' : 'entreprise') . ' avec cet email.'],
             ]);
+        }
+        
+        // ✅ MODIFICATION: Si un compte incomplet existe avec cet email et ce rôle, le supprimer
+        // pour permettre la création d'un nouveau compte complet via l'inscription classique
+        $incompleteUser = User::where('email', $request->email)
+            ->where('role', $role)
+            ->where('is_profile_complete', false)
+            ->first();
+            
+        if ($incompleteUser) {
+            Log::info("AuthController: Suppression d'un compte incomplet pour permettre l'inscription classique", [
+                'incomplete_user_id' => $incompleteUser->id,
+                'email' => $request->email,
+                'role' => $role,
+            ]);
+            $incompleteUser->delete();
         }
 
         $validatedData = $request->only(['name', 'email', 'password', 'user_type', 'company_name', 'phone']);
