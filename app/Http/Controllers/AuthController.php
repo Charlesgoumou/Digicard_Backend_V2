@@ -475,7 +475,11 @@ class AuthController extends Controller
                 // Si Auth::guard('web')->check() retourne false, alors $user reste null
             } catch (\Exception $e) {
                 // En cas d'erreur, continuer avec user = null
-                // Ne pas logger l'erreur pour éviter de polluer les logs avec des erreurs attendues
+                // Logger l'erreur pour diagnostiquer les problèmes
+                \Log::warning('AuthController::user - Exception during user check', [
+                    'error' => $e->getMessage(),
+                    'session_id' => $request->hasSession() ? $request->session()->getId() : 'no_session',
+                ]);
                 $user = null;
             }
         }

@@ -653,27 +653,10 @@ class SocialController extends Controller
                     ->with('error', 'Votre compte a été suspendu. Veuillez contacter l\'administrateur.');
             }
 
-            // Connecter l'utilisateur
-            Auth::login($user);
-            
-            // ✅ CRITIQUE: Régénérer la session pour garantir que les cookies sont bien envoyés
-            // Nécessaire après une redirection Google OAuth pour que le frontend puisse accéder à la session
-            $request->session()->regenerate();
-            $request->session()->regenerateToken();
-
-            // ✅ CRITIQUE: Définir la session 2FA à true pour bypasser la vérification par email
-            // Les utilisateurs Google sont considérés comme fiables
-            session(['2fa_verified' => true]);
-            
-            // ✅ CRITIQUE: Forcer la sauvegarde de la session avant la redirection
-            // Cela garantit que les cookies de session sont bien envoyés au frontend
-            $request->session()->save();
-            
-            Log::info("Google OAuth: User logged in and session saved", [
-                'user_id' => $user->id,
-                'email' => $user->email,
-                'session_id' => $request->session()->getId()
-            ]);
+            // ✅ STRATÉGIE TOKEN EXCHANGE : Ne JAMAIS connecter l'utilisateur directement
+            // Le cookie de session est perdu lors de la redirection serveur Google -> App
+            // On génère TOUJOURS un selection_token et on redirige vers /selection-compte pour les profils complets
+            // Le frontend se chargera de la connexion via une requête AJAX (qui préserve les cookies)
 
             // ✅ OPTIMISATION: Réutiliser la collection déjà chargée au lieu de refaire une requête
             // Si la collection n'existe pas (cas rare), la charger
@@ -684,9 +667,11 @@ class SocialController extends Controller
             }
             $completeUsers = $usersWithEmail->where('is_profile_complete', true)->values();
             
-            // Si plusieurs comptes complets existent (2 comptes: Particulier + Entreprise)
-            if ($completeUsers->count() >= 2) {
-                // Plusieurs comptes complets : rediriger vers la sélection
+            // ✅ VÉRIFICATION: Si le profil est complet, utiliser la stratégie Token Exchange
+            // PRIORITÉ 1: Vérifier le flag is_profile_complete (source de vérité)
+            if ($user->is_profile_complete) {
+                // ✅ NOUVEAU: TOUJOURS générer un selection_token, même pour un seul compte
+                // Cela garantit que la connexion se fait via AJAX (qui préserve les cookies)
                 $availableAccounts = $completeUsers->map(function ($u) {
                     return [
                         'id' => $u->id,
@@ -722,7 +707,7 @@ class SocialController extends Controller
                 // ✅ CRITIQUE: Forcer la sauvegarde de la session après avoir stocké les données OAuth
                 $request->session()->save();
                 
-                Log::info("Google OAuth: Multiple complete accounts found AFTER login, redirecting to selection", [
+                Log::info("Google OAuth: Token Exchange Strategy - Profile complete, redirecting to selection (even for single account)", [
                     'email' => $googleUser->getEmail(),
                     'accounts_count' => count($availableAccounts),
                     'account_ids' => $completeUsers->pluck('id')->toArray(),
@@ -731,26 +716,17 @@ class SocialController extends Controller
                     'session_saved' => true,
                 ]);
                 
-                // Rediriger vers la sélection avec le token en paramètre pour récupération depuis le cache si nécessaire
+                // ✅ TOUJOURS rediriger vers la sélection avec le token en paramètre
+                // Le frontend détectera s'il n'y a qu'un seul compte et lancera la connexion automatiquement
                 $selectionUrl = $this->buildFrontendUrl('/selection-compte');
                 $selectionUrl .= '?token=' . $selectionToken;
                 
                 return redirect($selectionUrl);
             }
 
-            // ✅ LOGIQUE: Vérifier si le profil est complet
-            // PRIORITÉ 1: Vérifier le flag is_profile_complete (source de vérité)
-            if ($user->is_profile_complete) {
-                Log::info("Google OAuth: User profile is already complete, redirecting to dashboard", [
-                    'user_id' => $user->id,
-                    'email' => $user->email
-                ]);
-                return redirect($this->buildFrontendUrl('/dashboard'));
-            }
-
             // PRIORITÉ 2: Si le flag est false mais que l'utilisateur a déjà phone ET account_type
             // (cas des "legacy users" créés avant l'intégration Google)
-            // Mettre à jour automatiquement le flag et rediriger vers dashboard
+            // Mettre à jour automatiquement le flag et utiliser la stratégie Token Exchange
             if ($user->phone !== null && $user->account_type !== null) {
                 // Vérifier aussi que si c'est une entreprise, le nom est présent
                 $hasCompanyName = ($user->account_type !== 'company') || ($user->company_name !== null);
@@ -765,8 +741,43 @@ class SocialController extends Controller
                         'account_type' => $user->account_type
                     ]);
                     
-                    // Rediriger directement vers le dashboard
-                    return redirect($this->buildFrontendUrl('/dashboard'));
+                    // ✅ NOUVEAU: Utiliser la stratégie Token Exchange au lieu de rediriger directement
+                    // Recharger les utilisateurs complets après la mise à jour
+                    $completeUsers = $usersWithEmail->where('is_profile_complete', true)->values();
+                    $availableAccounts = $completeUsers->map(function ($u) {
+                        return [
+                            'id' => $u->id,
+                            'type' => $u->role === 'business_admin' ? 'business' : 'individual',
+                            'role' => $u->role,
+                            'name' => $u->name,
+                            'company_name' => $u->company_name,
+                        ];
+                    })->toArray();
+                    
+                    $selectionToken = Str::random(64);
+                    \Illuminate\Support\Facades\Cache::put(
+                        'google_oauth_selection_' . $selectionToken,
+                        [
+                            'accounts' => $availableAccounts,
+                            'email' => $googleUser->getEmail(),
+                            'google_id' => $googleUser->getId(),
+                            'session_id' => $request->session()->getId(),
+                        ],
+                        now()->addMinutes(10)
+                    );
+                    
+                    session([
+                        'google_oauth_pending_accounts' => $availableAccounts,
+                        'google_oauth_email' => $googleUser->getEmail(),
+                        'google_oauth_id' => $googleUser->getId(),
+                        'google_oauth_selection_token' => $selectionToken,
+                    ]);
+                    $request->session()->save();
+                    
+                    $selectionUrl = $this->buildFrontendUrl('/selection-compte');
+                    $selectionUrl .= '?token=' . $selectionToken;
+                    
+                    return redirect($selectionUrl);
                 }
             }
 
