@@ -461,7 +461,7 @@ class AuthController extends Controller
                         if ($freshUser && !$freshUser->is_suspended && $freshUser->email_verified_at) {
                         // ✅ SIMPLIFICATION: Utiliser directement l'utilisateur de la session
                         // Auth::guard('web')->user() devrait retourner le même utilisateur que find()
-                        $user = $freshUser;
+                                $user = $freshUser;
                         } else {
                             // L'utilisateur n'existe plus, est suspendu ou n'a pas vérifié son email
                             // Retourner null sans invalider la session (elle sera invalidée naturellement)
@@ -475,11 +475,7 @@ class AuthController extends Controller
                 // Si Auth::guard('web')->check() retourne false, alors $user reste null
             } catch (\Exception $e) {
                 // En cas d'erreur, continuer avec user = null
-                // Logger l'erreur pour diagnostiquer les problèmes
-                \Log::warning('AuthController::user - Exception during user check', [
-                    'error' => $e->getMessage(),
-                    'session_id' => $request->hasSession() ? $request->session()->getId() : 'no_session',
-                ]);
+                // Ne pas logger l'erreur pour éviter de polluer les logs avec des erreurs attendues
                 $user = null;
             }
         }

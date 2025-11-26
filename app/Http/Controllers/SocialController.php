@@ -653,11 +653,10 @@ class SocialController extends Controller
                     ->with('error', 'Votre compte a été suspendu. Veuillez contacter l\'administrateur.');
             }
 
-            // ✅ STRATÉGIE TOKEN EXCHANGE : Ne JAMAIS connecter l'utilisateur directement
-            // Le cookie de session est perdu lors de la redirection serveur Google -> App
-            // On génère TOUJOURS un selection_token et on redirige vers /selection-compte pour les profils complets
-            // Le frontend se chargera de la connexion via une requête AJAX (qui préserve les cookies)
-
+            // ✅ MODIFICATION: NE JAMAIS connecter l'utilisateur directement dans le callback
+            // La connexion se fera toujours via une requête AJAX du frontend (selectAccount)
+            // pour garantir que le cookie de session est correctement posé
+            
             // ✅ OPTIMISATION: Réutiliser la collection déjà chargée au lieu de refaire une requête
             // Si la collection n'existe pas (cas rare), la charger
             if (!isset($usersWithEmail)) {
@@ -667,70 +666,17 @@ class SocialController extends Controller
             }
             $completeUsers = $usersWithEmail->where('is_profile_complete', true)->values();
             
-            // ✅ VÉRIFICATION: Si le profil est complet, utiliser la stratégie Token Exchange
-            // PRIORITÉ 1: Vérifier le flag is_profile_complete (source de vérité)
+            // ✅ MODIFICATION: TOUJOURS utiliser la stratégie "Token Exchange", même pour un seul compte
+            // Cela garantit que le cookie de session est posé via une requête AJAX du frontend
+            // et non lors d'une redirection serveur (qui peut perdre le cookie)
+            
+            // Vérifier si le profil est complet (pour les comptes complets uniquement)
+            $isProfileComplete = false;
             if ($user->is_profile_complete) {
-                // ✅ NOUVEAU: TOUJOURS générer un selection_token, même pour un seul compte
-                // Cela garantit que la connexion se fait via AJAX (qui préserve les cookies)
-                $availableAccounts = $completeUsers->map(function ($u) {
-                    return [
-                        'id' => $u->id,
-                        'type' => $u->role === 'business_admin' ? 'business' : 'individual',
-                        'role' => $u->role,
-                        'name' => $u->name,
-                        'company_name' => $u->company_name,
-                    ];
-                })->toArray();
-                
-                // ✅ CORRECTION: Stocker les données OAuth dans le cache ET dans la session
-                // Le cache garantit la persistance même si la session change
-                $selectionToken = Str::random(64);
-                \Illuminate\Support\Facades\Cache::put(
-                    'google_oauth_selection_' . $selectionToken,
-                    [
-                        'accounts' => $availableAccounts,
-                        'email' => $googleUser->getEmail(),
-                        'google_id' => $googleUser->getId(),
-                        'session_id' => $request->session()->getId(),
-                    ],
-                    now()->addMinutes(10) // Valide pendant 10 minutes
-                );
-                
-                // Stocker aussi dans la session pour compatibilité
-                session([
-                    'google_oauth_pending_accounts' => $availableAccounts,
-                    'google_oauth_email' => $googleUser->getEmail(),
-                    'google_oauth_id' => $googleUser->getId(),
-                    'google_oauth_selection_token' => $selectionToken, // Token pour récupérer depuis le cache
-                ]);
-                
-                // ✅ CRITIQUE: Forcer la sauvegarde de la session après avoir stocké les données OAuth
-                $request->session()->save();
-                
-                Log::info("Google OAuth: Token Exchange Strategy - Profile complete, redirecting to selection (even for single account)", [
-                    'email' => $googleUser->getEmail(),
-                    'accounts_count' => count($availableAccounts),
-                    'account_ids' => $completeUsers->pluck('id')->toArray(),
-                    'session_id' => $request->session()->getId(),
-                    'selection_token' => substr($selectionToken, 0, 10) . '...',
-                    'session_saved' => true,
-                ]);
-                
-                // ✅ TOUJOURS rediriger vers la sélection avec le token en paramètre
-                // Le frontend détectera s'il n'y a qu'un seul compte et lancera la connexion automatiquement
-                $selectionUrl = $this->buildFrontendUrl('/selection-compte');
-                $selectionUrl .= '?token=' . $selectionToken;
-                
-                return redirect($selectionUrl);
-            }
-
-            // PRIORITÉ 2: Si le flag est false mais que l'utilisateur a déjà phone ET account_type
-            // (cas des "legacy users" créés avant l'intégration Google)
-            // Mettre à jour automatiquement le flag et utiliser la stratégie Token Exchange
-            if ($user->phone !== null && $user->account_type !== null) {
+                $isProfileComplete = true;
+            } elseif ($user->phone !== null && $user->account_type !== null) {
                 // Vérifier aussi que si c'est une entreprise, le nom est présent
                 $hasCompanyName = ($user->account_type !== 'company') || ($user->company_name !== null);
-                
                 if ($hasCompanyName) {
                     // L'utilisateur a tous les champs requis, mettre à jour le flag
                     $user->is_profile_complete = true;
@@ -740,46 +686,81 @@ class SocialController extends Controller
                         'email' => $user->email,
                         'account_type' => $user->account_type
                     ]);
-                    
-                    // ✅ NOUVEAU: Utiliser la stratégie Token Exchange au lieu de rediriger directement
-                    // Recharger les utilisateurs complets après la mise à jour
-                    $completeUsers = $usersWithEmail->where('is_profile_complete', true)->values();
-                    $availableAccounts = $completeUsers->map(function ($u) {
-                        return [
-                            'id' => $u->id,
-                            'type' => $u->role === 'business_admin' ? 'business' : 'individual',
-                            'role' => $u->role,
-                            'name' => $u->name,
-                            'company_name' => $u->company_name,
-                        ];
-                    })->toArray();
-                    
-                    $selectionToken = Str::random(64);
-                    \Illuminate\Support\Facades\Cache::put(
-                        'google_oauth_selection_' . $selectionToken,
-                        [
-                            'accounts' => $availableAccounts,
-                            'email' => $googleUser->getEmail(),
-                            'google_id' => $googleUser->getId(),
-                            'session_id' => $request->session()->getId(),
-                        ],
-                        now()->addMinutes(10)
-                    );
-                    
-                    session([
-                        'google_oauth_pending_accounts' => $availableAccounts,
-                        'google_oauth_email' => $googleUser->getEmail(),
-                        'google_oauth_id' => $googleUser->getId(),
-                        'google_oauth_selection_token' => $selectionToken,
-                    ]);
-                    $request->session()->save();
-                    
-                    $selectionUrl = $this->buildFrontendUrl('/selection-compte');
-                    $selectionUrl .= '?token=' . $selectionToken;
-                    
-                    return redirect($selectionUrl);
+                    $isProfileComplete = true;
                 }
             }
+            
+            // Si le profil est complet, inclure ce compte dans la liste des comptes disponibles
+            if ($isProfileComplete) {
+                // S'assurer que l'utilisateur actuel est dans la liste des comptes complets
+                if (!$completeUsers->contains('id', $user->id)) {
+                    $completeUsers->push($user);
+                }
+            }
+            
+            // ✅ CRITIQUE: TOUJOURS générer un token de sélection et rediriger vers /selection-compte
+            // même s'il n'y a qu'un seul compte. Le frontend détectera automatiquement et sélectionnera le compte.
+            $availableAccounts = $completeUsers->map(function ($u) {
+                return [
+                    'id' => $u->id,
+                    'type' => $u->role === 'business_admin' ? 'business' : 'individual',
+                    'role' => $u->role,
+                    'name' => $u->name,
+                    'company_name' => $u->company_name,
+                ];
+            })->toArray();
+            
+            // Si aucun compte complet n'existe, créer une entrée pour le compte actuel (incomplet)
+            if (empty($availableAccounts)) {
+                $availableAccounts = [[
+                    'id' => $user->id,
+                    'type' => $user->role === 'business_admin' ? 'business' : 'individual',
+                    'role' => $user->role,
+                    'name' => $user->name,
+                    'company_name' => $user->company_name,
+                ]];
+            }
+            
+            // ✅ CORRECTION: Stocker les données OAuth dans le cache ET dans la session
+            // Le cache garantit la persistance même si la session change
+            $selectionToken = Str::random(64);
+            \Illuminate\Support\Facades\Cache::put(
+                'google_oauth_selection_' . $selectionToken,
+                [
+                    'accounts' => $availableAccounts,
+                    'email' => $googleUser->getEmail(),
+                    'google_id' => $googleUser->getId(),
+                    'session_id' => $request->session()->getId(),
+                ],
+                now()->addMinutes(10) // Valide pendant 10 minutes
+            );
+            
+            // Stocker aussi dans la session pour compatibilité
+            session([
+                'google_oauth_pending_accounts' => $availableAccounts,
+                'google_oauth_email' => $googleUser->getEmail(),
+                'google_oauth_id' => $googleUser->getId(),
+                'google_oauth_selection_token' => $selectionToken, // Token pour récupérer depuis le cache
+            ]);
+            
+            // ✅ CRITIQUE: Forcer la sauvegarde de la session après avoir stocké les données OAuth
+            $request->session()->save();
+            
+            Log::info("Google OAuth: Redirecting to selection (Token Exchange strategy)", [
+                'email' => $googleUser->getEmail(),
+                'accounts_count' => count($availableAccounts),
+                'account_ids' => collect($availableAccounts)->pluck('id')->toArray(),
+                'session_id' => $request->session()->getId(),
+                'selection_token' => substr($selectionToken, 0, 10) . '...',
+                'session_saved' => true,
+                'is_profile_complete' => $isProfileComplete,
+            ]);
+            
+            // Rediriger vers la sélection avec le token en paramètre pour récupération depuis le cache si nécessaire
+            $selectionUrl = $this->buildFrontendUrl('/selection-compte');
+            $selectionUrl .= '?token=' . $selectionToken;
+            
+            return redirect($selectionUrl);
 
             // Si on arrive ici, le profil n'est pas complet (nouveau compte ou données manquantes)
             // Utiliser une approche avec token temporaire pour garantir que la session est accessible
