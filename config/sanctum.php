@@ -21,13 +21,19 @@ return [
     'stateful' => array_filter(array_map('trim', array_merge(
         explode(',', env('SANCTUM_STATEFUL_DOMAINS', 'localhost,localhost:3000,localhost:5173,127.0.0.1,127.0.0.1:8000,::1')),
         [
+            // ✅ Local Development
             'localhost',
             'localhost:3000',
-            'localhost:5173', // ✅ Frontend Public (port 5173)
-            'localhost:5174', // ✅ Frontend Admin (port 5174)
+            'localhost:5173', // Frontend Public (port 5173)
+            'localhost:5174', // Frontend Admin (port 5174)
             '127.0.0.1',
             '127.0.0.1:8000',
             '::1',
+            // ✅ Production Domains
+            'digicard.arccenciel.com',
+            'admin.digicard.arccenciel.com',
+            'api.digicard.arccenciel.com',
+            '.arccenciel.com', // Pour tous les sous-domaines
         ]
     ))),
 

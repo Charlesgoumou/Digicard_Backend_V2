@@ -52,6 +52,7 @@ class Order extends Model
         'status',
         'is_configured',
         'access_token',
+        'payment_session_token', // ✅ NOUVEAU: Token pour restaurer la session après redirection externe
     ];
 
     protected $casts = [

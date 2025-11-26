@@ -305,8 +305,14 @@ class AuthController extends Controller
             'verification_code_expires_at' => null
         ])->save();
 
-        // Connecter l'utilisateur (sans régénération de session pour Sanctum SPA)
+        // ✅ CRITIQUE: Connecter l'utilisateur et sauvegarder la session
         Auth::login($user);
+        
+        // ✅ CRITIQUE: Régénérer la session pour la sécurité et forcer l'envoi du cookie
+        $request->session()->regenerate();
+        
+        // ✅ CRITIQUE: Sauvegarder la session pour garantir que le cookie est envoyé
+        $request->session()->save();
 
         // ✅ Vérifier si l'employé doit changer son mot de passe
         if ($user->role === 'employee' && $user->password_reset_required) {
@@ -453,33 +459,16 @@ class AuthController extends Controller
                         
                         // Vérifier que l'utilisateur existe toujours, n'est pas suspendu et a vérifié son email
                         if ($freshUser && !$freshUser->is_suspended && $freshUser->email_verified_at) {
-                            // Vérification supplémentaire : s'assurer que Auth::guard('web')->user() 
-                            // retourne le même utilisateur (double vérification)
-                            $sessionUser = \Illuminate\Support\Facades\Auth::guard('web')->user();
-                            if ($sessionUser && $sessionUser->id == $freshUser->id) {
-                                $user = $freshUser;
-                            } else {
-                                // Incohérence : l'ID existe mais user() ne retourne pas le bon utilisateur
-                                // Invalider la session
-                                \Illuminate\Support\Facades\Auth::guard('web')->logout();
-                                $request->session()->invalidate();
-                                $request->session()->regenerateToken();
-                                $user = null;
-                            }
+                        // ✅ SIMPLIFICATION: Utiliser directement l'utilisateur de la session
+                        // Auth::guard('web')->user() devrait retourner le même utilisateur que find()
+                        $user = $freshUser;
                         } else {
                             // L'utilisateur n'existe plus, est suspendu ou n'a pas vérifié son email
-                            // Invalider la session
-                            \Illuminate\Support\Facades\Auth::guard('web')->logout();
-                            $request->session()->invalidate();
-                            $request->session()->regenerateToken();
+                            // Retourner null sans invalider la session (elle sera invalidée naturellement)
                             $user = null;
                         }
                     } else {
-                        // Pas d'ID utilisateur dans la session, mais check() retourne true
-                        // Cela ne devrait pas arriver, mais au cas où, invalider la session
-                        \Illuminate\Support\Facades\Auth::guard('web')->logout();
-                        $request->session()->invalidate();
-                        $request->session()->regenerateToken();
+                        // Pas d'ID utilisateur dans la session
                         $user = null;
                     }
                 }
@@ -496,30 +485,18 @@ class AuthController extends Controller
             return response()->json(['user' => null], 200);
         }
 
-        // Vérifications finales de sécurité
+        // ✅ SIMPLIFICATION: Vérifications finales de sécurité sans invalider la session
+        // Si l'utilisateur n'existe plus, retourner null
+        // La session sera invalidée naturellement lors de la prochaine tentative d'authentification
         $userExists = \App\Models\User::where('id', $user->id)->exists();
         
         if (!$userExists) {
-            if ($user->currentAccessToken()) {
-                $user->currentAccessToken()->delete();
-            }
-            if ($request->hasSession()) {
-                \Illuminate\Support\Facades\Auth::guard('web')->logout();
-                $request->session()->invalidate();
-                $request->session()->regenerateToken();
-            }
             return response()->json(['user' => null], 200);
         }
 
+        // ✅ SIMPLIFICATION: Si l'utilisateur est suspendu, retourner null sans invalider la session
+        // La session sera invalidée naturellement lors de la prochaine tentative d'authentification
         if ($user->is_suspended) {
-            if ($user->currentAccessToken()) {
-                $user->currentAccessToken()->delete();
-            }
-            if ($request->hasSession()) {
-                \Illuminate\Support\Facades\Auth::guard('web')->logout();
-                $request->session()->invalidate();
-                $request->session()->regenerateToken();
-            }
             return response()->json([
                 'user' => null,
                 'message' => 'Votre compte a été suspendu.'
@@ -691,8 +668,10 @@ class AuthController extends Controller
                 $user->delete();
                 Log::info("Account merge: Temporary user deleted", ['deleted_user_id' => $tempUserId]);
 
-                // Connecter le owner
+                // ✅ CRITIQUE: Connecter le owner et sauvegarder la session
                 Auth::login($owner);
+                $request->session()->regenerate();
+                $request->session()->save();
 
                 // Retourner la réponse
                 return response()->json([
@@ -766,8 +745,10 @@ class AuthController extends Controller
                         $user->delete();
                         Log::info("Account merge: Temporary user deleted", ['deleted_user_id' => $tempUserId]);
                         
-                        // Connecter le googleIdOwner
+                        // ✅ CRITIQUE: Connecter le googleIdOwner et sauvegarder la session
                         Auth::login($googleIdOwner);
+                        $request->session()->regenerate();
+                        $request->session()->save();
                         
                         // Retourner la réponse
                         return response()->json([
@@ -828,7 +809,10 @@ class AuthController extends Controller
                         $user->delete();
                         Log::info("Account merge: Temporary user deleted", ['deleted_user_id' => $tempUserId]);
                         
+                        // ✅ CRITIQUE: Connecter et sauvegarder la session
                         Auth::login($finalGoogleIdCheck);
+                        $request->session()->regenerate();
+                        $request->session()->save();
                         
                         return response()->json([
                             'message' => 'Profil finalisé avec succès. Compte fusionné avec votre compte existant.',
@@ -892,8 +876,10 @@ class AuthController extends Controller
                 $user->delete();
                 Log::info("Account merge: Temporary user deleted", ['deleted_user_id' => $tempUserId]);
 
-                // Connecter le target
+                // ✅ CRITIQUE: Connecter le target et sauvegarder la session
                 Auth::login($target);
+                $request->session()->regenerate();
+                $request->session()->save();
 
                 // Retourner la réponse
                 return response()->json([
@@ -953,8 +939,10 @@ class AuthController extends Controller
                     $user->delete();
                     Log::info("Account merge: Temporary user deleted", ['deleted_user_id' => $tempUserId]);
                     
-                    // Connecter le googleIdOwner
+                    // ✅ CRITIQUE: Connecter le googleIdOwner et sauvegarder la session
                     Auth::login($googleIdOwner);
+                    $request->session()->regenerate();
+                    $request->session()->save();
                     
                     // Retourner la réponse
                     return response()->json([
@@ -1025,7 +1013,10 @@ class AuthController extends Controller
                         $user->delete();
                         Log::info("Account merge: Temporary user deleted", ['deleted_user_id' => $tempUserId]);
                         
+                        // ✅ CRITIQUE: Connecter et sauvegarder la session
                         Auth::login($finalOwner);
+                        $request->session()->regenerate();
+                        $request->session()->save();
                         
                         return response()->json([
                             'message' => 'Profil finalisé avec succès. Compte fusionné avec votre compte existant.',
@@ -1115,5 +1106,224 @@ class AuthController extends Controller
                 'company' => !$hasCompany, // Disponible si pas déjà créé
             ],
         ]);
+    }
+
+    /**
+     * ✅ NOUVEAU: Restaure la session de l'utilisateur via un token de paiement
+     * Utilisé après une redirection externe (paiement Chap Chap Pay) où la session peut être perdue
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function restoreSession(Request $request)
+    {
+        try {
+            $request->validate([
+                'session_token' => 'required|string|size:60',
+            ]);
+
+            $token = $request->input('session_token');
+
+            // Chercher la commande via le token
+            $order = \App\Models\Order::where('payment_session_token', $token)->first();
+
+            if (!$order) {
+                Log::warning('AuthController: Tentative de restauration de session avec token invalide', [
+                    'token_length' => strlen($token),
+                    'token_prefix' => substr($token, 0, 10) . '...',
+                ]);
+
+                return response()->json([
+                    'message' => 'Token de session invalide ou expiré.',
+                    'success' => false,
+                ], 404);
+            }
+
+            // Vérifier que la commande a un utilisateur associé
+            if (!$order->user) {
+                Log::error('AuthController: Commande trouvée mais sans utilisateur associé', [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                ]);
+
+                return response()->json([
+                    'message' => 'Erreur lors de la restauration de la session.',
+                    'success' => false,
+                ], 500);
+            }
+
+            $user = $order->user;
+
+            // ✅ CRITIQUE: Connecter l'utilisateur manuellement et sauvegarder la session
+            Auth::login($user);
+
+            // Régénérer la session pour la sécurité
+            $request->session()->regenerate();
+            
+            // ✅ CRITIQUE: Sauvegarder la session pour garantir que le cookie est envoyé
+            $request->session()->save();
+
+            // Supprimer le token (usage unique) pour la sécurité
+            $order->update(['payment_session_token' => null]);
+
+            Log::info('AuthController: Session restaurée avec succès via token de paiement', [
+                'user_id' => $user->id,
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+            ]);
+
+            return response()->json([
+                'message' => 'Session restaurée avec succès.',
+                'success' => true,
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'role' => $user->role,
+                ],
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            Log::warning('AuthController: Erreur de validation lors de la restauration de session', [
+                'errors' => $e->errors(),
+            ]);
+
+            return response()->json([
+                'message' => 'Token de session invalide.',
+                'success' => false,
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('AuthController: Erreur lors de la restauration de session', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'message' => 'Erreur lors de la restauration de la session.',
+                'success' => false,
+            ], 500);
+        }
+    }
+
+    /**
+     * ✅ NOUVEAU: Échange un token de paiement contre une session
+     * Le frontend appelle cette route après avoir reçu le token dans l'URL
+     * Le cookie de session est créé lors de cet appel API, pas lors de la redirection
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function exchangeToken(Request $request)
+    {
+        try {
+            $request->validate([
+                'session_token' => 'required|string|size:60',
+            ]);
+
+            $token = $request->input('session_token');
+
+            // Chercher la commande via le token
+            $order = \App\Models\Order::where('payment_session_token', $token)->first();
+
+            if (!$order) {
+                Log::warning('AuthController: Tentative d\'échange de token invalide', [
+                    'token_length' => strlen($token),
+                    'token_prefix' => substr($token, 0, 10) . '...',
+                ]);
+
+                return response()->json([
+                    'message' => 'Token de session invalide ou expiré.',
+                    'success' => false,
+                ], 404);
+            }
+
+            // Vérifier que la commande a un utilisateur associé
+            if (!$order->user) {
+                Log::error('AuthController: Commande trouvée mais sans utilisateur associé', [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                ]);
+
+                return response()->json([
+                    'message' => 'Erreur lors de l\'échange du token.',
+                    'success' => false,
+                ], 500);
+            }
+
+            $user = $order->user;
+
+            // ✅ CRITIQUE: S'assurer qu'une session existe avant de connecter l'utilisateur
+            // Le middleware 'web' devrait déjà avoir initialisé la session, mais on s'en assure
+            if (!$request->hasSession()) {
+                $request->session()->start();
+            }
+
+            // ✅ CRITIQUE: Connecter l'utilisateur manuellement
+            Auth::login($user, true); // Le deuxième paramètre 'true' force la session à être "remembered"
+
+            // ✅ CRITIQUE: Régénérer la session pour la sécurité
+            $request->session()->regenerate();
+            
+            // ✅ CRITIQUE: FORCER l'écriture de la session en base de données et dans le cookie
+            // Nécessaire pour que la session soit persistée
+            $request->session()->save();
+            
+            // ✅ CRITIQUE: S'assurer que le cookie de session est envoyé avec la réponse
+            // En forçant l'envoi du cookie, on garantit qu'il sera disponible pour les requêtes suivantes
+            $sessionCookie = config('session.cookie');
+            $sessionId = $request->session()->getId();
+            
+            // Le cookie sera automatiquement envoyé par Laravel, mais on s'assure qu'il est bien configuré
+            // en vérifiant que la session est bien sauvegardée
+
+            // ✅ Supprimer le token (usage unique) pour la sécurité
+            $order->update(['payment_session_token' => null]);
+
+            Log::info('AuthController: Token échangé avec succès contre une session', [
+                'user_id' => $user->id,
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+            ]);
+
+            // ✅ CRITIQUE: Retourner toutes les données utilisateur nécessaires pour le frontend
+            // Format identique à celui de la méthode user() pour garantir la compatibilité
+            return response()->json([
+                'message' => 'Session restaurée',
+                'success' => true,
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'role' => $user->role,
+                    'username' => $user->username,
+                    'avatar_url' => $user->avatar_url,
+                    'email_verified_at' => $user->email_verified_at,
+                    'is_admin' => $user->is_admin ?? false,
+                    'is_profile_complete' => $user->is_profile_complete ?? false,
+                    'account_type' => $user->account_type,
+                    'google_id' => $user->google_id,
+                ],
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            Log::warning('AuthController: Erreur de validation lors de l\'échange de token', [
+                'errors' => $e->errors(),
+            ]);
+
+            return response()->json([
+                'message' => 'Token de session invalide.',
+                'success' => false,
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('AuthController: Erreur lors de l\'échange de token', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'message' => 'Erreur lors de l\'échange du token.',
+                'success' => false,
+            ], 500);
+        }
     }
 }

@@ -73,6 +73,14 @@ Route::post('/payment/webhook', [OrderController::class, 'paymentWebhook'])->nam
 Route::get('/additional-payments/{additionalPaymentId}/check-status-public', [OrderController::class, 'checkAdditionalPaymentStatusPublic'])->name('additional-payments.check-status-public');
 Route::post('/payment/webhook-additional-cards', [OrderController::class, 'paymentWebhookAdditionalCards'])->name('api.payment.webhook.additional.cards');
 
+// ✅ NOUVEAU: Route publique pour échanger un token de paiement contre une session
+// Le frontend appelle cette route après avoir reçu le token dans l'URL
+// ✅ CRITIQUE: Utiliser les middlewares 'web' et 'EnsureFrontendRequestsAreStateful' 
+// pour établir correctement la session avec les cookies après une redirection externe
+Route::middleware(['web', \App\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
+    ->post('/auth/exchange-token', [AuthController::class, 'exchangeToken'])
+    ->name('auth.exchange-token');
+
 // --- Routes Protégées (Nécessitent une authentification Sanctum valide et compte non suspendu) ---
 Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     // Authentification & Déconnexion

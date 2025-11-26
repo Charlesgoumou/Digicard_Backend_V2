@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\PublicProfileController;
 use App\Http\Controllers\StorageController;
 use App\Http\Controllers\SocialController;
+use App\Http\Controllers\OrderController;
 
 // --- ROUTE DE TEST ---
 // Route de test pour vérifier que Laravel fonctionne
@@ -39,6 +40,11 @@ Route::get('/profil/{user:username}/vcard', [PublicProfileController::class, 'do
 // --- ROUTES GOOGLE OAUTH ---
 Route::get('/auth/google', [SocialController::class, 'redirect'])->name('google.redirect');
 Route::get('/auth/google/callback', [SocialController::class, 'callback'])->name('google.callback');
+
+// --- ROUTE DE CALLBACK POUR LES PAIEMENTS (Restauration de session serveur-à-serveur) ---
+// ✅ NOUVEAU: Route WEB (pas API) pour bénéficier nativement des cookies de session
+// Cette route restaure la session avant de rediriger vers le frontend
+Route::get('/payment/callback', [OrderController::class, 'handlePaymentCallback'])->name('payment.callback');
 
 // --- ROUTE RACINE POUR L'APPLICATION VUE.JS ---
 // ✅ AJOUT: Route spécifique pour la racine '/' pour éviter l'erreur ArgumentCountError

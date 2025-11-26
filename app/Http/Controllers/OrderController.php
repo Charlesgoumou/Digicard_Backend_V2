@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class OrderController extends Controller
 {
@@ -365,7 +366,7 @@ class OrderController extends Controller
                 ->orderBy('paid_at', 'desc')
                 ->get()
                 ->groupBy('order_id');
-            
+
             // Ajouter les paiements supplémentaires à chaque commande
             $orders = $orders->map(function ($order) use ($paidAdditionalPayments) {
                 $order->paid_additional_payments = $paidAdditionalPayments->get($order->id, collect())->map(function ($payment) {
@@ -1231,12 +1232,12 @@ class OrderController extends Controller
         // ✅ MODIFICATION: Appeler Chap Chap Pay pour générer un lien de paiement
         try {
             $chapChapPayService = new ChapChapPayService();
-            
+
             // ✅ CORRECTION: Le montant total_price est déjà en centimes (ex: 180000 = 1800.00 GNF)
             // D'après OrderController::store(), total_price est calculé directement en centimes
             // Il ne faut donc PAS multiplier par 100
             $amount = (int) $order->total_price; // total_price est déjà en centimes
-            
+
             Log::info('Chap Chap Pay: Calcul du montant', [
                 'order_id' => $order->id,
                 'order_number' => $order->order_number,
@@ -1244,14 +1245,14 @@ class OrderController extends Controller
                 'total_price_type' => gettype($order->total_price),
                 'amount_sent_to_api' => $amount,
             ]);
-            
+
             // Construire les URLs
             // ✅ MODIFICATION: URL de retour après paiement : pointer vers le frontend Vue
             // En développement local, le frontend tourne sur localhost:5173, le backend sur localhost:8000
             // En production, ils sont généralement sur le même domaine (APP_URL)
             // ✅ CORRECTION: Utiliser config('app.frontend_url') qui gère déjà la logique de nettoyage
             $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
-            
+
             // ✅ CORRECTION: Nettoyer l'URL pour ne prendre que la première URL valide
             // Si plusieurs URLs sont séparées par une virgule, prendre seulement la première
             if (strpos($frontendUrl, ',') !== false) {
@@ -1259,7 +1260,7 @@ class OrderController extends Controller
                 $frontendUrl = trim($urls[0]); // Prendre la première URL
             }
             $frontendUrl = trim($frontendUrl);
-            
+
             // ✅ CRITIQUE: En production, s'assurer que l'URL pointe vers le frontend, pas le backend
             if (app()->environment('production') && str_contains($frontendUrl, 'api.digicard.arccenciel.com')) {
                 // Remplacer api.digicard par digicard pour pointer vers le frontend
@@ -1269,16 +1270,32 @@ class OrderController extends Controller
                     'corrected_url' => $frontendUrl,
                 ]);
             }
-            
-            $returnUrl = rtrim($frontendUrl, '/') . '/mes-commandes?payment=success&order_id=' . $order->id;
+
+            // ✅ NOUVEAU: Générer un token de session pour la récupération après redirection externe
+            $sessionToken = Str::random(60);
+            $order->update(['payment_session_token' => $sessionToken]);
+
+            Log::info('OrderController: Token de session généré pour la commande', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'token_length' => strlen($sessionToken),
+            ]);
+
+            // ✅ MODIFICATION: return_url pointe maintenant vers la route backend (callback)
+            // qui restaurera la session avant de rediriger vers le frontend
+            $returnUrl = route('payment.callback', [
+                'session_token' => $sessionToken,
+                'order_id' => $order->id,
+            ]);
+
             $notifyUrl = url('/') . '/api/payment/webhook'; // URL du webhook (URL complète pour que Chap Chap Pay puisse l'appeler)
-            
+
             // Créer le lien de paiement via Chap Chap Pay
             // ✅ MODIFICATION: Nettoyer la description pour éviter les fausses alertes de sécurité
             // Remplacer le caractère # par "numéro" pour éviter la détection d'injection SQL
             // L'order_id doit rester le order_number original car l'API le requiert
             $description = 'Paiement commande numero ' . $order->order_number;
-            
+
             $paymentData = [
                 'amount' => $amount,
                 'description' => $description, // Description nettoyée (sans #)
@@ -1290,7 +1307,7 @@ class OrderController extends Controller
                     'auto-redirect' => true,
                 ],
             ];
-            
+
             Log::info('Chap Chap Pay: Données de paiement préparées', [
                 'order_id' => $order->id,
                 'order_number' => $order->order_number,
@@ -1299,18 +1316,18 @@ class OrderController extends Controller
                 'return_url' => $returnUrl,
                 'notify_url' => $notifyUrl,
             ]);
-            
+
             $paymentResponse = $chapChapPayService->createPaymentLink($paymentData);
-            
+
             if ($paymentResponse && isset($paymentResponse['payment_url'])) {
                 // Le paiement a été initié avec succès
                 // ✅ MODIFICATION: Sauvegarder l'operation_id pour pouvoir vérifier le statut plus tard
                 $operationId = $paymentResponse['operation_id'] ?? null;
-                
+
                 // Sauvegarder l'operation_id dans un champ personnalisé (si la table orders a un champ pour cela)
                 // Sinon, on peut l'enregistrer dans les meta ou settings
                 // Pour l'instant, on le retourne dans la réponse
-                
+
                 Log::info('Chap Chap Pay: Lien de paiement généré avec succès', [
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
@@ -1318,7 +1335,7 @@ class OrderController extends Controller
                     'payment_url' => $paymentResponse['payment_url'],
                     'operation_id' => $operationId,
                 ]);
-                
+
                 return response()->json([
                     'message' => 'Redirection vers le paiement en cours...',
                     'payment_url' => $paymentResponse['payment_url'],
@@ -1339,14 +1356,14 @@ class OrderController extends Controller
                     'notify_url' => $notifyUrl,
                     'payment_response' => $paymentResponse,
                 ]);
-                
+
                 // Log séparé pour faciliter le débogage
                 Log::error('Chap Chap Pay: Détails de la requête qui a échoué', [
                     'request_data' => $paymentData,
                     'api_key_present' => !empty(config('services.chapchappay.public_key')),
                     'base_url' => config('services.chapchappay.base_url'),
                 ]);
-                
+
                 return response()->json([
                     'message' => 'Erreur lors de la génération du lien de paiement. Veuillez réessayer plus tard. Consultez les logs pour plus de détails.',
                     'error' => 'payment_link_generation_failed',
@@ -1367,11 +1384,11 @@ class OrderController extends Controller
                 'return_url' => $returnUrl ?? null,
                 'notify_url' => $notifyUrl ?? null,
             ]);
-            
+
             // Log séparé avec le message d'erreur pour faciliter le débogage
             Log::error('Chap Chap Pay: Message d\'erreur exception dans OrderController: ' . $e->getMessage());
             Log::error('Chap Chap Pay: Trace complète de l\'exception: ' . $e->getTraceAsString());
-            
+
             return response()->json([
                 'message' => 'Erreur lors de l\'initialisation du paiement. Veuillez réessayer plus tard. Consultez les logs pour plus de détails.',
                 'error' => 'payment_initialization_failed',
@@ -1411,7 +1428,7 @@ class OrderController extends Controller
                 // Si c'est un nombre, chercher par ID
                 $order = Order::find((int) $orderIdOrNumber);
             }
-            
+
             // Si pas trouvé par ID, chercher par order_number (compatibilité avec l'ancien format)
             if (!$order) {
                 $order = Order::where('order_number', $orderIdOrNumber)->first();
@@ -1430,7 +1447,7 @@ class OrderController extends Controller
             if ($status === 'success' || $status === 'paid' || $status === 'completed') {
                 $user = $order->user;
                 $isNewlyValidated = false;
-                
+
                 // Vérifier si la commande n'est pas déjà validée
                 if ($order->status !== 'validated') {
                     $isNewlyValidated = true;
@@ -1497,10 +1514,10 @@ class OrderController extends Controller
                         'is_newly_validated' => $isNewlyValidated,
                         'admin_email' => 'charleshaba454@gmail.com',
                     ]);
-                    
+
                     $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
                     \Mail::to('charleshaba454@gmail.com')->send($mailable);
-                    
+
                     Log::info('Email de notification admin envoyé avec succès pour commande initiale', [
                         'order_id' => $order->id,
                         'order_number' => $order->order_number,
@@ -1602,7 +1619,7 @@ class OrderController extends Controller
             if ($operationId) {
                 $additionalPayment = \App\Models\AdditionalCardPayment::where('payment_operation_id', $operationId)->first();
             }
-            
+
             if (!$additionalPayment && $additionalPaymentId) {
                 $additionalPayment = \App\Models\AdditionalCardPayment::find($additionalPaymentId);
             }
@@ -1701,13 +1718,13 @@ class OrderController extends Controller
 
                     // Construire le message de notification
                     $message = "{$quantity} carte(s) supplémentaire(s) ajoutée(s) à la commande #{$order->order_number} par {$user->name}";
-                    
+
                     // Pour les commandes entreprise, ajouter les détails de la distribution
                     $distributionDetails = [];
                     if (($order->order_type === 'business' || $order->order_type === 'entreprise') && $distribution) {
                         $adminQuantity = isset($distribution['admin']) ? (int) $distribution['admin'] : 0;
                         $employeesDistribution = $distribution['employees'] ?? [];
-                        
+
                         // Détails pour le business admin
                         if ($adminQuantity > 0) {
                             $adminOrderEmployee = $order->orderEmployees->where('employee_id', $user->id)->first();
@@ -1718,7 +1735,7 @@ class OrderController extends Controller
                                 'quantity' => $adminQuantity,
                             ];
                         }
-                        
+
                         // Détails pour les employés
                         foreach ($employeesDistribution as $employeeId => $employeeQuantity) {
                             $employeeQuantityInt = (int) $employeeQuantity;
@@ -1734,7 +1751,7 @@ class OrderController extends Controller
                                 }
                             }
                         }
-                        
+
                         // Ajouter les détails à la fin du message
                         if (!empty($distributionDetails)) {
                             $detailsText = [];
@@ -1789,10 +1806,10 @@ class OrderController extends Controller
                         'additional_payment_id' => $additionalPayment->id,
                         'admin_email' => 'charleshaba454@gmail.com',
                     ]);
-                    
+
                     $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, true, $additionalPayment);
                     \Mail::to('charleshaba454@gmail.com')->send($mailable);
-                    
+
                     \Log::info('Email de notification admin envoyé avec succès pour cartes supplémentaires', [
                         'order_id' => $order->id,
                         'order_number' => $order->order_number,
@@ -1832,9 +1849,9 @@ class OrderController extends Controller
             } else {
                 // Le paiement n'a pas été réussi
                 $additionalPayment->update(['payment_status' => 'failed']);
-                
+
                 $order = $additionalPayment->order;
-                
+
                 Log::warning('Chap Chap Pay: Paiement supplémentaire échoué ou en attente', [
                     'additional_payment_id' => $additionalPayment->id,
                     'order_id' => $order->id ?? null,
@@ -1868,7 +1885,7 @@ class OrderController extends Controller
     {
         try {
             $additionalPayment = \App\Models\AdditionalCardPayment::find($additionalPaymentId);
-            
+
             if (!$additionalPayment) {
                 return response()->json([
                     'message' => 'Paiement supplémentaire non trouvé.',
@@ -1897,7 +1914,7 @@ class OrderController extends Controller
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
                 ]);
-                
+
                 return response()->json([
                     'status' => 'paid',
                     'additional_payment_id' => $additionalPayment->id,
@@ -1914,7 +1931,7 @@ class OrderController extends Controller
             if ($additionalPayment->payment_status === 'pending') {
                 // Calculer le temps depuis la création du paiement
                 $minutesSinceCreation = abs($additionalPayment->created_at->diffInMinutes(now()));
-                
+
                 Log::info('Chap Chap Pay: Vérification du statut du paiement supplémentaire', [
                     'additional_payment_id' => $additionalPayment->id,
                     'order_id' => $order->id,
@@ -1923,12 +1940,12 @@ class OrderController extends Controller
                     'minutes_since_creation' => $minutesSinceCreation,
                     'environment' => app()->environment(),
                 ]);
-                
+
                 // ✅ VALIDATION AUTOMATIQUE: Si on est en local ou si le paiement est récent
                 // En production, le webhook devrait normalement être appelé par Chap Chap Pay,
                 // mais on traite automatiquement comme fallback si le paiement est récent et toujours pending
                 $shouldProcess = false;
-                
+
                 if (app()->environment('local')) {
                     // En local, traiter automatiquement car le webhook ne peut pas être appelé
                     $shouldProcess = true;
@@ -1959,7 +1976,7 @@ class OrderController extends Controller
                         'note' => 'Le webhook devrait normalement traiter ce paiement. Si le statut reste pending, contacter le support.',
                     ]);
                 }
-                
+
                 if ($shouldProcess) {
                     // Appeler la logique du webhook pour traiter le paiement
                     // Simuler un webhook avec status = 'success'
@@ -2022,13 +2039,13 @@ class OrderController extends Controller
                             }
 
                             $message = "{$quantity} carte(s) supplémentaire(s) ajoutée(s) à la commande #{$order->order_number} par {$user->name}";
-                            
+
                             // Pour les commandes entreprise, ajouter les détails de la distribution
                             $distributionDetails = [];
                             if (($order->order_type === 'business' || $order->order_type === 'entreprise') && $distribution) {
                                 $adminQuantity = isset($distribution['admin']) ? (int) $distribution['admin'] : 0;
                                 $employeesDistribution = $distribution['employees'] ?? [];
-                                
+
                                 if ($adminQuantity > 0) {
                                     $adminOrderEmployee = $order->orderEmployees->where('employee_id', $user->id)->first();
                                     $adminName = $adminOrderEmployee ? $adminOrderEmployee->employee_name : $user->name;
@@ -2038,7 +2055,7 @@ class OrderController extends Controller
                                         'quantity' => $adminQuantity,
                                     ];
                                 }
-                                
+
                                 foreach ($employeesDistribution as $employeeId => $employeeQuantity) {
                                     $employeeQuantityInt = (int) $employeeQuantity;
                                     if ($employeeQuantityInt > 0) {
@@ -2053,7 +2070,7 @@ class OrderController extends Controller
                                         }
                                     }
                                 }
-                                
+
                                 if (!empty($distributionDetails)) {
                                     $detailsText = [];
                                     foreach ($distributionDetails as $detail) {
@@ -2087,7 +2104,7 @@ class OrderController extends Controller
                         try {
                             $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, true, $additionalPayment);
                             \Mail::to('charleshaba454@gmail.com')->send($mailable);
-                            
+
                             Log::info('Email de notification admin envoyé avec succès pour cartes supplémentaires (validation automatique)', [
                                 'order_id' => $order->id,
                                 'additional_payment_id' => $additionalPayment->id,
@@ -2124,7 +2141,7 @@ class OrderController extends Controller
                             'error' => $e->getMessage(),
                             'trace' => $e->getTraceAsString(),
                         ]);
-                        
+
                         // En cas d'erreur, retourner pending pour réessayer
                         return response()->json([
                             'status' => 'pending',
@@ -2134,7 +2151,7 @@ class OrderController extends Controller
                         ]);
                     }
                 }
-                
+
                 // Si on ne doit pas traiter automatiquement, retourner pending
                 return response()->json([
                     'status' => 'pending',
@@ -2176,7 +2193,7 @@ class OrderController extends Controller
     {
         try {
             $additionalPayment = \App\Models\AdditionalCardPayment::find($additionalPaymentId);
-            
+
             if (!$additionalPayment) {
                 return response()->json([
                     'message' => 'Paiement supplémentaire non trouvé.',
@@ -2192,7 +2209,7 @@ class OrderController extends Controller
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
                 ]);
-                
+
                 return response()->json([
                     'status' => 'paid',
                     'additional_payment_id' => $additionalPayment->id,
@@ -2207,7 +2224,7 @@ class OrderController extends Controller
             // ✅ NOUVEAU: Si le paiement est en attente, valider automatiquement en développement local
             if ($additionalPayment->payment_status === 'pending') {
                 $minutesSinceCreation = abs($additionalPayment->created_at->diffInMinutes(now()));
-                
+
                 Log::info('Chap Chap Pay: Vérification du statut du paiement supplémentaire (route publique)', [
                     'additional_payment_id' => $additionalPayment->id,
                     'order_id' => $order->id,
@@ -2216,10 +2233,10 @@ class OrderController extends Controller
                     'minutes_since_creation' => $minutesSinceCreation,
                     'environment' => app()->environment(),
                 ]);
-                
+
                 // ✅ VALIDATION AUTOMATIQUE: En local ou si le paiement est récent
                 $shouldProcess = false;
-                
+
                 if (app()->environment('local')) {
                     $shouldProcess = true;
                     Log::info('Chap Chap Pay: Traitement automatique du paiement supplémentaire (environnement local)', [
@@ -2235,23 +2252,23 @@ class OrderController extends Controller
                         'minutes_since_creation' => $minutesSinceCreation,
                     ]);
                 }
-                
+
                 if ($shouldProcess) {
                     // Traiter le paiement (même logique que dans checkAdditionalPaymentStatus)
                     $user = $additionalPayment->user;
                     $quantity = $additionalPayment->quantity;
                     $distribution = $additionalPayment->distribution;
                     $totalPrice = $additionalPayment->total_price;
-                    
+
                     // Appliquer les cartes à la commande
                     if (($order->order_type === 'business' || $order->order_type === 'entreprise') && $distribution) {
                         $adminQuantity = isset($distribution['admin']) ? (int) $distribution['admin'] : 0;
                         $employeesDistribution = $distribution['employees'] ?? [];
-                        
+
                         if ($adminQuantity > 0) {
                             $order->increment('card_quantity', $adminQuantity);
                         }
-                        
+
                         foreach ($employeesDistribution as $employeeId => $employeeQuantity) {
                             $employeeQuantityInt = (int) $employeeQuantity;
                             if ($employeeQuantityInt > 0) {
@@ -2261,23 +2278,114 @@ class OrderController extends Controller
                     } else {
                         $order->increment('card_quantity', $quantity);
                     }
-                    
+
                     $order->increment('additional_cards_count', $quantity);
                     $order->increment('additional_cards_total_price', $totalPrice);
                     $order->increment('total_price', $totalPrice);
-                    
+
                     $additionalPayment->update([
                         'payment_status' => 'paid',
                         'paid_at' => now(),
                     ]);
-                    
+
+                    // ✅ NOUVEAU: Notification super admin : paiement supplémentaire validé
+                    try {
+                        $profileUrl = url('/') . '/' . $user->username;
+                        if ($order->is_configured) {
+                            $profileUrl .= '?order=' . $order->id;
+                        }
+
+                        $message = "{$quantity} carte(s) supplémentaire(s) ajoutée(s) à la commande #{$order->order_number} par {$user->name}";
+
+                        // Pour les commandes entreprise, ajouter les détails de la distribution
+                        $distributionDetails = [];
+                        if (($order->order_type === 'business' || $order->order_type === 'entreprise') && $distribution) {
+                            $adminQuantity = isset($distribution['admin']) ? (int) $distribution['admin'] : 0;
+                            $employeesDistribution = $distribution['employees'] ?? [];
+
+                            if ($adminQuantity > 0) {
+                                $adminOrderEmployee = $order->orderEmployees->where('employee_id', $user->id)->first();
+                                $adminName = $adminOrderEmployee ? $adminOrderEmployee->employee_name : $user->name;
+                                $distributionDetails[] = [
+                                    'name' => $adminName,
+                                    'role' => 'business_admin',
+                                    'quantity' => $adminQuantity,
+                                ];
+                            }
+
+                            foreach ($employeesDistribution as $employeeId => $employeeQuantity) {
+                                $employeeQuantityInt = (int) $employeeQuantity;
+                                if ($employeeQuantityInt > 0) {
+                                    $employeeOrderEmployee = $order->orderEmployees->where('employee_id', $employeeId)->first();
+                                    if ($employeeOrderEmployee) {
+                                        $distributionDetails[] = [
+                                            'name' => $employeeOrderEmployee->employee_name,
+                                            'role' => 'employee',
+                                            'employee_id' => $employeeId,
+                                            'quantity' => $employeeQuantityInt,
+                                        ];
+                                    }
+                                }
+                            }
+
+                            if (!empty($distributionDetails)) {
+                                $detailsText = [];
+                                foreach ($distributionDetails as $detail) {
+                                    $detailsText[] = "{$detail['name']}: {$detail['quantity']} carte(s)";
+                                }
+                                $message .= " (" . implode(', ', $detailsText) . ")";
+                            }
+                        }
+
+                        \App\Models\AdminNotification::create([
+                            'type' => 'additional_cards_added',
+                            'user_id' => $user->id,
+                            'order_id' => $order->id,
+                            'message' => $message,
+                            'url' => $profileUrl,
+                            'meta' => [
+                                'order_number' => $order->order_number,
+                                'quantity' => $quantity,
+                                'total_price' => $totalPrice,
+                                'unit_price' => $additionalPayment->unit_price,
+                                'additional_payment_id' => $additionalPayment->id,
+                                'order_type' => $order->order_type,
+                                'distribution_details' => $distributionDetails,
+                            ],
+                        ]);
+                    } catch (\Throwable $t) {
+                        Log::error('Erreur lors de la création de la notification admin pour cartes supplémentaires (route publique): ' . $t->getMessage());
+                    }
+
+                    // ✅ NOUVEAU: Envoyer l'email de notification au super admin
+                    try {
+                        $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, true, $additionalPayment);
+                        \Mail::to('charleshaba454@gmail.com')->send($mailable);
+
+                        Log::info('Email de notification admin envoyé avec succès pour cartes supplémentaires (route publique)', [
+                            'order_id' => $order->id,
+                            'additional_payment_id' => $additionalPayment->id,
+                            'order_number' => $order->order_number,
+                            'user_id' => $user->id,
+                            'admin_email' => 'charleshaba454@gmail.com',
+                        ]);
+                    } catch (\Exception $e) {
+                        Log::error('Erreur lors de l\'envoi de l\'email de notification admin pour cartes supplémentaires (route publique)', [
+                            'error' => $e->getMessage(),
+                            'trace' => $e->getTraceAsString(),
+                            'order_id' => $order->id,
+                            'additional_payment_id' => $additionalPayment->id,
+                            'admin_email' => 'charleshaba454@gmail.com',
+                        ]);
+                    }
+
                     Log::info('Chap Chap Pay: Paiement supplémentaire traité automatiquement (route publique)', [
                         'additional_payment_id' => $additionalPayment->id,
                         'order_id' => $order->id,
                         'order_number' => $order->order_number,
                         'quantity' => $quantity,
                     ]);
-                    
+
                     return response()->json([
                         'status' => 'paid',
                         'additional_payment_id' => $additionalPayment->id,
@@ -2289,7 +2397,7 @@ class OrderController extends Controller
                     ]);
                 }
             }
-            
+
             return response()->json([
                 'status' => 'pending',
                 'additional_payment_id' => $additionalPayment->id,
@@ -2303,7 +2411,7 @@ class OrderController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            
+
             return response()->json([
                 'message' => 'Erreur lors de la vérification du statut du paiement.',
             ], 500);
@@ -2332,7 +2440,7 @@ class OrderController extends Controller
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
                 ]);
-                
+
                 return response()->json([
                     'status' => 'validated',
                     'order_id' => $order->id,
@@ -2345,17 +2453,17 @@ class OrderController extends Controller
             // si l'utilisateur revient de la page de paiement (le simple fait d'appeler cette méthode
             // indique que l'utilisateur est revenu avec payment=success)
             // Le webhook ne peut pas être appelé en localhost, donc on valide manuellement
-            
+
             // ✅ LOGIQUE SIMPLIFIÉE: Si l'utilisateur revient avec payment=success, c'est que le paiement a été complété
             // Le simple fait d'appeler cette méthode avec payment=success dans l'URL indique que Chap Chap Pay
             // a redirigé l'utilisateur après un paiement réussi
             // En environnement local/test, le webhook ne peut pas être appelé, donc on valide automatiquement
             // En production, le webhook devrait être appelé, mais cette méthode sert de fallback
-            
+
             // Calculer le temps depuis la dernière mise à jour pour logging
             $minutesSinceUpdate = abs($order->updated_at->diffInMinutes(now()));
             $minutesSinceCreation = abs($order->created_at->diffInMinutes(now()));
-            
+
             Log::info('Chap Chap Pay: Vérification du statut de paiement', [
                 'order_id' => $order->id,
                 'order_number' => $order->order_number,
@@ -2364,14 +2472,14 @@ class OrderController extends Controller
                 'minutes_since_creation' => $minutesSinceCreation,
                 'environment' => app()->environment(),
             ]);
-            
+
             // ✅ VALIDATION AUTOMATIQUE: Si l'utilisateur revient avec payment=success, valider la commande
             // On valide si :
             // 1. Le statut n'est pas déjà validé
             // 2. On est en environnement local (où le webhook ne peut pas être appelé)
             //    OU la commande a été créée/mise à jour récemment (moins de 1 heure) en production
             $shouldValidate = false;
-            
+
             if ($order->status !== 'validated') {
                 if (app()->environment('local')) {
                     // En local, valider automatiquement car le webhook ne peut pas être appelé
@@ -2400,7 +2508,7 @@ class OrderController extends Controller
                     ]);
                 }
             }
-            
+
             if ($shouldValidate) {
                 Log::info('Chap Chap Pay: Validation manuelle de la commande (webhook non appelé - environnement local/test)', [
                     'order_id' => $order->id,
@@ -2410,7 +2518,7 @@ class OrderController extends Controller
                     'current_status' => $order->status,
                     'environment' => app()->environment(),
                 ]);
-                
+
                 // Valider la commande manuellement (simuler ce que ferait le webhook)
                 $order->update([
                     'status' => 'validated',
@@ -2460,6 +2568,40 @@ class OrderController extends Controller
                     ]);
                 }
 
+                // ✅ NOUVEAU: Envoyer l'email de notification au super admin
+                try {
+                    $mailer = config('mail.default', 'log');
+                    Log::info('Tentative d\'envoi email notification admin (validation manuelle) - Configuration', [
+                        'mailer' => $mailer,
+                        'mail_from' => config('mail.from.address'),
+                        'mail_host' => config('mail.mailers.smtp.host'),
+                        'order_id' => $order->id,
+                        'order_status' => $order->status,
+                        'admin_email' => 'charleshaba454@gmail.com',
+                    ]);
+
+                    $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
+                    \Mail::to('charleshaba454@gmail.com')->send($mailable);
+
+                    Log::info('Email de notification admin envoyé avec succès (validation manuelle)', [
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                        'user_id' => $user->id,
+                        'admin_email' => 'charleshaba454@gmail.com',
+                        'mailer_used' => $mailer,
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('Erreur lors de l\'envoi de l\'email de notification admin (validation manuelle)', [
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString(),
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                        'user_id' => $user->id,
+                        'admin_email' => 'charleshaba454@gmail.com',
+                        'mailer' => config('mail.default', 'log'),
+                    ]);
+                }
+
                 Log::info('Chap Chap Pay: Commande validée avec succès (validation manuelle)', [
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
@@ -2483,7 +2625,7 @@ class OrderController extends Controller
                 'minutes_since_creation' => $minutesSinceCreation,
                 'current_status' => $order->status,
             ]);
-            
+
             return response()->json([
                 'status' => 'pending',
                 'order_id' => $order->id,
@@ -2492,7 +2634,7 @@ class OrderController extends Controller
                 'minutes_since_update' => $minutesSinceUpdate,
                 'minutes_since_creation' => $minutesSinceCreation,
             ]);
-            
+
         } catch (\Exception $e) {
             Log::error('Erreur lors de la vérification du statut de paiement', [
                 'error' => $e->getMessage(),
@@ -2749,14 +2891,14 @@ class OrderController extends Controller
         // Générer le lien de paiement via Chap Chap Pay
         try {
             $chapChapPayService = new \App\Services\ChapChapPayService();
-            
+
             // Le montant est déjà en centimes (ex: 80000 = 800.00 GNF)
             $amount = (int) $additionalCardsTotalPrice;
-            
+
             // Construire les URLs
             // ✅ CORRECTION: Utiliser config('app.frontend_url') qui gère déjà la logique de nettoyage
             $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
-            
+
             // ✅ CORRECTION: Nettoyer l'URL pour ne prendre que la première URL valide
             // Si plusieurs URLs sont séparées par une virgule, prendre seulement la première
             if (strpos($frontendUrl, ',') !== false) {
@@ -2764,7 +2906,7 @@ class OrderController extends Controller
                 $frontendUrl = trim($urls[0]); // Prendre la première URL
             }
             $frontendUrl = trim($frontendUrl);
-            
+
             // ✅ CRITIQUE: En production, s'assurer que l'URL pointe vers le frontend, pas le backend
             if (app()->environment('production') && str_contains($frontendUrl, 'api.digicard.arccenciel.com')) {
                 // Remplacer api.digicard par digicard pour pointer vers le frontend
@@ -2774,12 +2916,38 @@ class OrderController extends Controller
                     'corrected_url' => $frontendUrl,
                 ]);
             }
-            
-            $returnUrl = rtrim($frontendUrl, '/') . '/mes-commandes?payment=success&additional_payment_id=' . $additionalPayment->id;
+
+            // ✅ NOUVEAU: Générer un token de session pour la récupération après redirection externe
+            // Utiliser le token de la commande principale si disponible, sinon en créer un nouveau
+            if (!$order->payment_session_token) {
+                $sessionToken = Str::random(60);
+                $order->update(['payment_session_token' => $sessionToken]);
+
+                \Log::info('OrderController: Token de session généré pour la commande (paiement supplémentaire)', [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'additional_payment_id' => $additionalPayment->id,
+                ]);
+            } else {
+                $sessionToken = $order->payment_session_token;
+                \Log::info('OrderController: Token de session existant réutilisé (paiement supplémentaire)', [
+                    'order_id' => $order->id,
+                    'additional_payment_id' => $additionalPayment->id,
+                ]);
+            }
+
+            // ✅ MODIFICATION: return_url pointe maintenant vers la route backend (callback)
+            // qui restaurera la session avant de rediriger vers le frontend
+            $returnUrl = route('payment.callback', [
+                'session_token' => $sessionToken,
+                'order_id' => $order->id,
+                'additional_payment_id' => $additionalPayment->id,
+            ]);
+
             $notifyUrl = url('/') . '/api/payment/webhook-additional-cards';
-            
+
             $description = 'Paiement cartes supplementaires - Commande ' . $order->order_number;
-            
+
             $paymentData = [
                 'amount' => $amount,
                 'description' => $description,
@@ -2790,31 +2958,31 @@ class OrderController extends Controller
                     'auto-redirect' => true,
                 ],
             ];
-            
+
             \Log::info('Chap Chap Pay: Création du lien de paiement pour cartes supplémentaires', [
                 'additional_payment_id' => $additionalPayment->id,
                 'order_id' => $order->id,
                 'amount' => $amount,
                 'quantity' => $quantity,
             ]);
-            
+
             $paymentResponse = $chapChapPayService->createPaymentLink($paymentData);
-            
+
             if ($paymentResponse && isset($paymentResponse['payment_url'])) {
                 $operationId = $paymentResponse['operation_id'] ?? null;
-                
+
                 // Mettre à jour le paiement avec l'URL et l'operation_id
                 $additionalPayment->update([
                     'payment_url' => $paymentResponse['payment_url'],
                     'payment_operation_id' => $operationId,
                 ]);
-                
+
                 \Log::info('Chap Chap Pay: Lien de paiement généré pour cartes supplémentaires', [
                     'additional_payment_id' => $additionalPayment->id,
                     'payment_url' => $paymentResponse['payment_url'],
                     'operation_id' => $operationId,
                 ]);
-                
+
                 // Retourner les détails du paiement au lieu d'ajouter directement
                 return response()->json([
                     'message' => "Commande supplémentaire créée. Veuillez procéder au paiement.",
@@ -2840,7 +3008,7 @@ class OrderController extends Controller
                     'additional_payment_id' => $additionalPayment->id,
                     'response' => $paymentResponse,
                 ]);
-                
+
                 return response()->json([
                     'message' => 'Erreur lors de la création du lien de paiement. Veuillez réessayer.',
                 ], 500);
@@ -2851,7 +3019,7 @@ class OrderController extends Controller
                 'additional_payment_id' => $additionalPayment->id,
                 'error' => $e->getMessage(),
             ]);
-            
+
             return response()->json([
                 'message' => 'Erreur lors de la création du paiement. Veuillez réessayer.',
             ], 500);
@@ -3003,5 +3171,152 @@ class OrderController extends Controller
 
         // Pour les autres utilisateurs, vérifier que la commande leur appartient
         return $order->user_id === $user->id;
+    }
+
+    /**
+     * ✅ NOUVEAU: Callback pour restaurer la session après redirection depuis Chap Chap Pay
+     * Route WEB (pas API) pour bénéficier nativement des cookies de session
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\RedirectResponse
+     */
+    public function handlePaymentCallback(Request $request)
+    {
+        try {
+            // Récupérer les paramètres depuis l'URL
+            $sessionToken = $request->query('session_token');
+            $orderId = $request->query('order_id');
+            $additionalPaymentId = $request->query('additional_payment_id');
+
+            Log::info('OrderController: Callback de paiement reçu', [
+                'session_token_present' => !empty($sessionToken),
+                'order_id' => $orderId,
+                'additional_payment_id' => $additionalPaymentId,
+                'all_query_params' => $request->query(),
+            ]);
+
+            // Vérifier que le token est présent
+            if (!$sessionToken) {
+                Log::warning('OrderController: Callback de paiement sans token de session');
+
+                // Rediriger vers le frontend avec une erreur
+                $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
+                if (strpos($frontendUrl, ',') !== false) {
+                    $urls = explode(',', $frontendUrl);
+                    $frontendUrl = trim($urls[0]);
+                }
+                $frontendUrl = trim($frontendUrl);
+
+                return redirect(rtrim($frontendUrl, '/') . '/mes-commandes?payment=error&message=session_token_missing');
+            }
+
+            // Trouver la commande via le token
+            $order = Order::where('payment_session_token', $sessionToken)->first();
+
+            if (!$order) {
+                Log::warning('OrderController: Commande non trouvée avec le token de session', [
+                    'token_length' => strlen($sessionToken),
+                    'token_prefix' => substr($sessionToken, 0, 10) . '...',
+                ]);
+
+                // Rediriger vers le frontend avec une erreur
+                $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
+                if (strpos($frontendUrl, ',') !== false) {
+                    $urls = explode(',', $frontendUrl);
+                    $frontendUrl = trim($urls[0]);
+                }
+                $frontendUrl = trim($frontendUrl);
+
+                return redirect(rtrim($frontendUrl, '/') . '/mes-commandes?payment=error&message=invalid_token');
+            }
+
+            // Vérifier que la commande a un utilisateur associé
+            if (!$order->user) {
+                Log::error('OrderController: Commande trouvée mais sans utilisateur associé', [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                ]);
+
+                // Rediriger vers le frontend avec une erreur
+                $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
+                if (strpos($frontendUrl, ',') !== false) {
+                    $urls = explode(',', $frontendUrl);
+                    $frontendUrl = trim($urls[0]);
+                }
+                $frontendUrl = trim($frontendUrl);
+
+                return redirect(rtrim($frontendUrl, '/') . '/mes-commandes?payment=error&message=user_not_found');
+            }
+
+            // ✅ CORRECTION: Définir $user après la validation pour pouvoir l'utiliser dans les logs
+            $user = $order->user;
+
+            // ✅ NOUVEAU: Ne PAS connecter l'utilisateur ici (le navigateur refuse de stocker le cookie lors de la redirection)
+            // Le frontend appellera /api/auth/exchange-token pour échanger le token contre une session
+            // On garde le token dans la commande pour l'échange ultérieur
+
+            Log::info('OrderController: Callback de paiement reçu, redirection vers frontend avec token', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'additional_payment_id' => $additionalPaymentId,
+                'token_present' => !empty($sessionToken),
+            ]);
+
+            // Construire l'URL de redirection vers le frontend
+            $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
+
+            // Nettoyer l'URL pour ne prendre que la première URL valide
+            if (strpos($frontendUrl, ',') !== false) {
+                $urls = explode(',', $frontendUrl);
+                $frontendUrl = trim($urls[0]);
+            }
+            $frontendUrl = trim($frontendUrl);
+
+            // ✅ CRITIQUE: En production, s'assurer que l'URL pointe vers le frontend, pas le backend
+            if (app()->environment('production') && str_contains($frontendUrl, 'api.digicard.arccenciel.com')) {
+                $frontendUrl = str_replace('api.digicard.arccenciel.com', 'digicard.arccenciel.com', $frontendUrl);
+            }
+
+            // Construire les paramètres de requête pour le frontend
+            // ✅ IMPORTANT: Inclure le session_token pour que le frontend puisse l'échanger
+            // ✅ NOUVEAU: Rediriger vers /payment/process (page publique) au lieu de /mes-commandes
+            $queryParams = [
+                'session_token' => $sessionToken, // ✅ Le token sera échangé par le frontend
+            ];
+
+            if ($orderId) {
+                $queryParams['order_id'] = $orderId;
+            }
+
+            if ($additionalPaymentId) {
+                $queryParams['additional_payment_id'] = $additionalPaymentId;
+            }
+
+            // ✅ NOUVEAU: Rediriger vers /payment/process (page publique de traitement)
+            // Cette page échangera le token contre une session avant de rediriger vers /mes-commandes
+            $redirectUrl = rtrim($frontendUrl, '/') . '/payment/process?' . http_build_query($queryParams);
+
+            Log::info('OrderController: Redirection vers le frontend', [
+                'redirect_url' => $redirectUrl,
+                'user_id' => $user->id,
+            ]);
+
+            return redirect($redirectUrl);
+        } catch (\Exception $e) {
+            Log::error('OrderController: Erreur lors du callback de paiement', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            // En cas d'erreur, rediriger vers le frontend avec une erreur
+            $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
+            if (strpos($frontendUrl, ',') !== false) {
+                $urls = explode(',', $frontendUrl);
+                $frontendUrl = trim($urls[0]);
+            }
+            $frontendUrl = trim($frontendUrl);
+
+            return redirect(rtrim($frontendUrl, '/') . '/mes-commandes?payment=error&message=callback_error');
+        }
     }
 }
