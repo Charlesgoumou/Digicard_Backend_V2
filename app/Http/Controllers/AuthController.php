@@ -465,35 +465,77 @@ class AuthController extends Controller
         // et que la session contient vraiment un ID utilisateur valide.
         if (!$user && $request->hasSession()) {
             try {
+                // ✅ DEBUG: Logs pour comprendre pourquoi la session n'est pas restaurée
+                $hasSession = $request->hasSession();
+                $sessionId = $request->session()->getId();
+                $isAuthenticated = \Illuminate\Support\Facades\Auth::guard('web')->check();
+                
+                Log::info("AuthController::user() - Session check", [
+                    'has_session' => $hasSession,
+                    'session_id' => $sessionId ? substr($sessionId, 0, 10) . '...' : null,
+                    'is_authenticated' => $isAuthenticated,
+                    'session_driver' => config('session.driver'),
+                    'session_cookie' => config('session.cookie'),
+                ]);
+                
                 // Vérifier si l'utilisateur est authentifié via session
                 // Si Auth::guard('web')->check() retourne false, alors pas d'utilisateur authentifié
-                if (\Illuminate\Support\Facades\Auth::guard('web')->check()) {
+                if ($isAuthenticated) {
                     $sessionUserId = \Illuminate\Support\Facades\Auth::guard('web')->id();
+                    
+                    Log::info("AuthController::user() - User ID from session", [
+                        'session_user_id' => $sessionUserId,
+                    ]);
                     
                     // Si un ID utilisateur est présent dans la session, vérifier qu'il existe vraiment
                     if ($sessionUserId) {
                         // Récupérer l'utilisateur depuis la base de données
                         $freshUser = \App\Models\User::find($sessionUserId);
                         
-                        // Vérifier que l'utilisateur existe toujours, n'est pas suspendu et a vérifié son email
-                        if ($freshUser && !$freshUser->is_suspended && $freshUser->email_verified_at) {
-                        // ✅ SIMPLIFICATION: Utiliser directement l'utilisateur de la session
-                        // Auth::guard('web')->user() devrait retourner le même utilisateur que find()
-                                $user = $freshUser;
+                        Log::info("AuthController::user() - User found in DB", [
+                            'user_id' => $sessionUserId,
+                            'user_exists' => !!$freshUser,
+                            'is_suspended' => $freshUser ? $freshUser->is_suspended : null,
+                            'email_verified_at' => $freshUser ? ($freshUser->email_verified_at ? 'yes' : 'no') : null,
+                        ]);
+                        
+                        // ✅ MODIFICATION: Vérifier que l'utilisateur existe toujours et n'est pas suspendu
+                        // Pour les utilisateurs Google OAuth, email_verified_at peut être défini automatiquement
+                        // mais on ne doit pas bloquer si c'est null (cas des comptes incomplets)
+                        // On accepte les utilisateurs même si email_verified_at est null (comptes Google OAuth incomplets)
+                        if ($freshUser && !$freshUser->is_suspended) {
+                            // ✅ SIMPLIFICATION: Utiliser directement l'utilisateur de la session
+                            // Auth::guard('web')->user() devrait retourner le même utilisateur que find()
+                            $user = $freshUser;
+                            
+                            Log::info("AuthController::user() - User authenticated successfully", [
+                                'user_id' => $user->id,
+                                'email' => $user->email,
+                            ]);
                         } else {
-                            // L'utilisateur n'existe plus, est suspendu ou n'a pas vérifié son email
+                            // L'utilisateur n'existe plus ou est suspendu
                             // Retourner null sans invalider la session (elle sera invalidée naturellement)
+                            Log::warning("AuthController::user() - User not valid", [
+                                'user_exists' => !!$freshUser,
+                                'is_suspended' => $freshUser ? $freshUser->is_suspended : null,
+                            ]);
                             $user = null;
                         }
                     } else {
                         // Pas d'ID utilisateur dans la session
+                        Log::warning("AuthController::user() - No user ID in session");
                         $user = null;
                     }
+                } else {
+                    Log::info("AuthController::user() - Not authenticated (Auth::check() = false)");
                 }
                 // Si Auth::guard('web')->check() retourne false, alors $user reste null
             } catch (\Exception $e) {
-                // En cas d'erreur, continuer avec user = null
-                // Ne pas logger l'erreur pour éviter de polluer les logs avec des erreurs attendues
+                // En cas d'erreur, logger pour déboguer
+                Log::error("AuthController::user() - Exception during session check", [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
                 $user = null;
             }
         }
