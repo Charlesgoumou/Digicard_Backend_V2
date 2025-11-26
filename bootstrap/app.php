@@ -20,6 +20,11 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
 
+        // ✅ CRITIQUE PRODUCTION: Faire confiance à tous les proxies (nécessaire pour Cloudflare/Ploi)
+        // Cela permet à Laravel de lire correctement l'en-tête X-Forwarded-Proto: https envoyé par Cloudflare
+        // et donc de maintenir le cookie de session Secure actif au rechargement
+        $middleware->trustProxies(at: '*');
+
         // Ajouter le middleware CORS en premier pour toutes les requêtes API
         // Cela garantit que toutes les routes API reçoivent les en-têtes CORS
         $middleware->api(prepend: [
