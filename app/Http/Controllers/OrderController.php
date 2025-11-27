@@ -828,10 +828,13 @@ class OrderController extends Controller
         }
 
         // Pour les autres cas (particulier, ou commande sans order_employee), marquer toute la commande
-        $order->update([
-            'is_configured' => true,
-            'status' => 'configured',
-        ]);
+        // ✅ PROTECTION: Ne jamais modifier le statut si la commande est déjà validée (payée)
+        // Une commande payée doit rester payée, quoi qu'il arrive dans les paramètres
+        $updateData = ['is_configured' => true];
+        if ($order->status !== 'validated') {
+            $updateData['status'] = 'configured';
+        }
+        $order->update($updateData);
 
         // Notification super admin : commande paramétrée (inclure URL publique)
         try {
@@ -967,6 +970,8 @@ class OrderController extends Controller
             $url = Storage::disk('public')->url($result['path']);
 
             // Mettre à jour l'URL de l'avatar de la commande
+            // ✅ PROTECTION: Ne jamais modifier le statut lors de l'upload d'un avatar
+            // ✅ IMPORTANT: Ne PAS synchroniser avec users.avatar_url - l'avatar du Dashboard doit rester celui de l'utilisateur
             $order->update(['order_avatar_url' => $url]);
 
             Log::info('OrderController::uploadOrderAvatar - Photo uploadée avec succès', [
@@ -1048,6 +1053,10 @@ class OrderController extends Controller
             return response()->json(['message' => "Cette commande a été annulée et ne peut plus être modifiée."], 400);
         }
 
+        // ✅ PROTECTION: Ne jamais modifier le statut ou is_configured si la commande est déjà validée
+        // Une commande payée doit rester payée, quoi qu'il arrive dans les paramètres
+        $isOrderValidated = $order->status === 'validated';
+
         $validatedData = $request->validate([
             'profile_name' => 'nullable|string|max:255',
             'profile_title' => 'nullable|string|max:255',
@@ -1087,6 +1096,8 @@ class OrderController extends Controller
         if ($orderEmployee) {
             // Mettre à jour dans order_employees
             // Mettre à jour les données de profil de l'employé/admin
+            // ✅ PROTECTION: Si la commande est validée, ne pas modifier is_configured via updateProfile
+            // (seulement via markAsConfigured qui a sa propre logique de protection)
             $orderEmployee->update($validatedData);
 
             // Si c'est un business admin qui sauvegarde son design dans une commande entreprise où il est inclus,
@@ -1125,6 +1136,14 @@ class OrderController extends Controller
         }
 
         // Sinon, mettre à jour dans orders (pour les commandes sans order_employee)
+        // ✅ PROTECTION: Si la commande est validée, ne jamais modifier le statut ou is_configured
+        // Une commande payée doit rester payée, quoi qu'il arrive dans les paramètres
+        if ($isOrderValidated) {
+            // Exclure les champs sensibles qui ne doivent pas être modifiés sur une commande validée
+            unset($validatedData['status']);
+            // Note: is_configured n'est pas dans validatedData car il n'est pas validé dans la requête
+            // Il est géré séparément par markAsConfigured
+        }
         $order->update($validatedData);
 
         return response()->json([

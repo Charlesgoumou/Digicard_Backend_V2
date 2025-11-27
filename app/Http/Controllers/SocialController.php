@@ -1166,12 +1166,14 @@ class SocialController extends Controller
             }
 
             // Préparer les données utilisateur pour la réponse (éviter les problèmes de sérialisation)
+            // ✅ CORRECTION: Inclure avatar_url pour que l'avatar s'affiche immédiatement après la connexion
             $userData = [
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
                 'role' => $user->role,
                 'username' => $user->username ?? null,
+                'avatar_url' => $user->avatar_url ?? null, // ✅ CRITIQUE: Inclure avatar_url
                 'is_profile_complete' => $user->is_profile_complete ?? false,
                 'phone' => $user->phone ?? null,
                 'account_type' => $user->account_type ?? null,

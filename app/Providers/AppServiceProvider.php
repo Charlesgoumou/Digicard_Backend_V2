@@ -23,9 +23,10 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         // ✅ CRITIQUE PRODUCTION: Forcer HTTPS en production derrière Cloudflare
-        // Cela garantit que toutes les URLs générées utilisent HTTPS
+        // Cela garantit que toutes les URLs générées utilisent HTTPS et que les cookies Secure fonctionnent
         // Nécessaire car trustProxies permet de détecter HTTPS, mais forceScheme garantit que les URLs générées sont en HTTPS
-        if (config('app.env') === 'production' && config('app.url') && str_starts_with(config('app.url'), 'https://')) {
+        // et que Laravel sait qu'il est en HTTPS pour les cookies Secure
+        if ($this->app->environment('production')) {
             URL::forceScheme('https');
         }
 

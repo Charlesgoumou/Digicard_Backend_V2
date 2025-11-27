@@ -23,7 +23,17 @@ return Application::configure(basePath: dirname(__DIR__))
         // ✅ CRITIQUE PRODUCTION: Faire confiance à tous les proxies (nécessaire pour Cloudflare/Ploi)
         // Cela permet à Laravel de lire correctement l'en-tête X-Forwarded-Proto: https envoyé par Cloudflare
         // et donc de maintenir le cookie de session Secure actif au rechargement
-        $middleware->trustProxies(at: '*');
+        // Cloudflare change d'IP tout le temps, donc on accepte tous les proxies
+        // ✅ CRITIQUE: Configurer les headers à faire confiance pour détecter HTTPS derrière Cloudflare
+        // Ces headers sont envoyés par Cloudflare et permettent à Laravel de détecter que la requête est en HTTPS
+        $middleware->trustProxies(
+            at: '*',
+            headers: \Illuminate\Http\Request::HEADER_X_FORWARDED_FOR |
+                \Illuminate\Http\Request::HEADER_X_FORWARDED_HOST |
+                \Illuminate\Http\Request::HEADER_X_FORWARDED_PORT |
+                \Illuminate\Http\Request::HEADER_X_FORWARDED_PROTO |
+                \Illuminate\Http\Request::HEADER_X_FORWARDED_AWS_ELB
+        );
 
         // Ajouter le middleware CORS en premier pour toutes les requêtes API
         // Cela garantit que toutes les routes API reçoivent les en-têtes CORS
