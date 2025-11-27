@@ -25,7 +25,7 @@ return [
         'http://localhost:8000', // ✅ AJOUT: Autoriser localhost:8000 pour les rechargements de page
         'http://192.168.1.126:5173',
         'https://digicard.arccenciel.com',
-        'https://admin.digicard.arccenciel.com',
+        'https://digicard-admin.arccenciel.com',
     ],
 
     'allowed_origins_patterns' => [

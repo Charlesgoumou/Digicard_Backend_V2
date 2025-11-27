@@ -3,7 +3,7 @@
 # Script de déploiement pour Ploi
 # Ce script sera exécuté automatiquement lors du déploiement depuis GitHub
 
-cd /home/ploi/api.digicard.arccenciel.com
+cd /home/ploi/digicard-api.arccenciel.com
 
 # Afficher la version de PHP
 php -v

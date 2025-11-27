@@ -102,7 +102,7 @@ class StorageController extends Controller
                 'http://localhost:3000',
                 'http://localhost:8000',
                 'https://digicard.arccenciel.com',
-                'https://admin.digicard.arccenciel.com',
+                'https://digicard-admin.arccenciel.com',
             ];
             
             // Vérifier si l'origine est autorisée

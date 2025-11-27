@@ -38,7 +38,7 @@ class EnsureFrontendRequestsAreStateful extends SanctumMiddleware
             '*.digicard.arccenciel.com/*',
             'arccenciel.com/*',
             'digicard.arccenciel.com/*',
-            'admin.digicard.arccenciel.com/*',
+            'digicard-admin.arccenciel.com/*',
         ];
 
         foreach ($cloudflarePatterns as $pattern) {

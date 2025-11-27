@@ -31,8 +31,8 @@ return [
             '::1',
             // ✅ Production Domains
             'digicard.arccenciel.com',
-            'admin.digicard.arccenciel.com',
-            'api.digicard.arccenciel.com',
+            'digicard-admin.arccenciel.com',
+            'digicard-api.arccenciel.com',
             '.arccenciel.com', // Pour tous les sous-domaines
         ]
     ))),

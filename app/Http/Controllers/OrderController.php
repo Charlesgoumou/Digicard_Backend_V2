@@ -1281,9 +1281,9 @@ class OrderController extends Controller
             $frontendUrl = trim($frontendUrl);
 
             // ✅ CRITIQUE: En production, s'assurer que l'URL pointe vers le frontend, pas le backend
-            if (app()->environment('production') && str_contains($frontendUrl, 'api.digicard.arccenciel.com')) {
-                // Remplacer api.digicard par digicard pour pointer vers le frontend
-                $frontendUrl = str_replace('api.digicard.arccenciel.com', 'digicard.arccenciel.com', $frontendUrl);
+            if (app()->environment('production') && str_contains($frontendUrl, 'digicard-api.arccenciel.com')) {
+                // Remplacer digicard-api par digicard pour pointer vers le frontend
+                $frontendUrl = str_replace('digicard-api.arccenciel.com', 'digicard.arccenciel.com', $frontendUrl);
                 Log::warning("OrderController: Frontend URL corrigée pour pointer vers le frontend", [
                     'original_url' => config('app.frontend_url'),
                     'corrected_url' => $frontendUrl,
@@ -2926,9 +2926,9 @@ class OrderController extends Controller
             $frontendUrl = trim($frontendUrl);
 
             // ✅ CRITIQUE: En production, s'assurer que l'URL pointe vers le frontend, pas le backend
-            if (app()->environment('production') && str_contains($frontendUrl, 'api.digicard.arccenciel.com')) {
-                // Remplacer api.digicard par digicard pour pointer vers le frontend
-                $frontendUrl = str_replace('api.digicard.arccenciel.com', 'digicard.arccenciel.com', $frontendUrl);
+            if (app()->environment('production') && str_contains($frontendUrl, 'digicard-api.arccenciel.com')) {
+                // Remplacer digicard-api par digicard pour pointer vers le frontend
+                $frontendUrl = str_replace('digicard-api.arccenciel.com', 'digicard.arccenciel.com', $frontendUrl);
                 Log::warning("OrderController: Frontend URL corrigée pour pointer vers le frontend (additional cards)", [
                     'original_url' => config('app.frontend_url'),
                     'corrected_url' => $frontendUrl,
@@ -3289,8 +3289,8 @@ class OrderController extends Controller
             $frontendUrl = trim($frontendUrl);
 
             // ✅ CRITIQUE: En production, s'assurer que l'URL pointe vers le frontend, pas le backend
-            if (app()->environment('production') && str_contains($frontendUrl, 'api.digicard.arccenciel.com')) {
-                $frontendUrl = str_replace('api.digicard.arccenciel.com', 'digicard.arccenciel.com', $frontendUrl);
+            if (app()->environment('production') && str_contains($frontendUrl, 'digicard-api.arccenciel.com')) {
+                $frontendUrl = str_replace('digicard-api.arccenciel.com', 'digicard.arccenciel.com', $frontendUrl);
             }
 
             // Construire les paramètres de requête pour le frontend
