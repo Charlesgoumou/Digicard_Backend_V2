@@ -46,28 +46,22 @@ Route::get('/auth/google/callback', [SocialController::class, 'callback'])->name
 // Cette route restaure la session avant de rediriger vers le frontend
 Route::get('/payment/callback', [OrderController::class, 'handlePaymentCallback'])->name('payment.callback');
 
-// --- ROUTE RACINE POUR L'APPLICATION VUE.JS ---
-// ✅ AJOUT: Route spécifique pour la racine '/' pour éviter l'erreur ArgumentCountError
+// --- ROUTE RACINE POUR L'API BACKEND ---
+// ✅ CORRECTION: Le backend est une API, il ne doit pas servir de HTML/Vue.js
+// Retourner une réponse JSON simple indiquant que c'est l'API backend
 Route::get('/', function () {
-    // S'assure que la vue 'index' (qui charge Vue) existe
-    if (view()->exists('index')) {
-        return view('index');
-    }
-    // Gère le cas où l'application Vue n'est pas configurée
-    return "Application non trouvée. Assurez-vous d'avoir une vue 'index.blade.php' à la racine de 'resources/views'.";
+    return response()->json([
+        'message' => 'DigiCard API Backend',
+        'version' => '1.0',
+        'status' => 'online',
+        'endpoints' => [
+            'api' => '/api',
+            'documentation' => 'Voir la documentation API pour plus d\'informations',
+        ],
+    ], 200, [], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
 });
 
-// --- ROUTE FALLBACK POUR L'APPLICATION VUE.JS ---
-// ✅ CORRECTION : La route /storage/{path} est définie AVANT cette route fallback
-// donc elle sera toujours prioritaire. Cette route ne capturera que les routes qui
-// ne correspondent pas à /storage/*
-Route::get('/{any}', function ($any) {
-    // S'assure que la vue 'index' (qui charge Vue) existe
-    if (view()->exists('index')) {
-        return view('index');
-    }
-    // Gère le cas où l'application Vue n'est pas configurée
-    return "Application non trouvée. Assurez-vous d'avoir une vue 'index.blade.php' à la racine de 'resources/views'.";
-})->where('any', '.*'); // Capture toutes les autres routes (mais /storage/{path} est prioritaire car défini avant)
+// ✅ SUPPRIMÉ: Route fallback pour Vue.js - Le backend ne doit pas servir le frontend
+// Le frontend doit être servi depuis un autre domaine (digicard.arccenciel.com)
 
 // L'accolade fermante en trop a été supprimée d'ici.

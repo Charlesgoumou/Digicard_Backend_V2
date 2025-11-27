@@ -72,35 +72,35 @@
         console.log('Redirection vers le frontend après paiement:', redirectUrl);
         // Rediriger immédiatement sans charger Vue.js
         window.location.replace(redirectUrl);
-        // Arrêter l'exécution du script
-        return;
-      }
-      
-      // Sinon, charger normalement l'application Vue.js depuis le serveur Vite du frontend
-      // En développement local, charger depuis localhost:5173
-      // En production, le frontend doit être compilé et servi depuis le même domaine
-      let viteUrl = '{{ env("VITE_DEV_SERVER_URL", "") }}';
-      if (!viteUrl) {
-        @if(app()->environment('production'))
-          // En production, le frontend est compilé et servi depuis le même domaine
-          // Ne pas charger depuis un serveur de développement
-          viteUrl = '';
-        @else
-          // En développement local, utiliser localhost:5173
-          viteUrl = 'http://localhost:5173';
-        @endif
-      }
-      
-      if (viteUrl) {
-        // Charger depuis le serveur de développement Vite
-        import(viteUrl + '/src/main.js').catch(err => {
-          console.error('Erreur lors du chargement de l\'application Vue.js:', err);
-          console.error('Assurez-vous que le serveur de développement du frontend est démarré (npm run dev dans le dossier frontend)');
-        });
+        // ✅ CORRECTION: Ne pas utiliser return dans un script de niveau supérieur
+        // Le script s'arrêtera naturellement après la redirection
       } else {
-        // En production, le frontend doit être compilé et les fichiers doivent être dans public/
-        // Charger depuis les assets compilés
-        console.warn('Environnement de production détecté : le frontend doit être compilé et servi depuis public/');
+        // Sinon, charger normalement l'application Vue.js depuis le serveur Vite du frontend
+        // En développement local, charger depuis localhost:5173
+        // En production, le frontend doit être compilé et servi depuis le même domaine
+        let viteUrl = '{{ env("VITE_DEV_SERVER_URL", "") }}';
+        if (!viteUrl) {
+          @if(app()->environment('production'))
+            // En production, le frontend est compilé et servi depuis le même domaine
+            // Ne pas charger depuis un serveur de développement
+            viteUrl = '';
+          @else
+            // En développement local, utiliser localhost:5173
+            viteUrl = 'http://localhost:5173';
+          @endif
+        }
+        
+        if (viteUrl) {
+          // Charger depuis le serveur de développement Vite
+          import(viteUrl + '/src/main.js').catch(err => {
+            console.error('Erreur lors du chargement de l\'application Vue.js:', err);
+            console.error('Assurez-vous que le serveur de développement du frontend est démarré (npm run dev dans le dossier frontend)');
+          });
+        } else {
+          // En production, le frontend doit être compilé et les fichiers doivent être dans public/
+          // Charger depuis les assets compilés
+          console.warn('Environnement de production détecté : le frontend doit être compilé et servi depuis public/');
+        }
       }
     </script>
   </body>
