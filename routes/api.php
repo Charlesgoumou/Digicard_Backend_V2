@@ -68,6 +68,12 @@ Route::post('/contact', [ContactController::class, 'sendMessage'])->name('contac
 // Webhook pour Chap Chap Pay (publique, sans authentification)
 Route::post('/payment/webhook', [OrderController::class, 'paymentWebhook'])->name('api.payment.webhook');
 
+// ✅ NOUVEAU: Route de simulation pour le développement (simule le webhook)
+// Cette route permet de forcer la validation d'une commande en développement local
+Route::post('/payment/simulate-success/{orderId}', [OrderController::class, 'simulatePaymentSuccess'])->name('api.payment.simulate-success');
+// ✅ NOUVEAU: Route spécifique pour simuler le webhook (appelée depuis PaymentCloseView)
+Route::post('/payment/simulate-webhook/{orderId}', [OrderController::class, 'simulateWebhook'])->name('api.payment.simulate-webhook');
+
 // ✅ NOUVEAU: Route publique pour vérifier le statut des paiements supplémentaires après redirection
 // Permet de vérifier le statut sans authentification car la session peut être perdue après redirection externe
 Route::get('/additional-payments/{additionalPaymentId}/check-status-public', [OrderController::class, 'checkAdditionalPaymentStatusPublic'])->name('additional-payments.check-status-public');
@@ -118,6 +124,8 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::post('/orders', [OrderController::class, 'store'])->name('orders.store');
     Route::get('/orders/{order}', [OrderController::class, 'show'])->name('orders.show');
     Route::get('/orders/{order}/check-payment', [OrderController::class, 'checkPaymentStatus'])->name('orders.check-payment');
+    // ✅ NOUVEAU: Endpoint léger pour vérifier le statut de paiement (pour le polling)
+    Route::get('/orders/{order}/status', [OrderController::class, 'getOrderStatus'])->name('orders.status');
     Route::get('/additional-payments/{additionalPaymentId}/check-status', [OrderController::class, 'checkAdditionalPaymentStatus'])->name('additional-payments.check-status');
     Route::patch('/orders/{order}/configure', [OrderController::class, 'markAsConfigured'])->name('orders.configure');
     Route::patch('/orders/{order}/profile', [OrderController::class, 'updateProfile'])->name('orders.profile.update');

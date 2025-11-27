@@ -1300,12 +1300,11 @@ class OrderController extends Controller
                 'token_length' => strlen($sessionToken),
             ]);
 
-            // ✅ MODIFICATION: return_url pointe maintenant vers la route backend (callback)
-            // qui restaurera la session avant de rediriger vers le frontend
-            $returnUrl = route('payment.callback', [
-                'session_token' => $sessionToken,
-                'order_id' => $order->id,
-            ]);
+            // ✅ MODIFICATION: return_url pointe maintenant vers une page simple /payment/close
+            // L'onglet principal fait du polling pour détecter le paiement
+            // On passe l'ID de commande dans l'URL pour permettre la simulation en développement
+            $frontendUrl = env('FRONTEND_URL', 'https://digicard.arccenciel.com');
+            $returnUrl = rtrim($frontendUrl, '/') . '/payment/close?order_id=' . $order->id;
 
             $notifyUrl = url('/') . '/api/payment/webhook'; // URL du webhook (URL complète pour que Chap Chap Pay puisse l'appeler)
 
@@ -2955,13 +2954,11 @@ class OrderController extends Controller
                 ]);
             }
 
-            // ✅ MODIFICATION: return_url pointe maintenant vers la route backend (callback)
-            // qui restaurera la session avant de rediriger vers le frontend
-            $returnUrl = route('payment.callback', [
-                'session_token' => $sessionToken,
-                'order_id' => $order->id,
-                'additional_payment_id' => $additionalPayment->id,
-            ]);
+            // ✅ MODIFICATION: return_url pointe maintenant vers une page simple /payment/close
+            // L'onglet principal fait du polling pour détecter le paiement
+            // On passe l'ID de commande et l'ID de paiement supplémentaire dans l'URL pour permettre la simulation en développement
+            $frontendUrl = env('FRONTEND_URL', 'https://digicard.arccenciel.com');
+            $returnUrl = rtrim($frontendUrl, '/') . '/payment/close?order_id=' . $order->id . '&additional_payment_id=' . $additionalPayment->id;
 
             $notifyUrl = url('/') . '/api/payment/webhook-additional-cards';
 
@@ -3336,6 +3333,253 @@ class OrderController extends Controller
             $frontendUrl = trim($frontendUrl);
 
             return redirect(rtrim($frontendUrl, '/') . '/mes-commandes?payment=error&message=callback_error');
+        }
+    }
+
+    /**
+     * ✅ NOUVEAU: Endpoint léger pour obtenir le statut de paiement d'une commande
+     * Utilisé par le polling frontend pour vérifier rapidement le statut
+     */
+    public function getOrderStatus(Request $request, Order $order)
+    {
+        // Vérifier que l'utilisateur a accès à cette commande
+        $user = $request->user();
+        
+        if (!$user) {
+            return response()->json(['error' => 'Non authentifié'], 401);
+        }
+
+        // Vérifier que l'utilisateur est propriétaire de la commande ou est un employé inclus
+        $hasAccess = false;
+        
+        if ($order->user_id === $user->id) {
+            $hasAccess = true;
+        } else {
+            // Vérifier si l'utilisateur est un employé inclus dans cette commande
+            $isEmployee = \App\Models\OrderEmployee::where('order_id', $order->id)
+                ->where('employee_id', $user->id)
+                ->exists();
+            
+            if ($isEmployee) {
+                $hasAccess = true;
+            }
+        }
+
+        if (!$hasAccess) {
+            return response()->json(['error' => 'Accès non autorisé'], 403);
+        }
+
+        // ✅ Retourner uniquement les informations essentielles pour le polling
+        // Format standardisé pour faciliter la détection côté frontend
+        $isPaid = $order->status === 'validated';
+        
+        return response()->json([
+            'order_id' => $order->id,
+            'status' => $order->status,
+            'payment_status' => $isPaid ? 'paid' : ($order->status === 'pending' ? 'pending' : $order->status),
+            'is_paid' => $isPaid,
+            // ✅ Ajout: Format alternatif pour compatibilité
+            'paid' => $isPaid,
+        ]);
+    }
+
+    /**
+     * ✅ NOUVEAU: Simule le succès d'un paiement pour le développement local
+     * Cette méthode simule le webhook de Chap Chap Pay en développement
+     */
+    public function simulatePaymentSuccess($orderId, Request $request)
+    {
+        // Vérifier que nous sommes en mode développement
+        if (!app()->environment('local', 'development')) {
+            return response()->json(['error' => 'Cette route n\'est disponible qu\'en développement'], 403);
+        }
+
+        try {
+            $order = Order::findOrFail($orderId);
+            $additionalPaymentId = $request->input('additional_payment_id');
+
+            Log::info('Simulation de paiement réussi (développement)', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'additional_payment_id' => $additionalPaymentId,
+            ]);
+
+            if ($additionalPaymentId) {
+                // Simuler le paiement d'une carte supplémentaire
+                $additionalPayment = \App\Models\AdditionalCardPayment::find($additionalPaymentId);
+                
+                if (!$additionalPayment) {
+                    return response()->json(['error' => 'Paiement supplémentaire non trouvé'], 404);
+                }
+
+                // Mettre à jour le statut du paiement supplémentaire
+                $additionalPayment->update([
+                    'status' => 'paid',
+                    'paid_at' => now(),
+                ]);
+
+                // Mettre à jour le total de la commande
+                $order->increment('additional_cards_count', $additionalPayment->quantity);
+                $order->increment('additional_cards_total_price', $additionalPayment->total_price);
+                $order->increment('total_price', $additionalPayment->total_price);
+
+                Log::info('Paiement supplémentaire simulé avec succès', [
+                    'additional_payment_id' => $additionalPaymentId,
+                    'order_id' => $order->id,
+                ]);
+
+                return response()->json([
+                    'message' => 'Paiement supplémentaire simulé avec succès',
+                    'order_id' => $order->id,
+                    'additional_payment_id' => $additionalPaymentId,
+                    'status' => 'paid',
+                ]);
+            } else {
+                // Simuler le paiement de la commande principale
+                if ($order->status !== 'validated') {
+                    $order->update([
+                        'status' => 'validated',
+                        'subscription_start_date' => now()->format('Y-m-d'),
+                    ]);
+
+                    $user = $order->user;
+
+                    // Notification super admin : commande validée
+                    try {
+                        $profileUrl = url('/') . '/' . $user->username;
+                        if ($order->is_configured) {
+                            $profileUrl .= '?order=' . $order->id;
+                        }
+                        \App\Models\AdminNotification::create([
+                            'type' => 'order_validated',
+                            'user_id' => $user->id,
+                            'order_id' => $order->id,
+                            'message' => 'Commande validée par ' . $user->name . ' (#' . $order->order_number . ') [SIMULATION]',
+                            'url' => $profileUrl,
+                            'meta' => [
+                                'order_number' => $order->order_number,
+                                'total_price' => $order->total_price,
+                                'simulated' => true,
+                            ],
+                        ]);
+                    } catch (\Throwable $t) {
+                        Log::error('Erreur lors de la création de la notification admin (simulation): ' . $t->getMessage());
+                    }
+                }
+
+                Log::info('Paiement de commande simulé avec succès', [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                ]);
+
+                return response()->json([
+                    'message' => 'Paiement simulé avec succès',
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'status' => 'validated',
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error('Erreur lors de la simulation du paiement', [
+                'error' => $e->getMessage(),
+                'order_id' => $orderId,
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'error' => 'Erreur lors de la simulation du paiement',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * ✅ NOUVEAU: Simule le webhook de Chap Chap Pay pour le développement local
+     * Cette méthode est appelée depuis PaymentCloseView.vue en mode développement
+     * pour simuler la validation du paiement quand le webhook ne peut pas atteindre localhost
+     */
+    public function simulateWebhook($orderId)
+    {
+        // ✅ SÉCURITÉ: Interdire cette route en production
+        if (!app()->environment('local', 'development')) {
+            Log::warning('Tentative d\'accès à simulateWebhook en production', [
+                'order_id' => $orderId,
+                'environment' => app()->environment(),
+            ]);
+            abort(403, 'Cette route n\'est disponible qu\'en développement');
+        }
+
+        try {
+            $order = Order::findOrFail($orderId);
+
+            Log::info('Simulation de webhook (développement)', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'current_status' => $order->status,
+            ]);
+
+            // Si la commande n'est pas déjà validée, la valider
+            if ($order->status !== 'validated') {
+                $order->update([
+                    'status' => 'validated',
+                    'subscription_start_date' => now()->format('Y-m-d'),
+                ]);
+
+                $user = $order->user;
+
+                // Notification super admin : commande validée
+                try {
+                    $profileUrl = url('/') . '/' . $user->username;
+                    if ($order->is_configured) {
+                        $profileUrl .= '?order=' . $order->id;
+                    }
+                    \App\Models\AdminNotification::create([
+                        'type' => 'order_validated',
+                        'user_id' => $user->id,
+                        'order_id' => $order->id,
+                        'message' => 'Commande validée par ' . $user->name . ' (#' . $order->order_number . ') [SIMULATION WEBHOOK]',
+                        'url' => $profileUrl,
+                        'meta' => [
+                            'order_number' => $order->order_number,
+                            'total_price' => $order->total_price,
+                            'simulated' => true,
+                            'simulated_via' => 'webhook',
+                        ],
+                    ]);
+                } catch (\Throwable $t) {
+                    Log::error('Erreur lors de la création de la notification admin (simulation webhook): ' . $t->getMessage());
+                }
+
+                Log::info('Webhook simulé avec succès - Commande validée', [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                ]);
+            } else {
+                Log::info('Webhook simulé - Commande déjà validée', [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Webhook simulé avec succès',
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'status' => $order->status,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Erreur lors de la simulation du webhook', [
+                'error' => $e->getMessage(),
+                'order_id' => $orderId,
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Erreur lors de la simulation du webhook',
+                'message' => $e->getMessage(),
+            ], 500);
         }
     }
 }
