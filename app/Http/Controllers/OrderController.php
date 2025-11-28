@@ -1417,183 +1417,101 @@ class OrderController extends Controller
 
     /**
      * Webhook pour confirmer le paiement et valider la commande
-     * Cette méthode est appelée par Chap Chap Pay après un paiement réussi
      */
     public function paymentWebhook(Request $request)
     {
         try {
             Log::info('Chap Chap Pay: Webhook reçu', [
                 'request_data' => $request->all(),
-                'headers' => $request->headers->all(),
             ]);
 
-            // Valider les données reçues du webhook
-            $validatedData = $request->validate([
-                'order_id' => 'required|string', // ID de la commande (peut être order_number ou ID numérique)
-                'transaction_id' => 'nullable|string',
-                'status' => 'required|string', // 'success', 'failed', 'pending', etc.
-                'amount' => 'nullable|integer',
-            ]);
+            // 1. Récupération manuelle pour éviter les erreurs de validation strictes
+            $orderIdOrNumber = $request->input('order_id');
 
-            $orderIdOrNumber = $validatedData['order_id'];
-            $status = $validatedData['status'];
-            $transactionId = $validatedData['transaction_id'] ?? null;
+            // 2. Gestion intelligente du statut (String ou Objet)
+            $rawStatus = $request->input('status');
+            $status = null;
 
-            // ✅ MODIFICATION: Chercher la commande par ID numérique d'abord, puis par order_number
-            // Car nous envoyons maintenant l'ID numérique au lieu du order_number
-            $order = null;
-            if (is_numeric($orderIdOrNumber)) {
-                // Si c'est un nombre, chercher par ID
-                $order = Order::find((int) $orderIdOrNumber);
+            if (is_array($rawStatus) && isset($rawStatus['code'])) {
+                // Cas ChapChap : {"code": "success", ...}
+                $status = $rawStatus['code'];
+            } elseif (is_string($rawStatus)) {
+                // Cas standard : "success"
+                $status = $rawStatus;
             }
 
-            // Si pas trouvé par ID, chercher par order_number (compatibilité avec l'ancien format)
+            // Récupération de la transaction (parfois dans transaction.payment_reference)
+            $transactionId = $request->input('transaction_id')
+                          ?? $request->input('transaction.payment_reference')
+                          ?? null;
+
+            if (!$orderIdOrNumber || !$status) {
+                Log::error('Chap Chap Pay: Données incomplètes', $request->all());
+                return response()->json(['message' => 'Données incomplètes.'], 400);
+            }
+
+            // 3. Recherche de la commande (ID ou Numéro)
+            $order = null;
+            if (is_numeric($orderIdOrNumber)) {
+                $order = Order::find((int) $orderIdOrNumber);
+            }
             if (!$order) {
                 $order = Order::where('order_number', $orderIdOrNumber)->first();
             }
 
             if (!$order) {
-                Log::error('Chap Chap Pay: Commande non trouvée dans le webhook', [
-                    'order_id_or_number' => $orderIdOrNumber,
-                    'transaction_id' => $transactionId,
-                    'searched_by_id' => is_numeric($orderIdOrNumber),
-                ]);
+                Log::error('Chap Chap Pay: Commande introuvable', ['id' => $orderIdOrNumber]);
                 return response()->json(['message' => 'Commande non trouvée.'], 404);
             }
 
-            // Si le paiement est réussi, valider la commande
+            // 4. Validation du paiement
             if ($status === 'success' || $status === 'paid' || $status === 'completed') {
-                $user = $order->user;
-                $isNewlyValidated = false;
 
-                // Vérifier si la commande n'est pas déjà validée
+                // Vérifier si pas déjà validée
                 if ($order->status !== 'validated') {
-                    $isNewlyValidated = true;
-                    // Mettre à jour le statut de la commande
                     $order->update([
                         'status' => 'validated',
                         'subscription_start_date' => now()->format('Y-m-d'),
-                        // Optionnel: sauvegarder la référence de transaction
-                        // 'payment_transaction_id' => $transactionId,
                     ]);
 
-                    // Notification super admin : commande validée
+                    // Notification Admin
                     try {
+                        $user = $order->user;
                         $profileUrl = url('/') . '/' . $user->username;
-                        if ($order->is_configured) {
-                            $profileUrl .= '?order=' . $order->id;
-                        }
                         \App\Models\AdminNotification::create([
                             'type' => 'order_validated',
                             'user_id' => $user->id,
                             'order_id' => $order->id,
                             'message' => 'Commande validée par ' . $user->name . ' (#' . $order->order_number . ')',
                             'url' => $profileUrl,
-                            'meta' => [
-                                'order_number' => $order->order_number,
-                                'total_price' => $order->total_price,
-                                'payment_transaction_id' => $transactionId,
-                            ],
+                            'meta' => ['order_number' => $order->order_number],
                         ]);
-                    } catch (\Throwable $t) {
-                        Log::error('Erreur lors de la création de la notification admin: ' . $t->getMessage());
-                    }
+                    } catch (\Throwable $t) {}
 
-                    // Envoyer l'email de confirmation avec les CGU au client (seulement si nouvelle validation)
+                    // Email Client
                     try {
-                        \Mail::to($user->email)->send(new \App\Mail\OrderValidated($order, $user));
-                        Log::info('Email de validation envoyé avec succès via webhook', [
-                            'user_id' => $user->id,
-                            'order_id' => $order->id,
-                            'order_number' => $order->order_number,
-                            'email' => $user->email,
-                        ]);
-                    } catch (\Exception $e) {
-                        Log::error('Erreur lors de l\'envoi de l\'email de validation via webhook', [
-                            'error' => $e->getMessage(),
-                            'user_id' => $user->id,
-                            'order_id' => $order->id,
-                            'order_number' => $order->order_number,
-                            'email' => $user->email,
-                        ]);
+                        \Mail::to($order->user->email)->send(new \App\Mail\OrderValidated($order, $order->user));
+                    } catch (\Throwable $e) {
+                        Log::error('Erreur mail client: ' . $e->getMessage());
                     }
                 }
 
-                // ✅ MODIFICATION: Envoyer l'email de notification au super admin à CHAQUE paiement réussi
-                // (même si la commande est déjà validée, pour notifier chaque paiement)
+                // Email Admin (Toujours envoyer)
                 try {
-                    $mailer = config('mail.default', 'log');
-                    Log::info('Tentative d\'envoi email notification admin - Configuration', [
-                        'mailer' => $mailer,
-                        'mail_from' => config('mail.from.address'),
-                        'mail_host' => config('mail.mailers.smtp.host'),
-                        'order_id' => $order->id,
-                        'order_status' => $order->status,
-                        'is_newly_validated' => $isNewlyValidated,
-                        'admin_email' => 'charleshaba454@gmail.com',
-                    ]);
-
-                    $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
+                    $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $order->user, false);
                     \Mail::to('charleshaba454@gmail.com')->send($mailable);
-
-                    Log::info('Email de notification admin envoyé avec succès pour commande initiale', [
-                        'order_id' => $order->id,
-                        'order_number' => $order->order_number,
-                        'user_id' => $user->id,
-                        'admin_email' => 'charleshaba454@gmail.com',
-                        'mailer_used' => $mailer,
-                        'is_newly_validated' => $isNewlyValidated,
-                    ]);
-                } catch (\Exception $e) {
-                    Log::error('Erreur lors de l\'envoi de l\'email de notification admin pour commande initiale', [
-                        'error' => $e->getMessage(),
-                        'trace' => $e->getTraceAsString(),
-                        'order_id' => $order->id,
-                        'order_number' => $order->order_number,
-                        'user_id' => $user->id,
-                        'admin_email' => 'charleshaba454@gmail.com',
-                        'mailer' => config('mail.default', 'log'),
-                    ]);
+                } catch (\Throwable $e) {
+                    Log::error('Erreur mail admin: ' . $e->getMessage());
                 }
 
-                Log::info('Chap Chap Pay: Commande validée avec succès via webhook', [
-                    'order_id' => $order->id,
-                    'order_number' => $order->order_number,
-                    'transaction_id' => $transactionId,
-                    'status' => $status,
-                    'is_newly_validated' => $isNewlyValidated,
-                ]);
-
-                return response()->json([
-                    'message' => 'Paiement confirmé et commande validée avec succès.',
-                    'order_id' => $order->id,
-                    'order_number' => $order->order_number,
-                ]);
+                return response()->json(['message' => 'Paiement confirmé avec succès.']);
             } else {
-                // Le paiement n'a pas été réussi
-                Log::warning('Chap Chap Pay: Paiement échoué ou en attente', [
-                    'order_id' => $order->id,
-                    'order_number' => $order->order_number,
-                    'transaction_id' => $transactionId,
-                    'status' => $status,
-                ]);
-
-                return response()->json([
-                    'message' => 'Paiement non confirmé.',
-                    'status' => $status,
-                ]);
+                return response()->json(['message' => 'Statut non valide: ' . $status]);
             }
-        } catch (\Exception $e) {
-            Log::error('Chap Chap Pay: Erreur lors du traitement du webhook', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'request_data' => $request->all(),
-            ]);
 
-            return response()->json([
-                'message' => 'Erreur lors du traitement du webhook.',
-                'error' => $e->getMessage(),
-            ], 500);
+        } catch (\Exception $e) {
+            Log::error('Erreur Webhook: ' . $e->getMessage());
+            return response()->json(['message' => 'Erreur serveur.'], 500);
         }
     }
 
@@ -3344,14 +3262,14 @@ class OrderController extends Controller
     {
         // Vérifier que l'utilisateur a accès à cette commande
         $user = $request->user();
-        
+
         if (!$user) {
             return response()->json(['error' => 'Non authentifié'], 401);
         }
 
         // Vérifier que l'utilisateur est propriétaire de la commande ou est un employé inclus
         $hasAccess = false;
-        
+
         if ($order->user_id === $user->id) {
             $hasAccess = true;
         } else {
@@ -3359,7 +3277,7 @@ class OrderController extends Controller
             $isEmployee = \App\Models\OrderEmployee::where('order_id', $order->id)
                 ->where('employee_id', $user->id)
                 ->exists();
-            
+
             if ($isEmployee) {
                 $hasAccess = true;
             }
@@ -3372,7 +3290,7 @@ class OrderController extends Controller
         // ✅ Retourner uniquement les informations essentielles pour le polling
         // Format standardisé pour faciliter la détection côté frontend
         $isPaid = $order->status === 'validated';
-        
+
         return response()->json([
             'order_id' => $order->id,
             'status' => $order->status,
@@ -3407,7 +3325,7 @@ class OrderController extends Controller
             if ($additionalPaymentId) {
                 // Simuler le paiement d'une carte supplémentaire
                 $additionalPayment = \App\Models\AdditionalCardPayment::find($additionalPaymentId);
-                
+
                 if (!$additionalPayment) {
                     return response()->json(['error' => 'Paiement supplémentaire non trouvé'], 404);
                 }
