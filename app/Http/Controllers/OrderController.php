@@ -1421,32 +1421,34 @@ class OrderController extends Controller
     public function paymentWebhook(Request $request)
     {
         try {
-            Log::info('Chap Chap Pay: Webhook reçu', [
-                'request_data' => $request->all(),
+            // 1. Tenter de récupérer les données (Méthode standard + Méthode brute fallback)
+            $data = $request->all();
+
+            // Si Laravel n'a rien trouvé via input(), on force le décodage du JSON brut
+            if (empty($data)) {
+                $content = $request->getContent();
+                $data = json_decode($content, true) ?? [];
+            }
+
+            Log::info('Chap Chap Pay: Webhook reçu (Données brutes décodées)', [
+                'data' => $data
             ]);
 
-            // 1. Récupération manuelle pour éviter les erreurs de validation strictes
-            $orderIdOrNumber = $request->input('order_id');
+            // 2. Récupération des champs depuis $data (et non plus $request->input)
+            $orderIdOrNumber = $data['order_id'] ?? null;
+            $rawStatus = $data['status'] ?? null;
 
-            // 2. Gestion intelligente du statut (String ou Objet)
-            $rawStatus = $request->input('status');
+            // Gestion intelligente du statut (String ou Objet)
             $status = null;
-
             if (is_array($rawStatus) && isset($rawStatus['code'])) {
-                // Cas ChapChap : {"code": "success", ...}
                 $status = $rawStatus['code'];
             } elseif (is_string($rawStatus)) {
-                // Cas standard : "success"
                 $status = $rawStatus;
             }
 
-            // Récupération de la transaction (parfois dans transaction.payment_reference)
-            $transactionId = $request->input('transaction_id')
-                          ?? $request->input('transaction.payment_reference')
-                          ?? null;
-
+            // Vérification des données
             if (!$orderIdOrNumber || !$status) {
-                Log::error('Chap Chap Pay: Données incomplètes', $request->all());
+                Log::error('Chap Chap Pay: Données incomplètes après décodage', ['data' => $data]);
                 return response()->json(['message' => 'Données incomplètes.'], 400);
             }
 
@@ -1466,17 +1468,16 @@ class OrderController extends Controller
 
             // 4. Validation du paiement
             if ($status === 'success' || $status === 'paid' || $status === 'completed') {
-
-                // Vérifier si pas déjà validée
                 if ($order->status !== 'validated') {
                     $order->update([
                         'status' => 'validated',
                         'subscription_start_date' => now()->format('Y-m-d'),
                     ]);
 
-                    // Notification Admin
+                    // Notifications (Email & Admin)
                     try {
-                        $user = $order->user;
+                        // Admin Notif
+                        $user = $order->user; // S'assurer que user est chargé
                         $profileUrl = url('/') . '/' . $user->username;
                         \App\Models\AdminNotification::create([
                             'type' => 'order_validated',
@@ -1486,22 +1487,17 @@ class OrderController extends Controller
                             'url' => $profileUrl,
                             'meta' => ['order_number' => $order->order_number],
                         ]);
-                    } catch (\Throwable $t) {}
 
-                    // Email Client
-                    try {
-                        \Mail::to($order->user->email)->send(new \App\Mail\OrderValidated($order, $order->user));
+                        // Email Client
+                        \Mail::to($user->email)->send(new \App\Mail\OrderValidated($order, $user));
+
+                        // Email Admin
+                        $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
+                        \Mail::to('charleshaba454@gmail.com')->send($mailable);
+
                     } catch (\Throwable $e) {
-                        Log::error('Erreur mail client: ' . $e->getMessage());
+                        Log::error('Erreur notifications webhook: ' . $e->getMessage());
                     }
-                }
-
-                // Email Admin (Toujours envoyer)
-                try {
-                    $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $order->user, false);
-                    \Mail::to('charleshaba454@gmail.com')->send($mailable);
-                } catch (\Throwable $e) {
-                    Log::error('Erreur mail admin: ' . $e->getMessage());
                 }
 
                 return response()->json(['message' => 'Paiement confirmé avec succès.']);
@@ -1510,7 +1506,7 @@ class OrderController extends Controller
             }
 
         } catch (\Exception $e) {
-            Log::error('Erreur Webhook: ' . $e->getMessage());
+            Log::error('Erreur Webhook Fatal: ' . $e->getMessage());
             return response()->json(['message' => 'Erreur serveur.'], 500);
         }
     }
