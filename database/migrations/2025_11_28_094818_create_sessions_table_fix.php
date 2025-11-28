@@ -6,23 +6,17 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
-{
-    // On vérifie d'abord si la table existe pour éviter une erreur
-    if (!Schema::hasTable('sessions')) {
+    {
+        // 1. ON SUPPRIME L'ANCIENNE TABLE (Force le nettoyage)
+        Schema::dropIfExists('sessions');
+
+        // 2. ON LA RECRÉE PROPREMENT
         Schema::create('sessions', function (Blueprint $table) {
             $table->string('id')->primary();
 
-            // ATTENTION ICI :
-            // Si vos utilisateurs ont des IDs classiques (1, 2, 3...), laissez cette ligne :
+            // Pour vos IDs classiques (1, 2, 3...)
             $table->foreignId('user_id')->nullable()->index();
-
-            // SI (et seulement si) vos utilisateurs ont des UUID (ex: 9a2b-3c...),
-            // Mettez cette ligne à la place de la précédente :
-            // $table->string('user_id')->nullable()->index();
 
             $table->string('ip_address', 45)->nullable();
             $table->text('user_agent')->nullable();
@@ -30,13 +24,10 @@ return new class extends Migration
             $table->integer('last_activity')->index();
         });
     }
-}
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
-        Schema::dropIfExists('sessions_table_fix');
+        // Correction du nom ici aussi
+        Schema::dropIfExists('sessions');
     }
 };
