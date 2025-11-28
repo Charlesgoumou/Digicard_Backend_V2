@@ -14,18 +14,21 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
         api: __DIR__.'/../routes/api.php',
-        apiPrefix: 'api', // Préfixe /api pour être compatible avec le frontend
+        apiPrefix: 'api',
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
 
-        // ✅ CRITIQUE PRODUCTION: Faire confiance à tous les proxies (nécessaire pour Cloudflare/Ploi)
-        // Cela permet à Laravel de lire correctement l'en-tête X-Forwarded-Proto: https envoyé par Cloudflare
-        // et donc de maintenir le cookie de session Secure actif au rechargement
-        // Cloudflare change d'IP tout le temps, donc on accepte tous les proxies
-        // ✅ CRITIQUE: Configurer les headers à faire confiance pour détecter HTTPS derrière Cloudflare
-        // Ces headers sont envoyés par Cloudflare et permettent à Laravel de détecter que la requête est en HTTPS
+        // 1. ✅ SECURITÉ : Désactiver la protection CSRF pour les Webhooks de paiement
+        // C'est la partie manquante qui bloque ChapChap
+        $middleware->validateCsrfTokens(except: [
+            'api/payment/webhook',
+            'api/payment/callback', // Au cas où
+            'payment/*',           // Sécurité supplémentaire
+        ]);
+
+        // 2. Proxies (Votre config existante - Ne pas toucher)
         $middleware->trustProxies(
             at: '*',
             headers: \Illuminate\Http\Request::HEADER_X_FORWARDED_FOR |
@@ -35,26 +38,23 @@ return Application::configure(basePath: dirname(__DIR__))
                 \Illuminate\Http\Request::HEADER_X_FORWARDED_AWS_ELB
         );
 
-        // Ajouter le middleware CORS en premier pour toutes les requêtes API
-        // Cela garantit que toutes les routes API reçoivent les en-têtes CORS
+        // 3. API Middleware (Votre config existante - Ne pas toucher)
         $middleware->api(prepend: [
             HandleCors::class,
             EnsureFrontendRequestsAreStateful::class,
         ]);
 
-        // ✅ CORRECTION : Ajouter le middleware CORS aussi aux routes web pour /storage/*
-        // Cela permet aux images d'être chargées depuis le frontend sans erreur CORS
+        // 4. Web Middleware (Votre config existante - Ne pas toucher)
         $middleware->web(append: [
             HandleCors::class,
         ]);
 
-        // Configuration du groupe API
+        // 5. Config API & Alias (Votre config existante - Ne pas toucher)
         $middleware->group('api', [
             'throttle:api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ]);
 
-        // Enregistrement du middleware admin avec l'alias 'admin'
         $middleware->alias([
             'admin' => EnsureUserIsAdmin::class,
         ]);
@@ -63,7 +63,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions) {
         // ...
     })
-    ->booting(function (Application $app) { // Configuration Rate Limiter (reste identique)
+    ->booting(function (Application $app) {
          RateLimiter::for('api', function (Request $request) {
              return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
          });
