@@ -23,20 +23,39 @@ class PasswordResetController extends Controller
             'user_agent' => $request->userAgent(),
         ]);
 
+        // ✅ CORRECTION: Valider seulement le format de l'email, pas son existence
+        // Pour des raisons de sécurité, on ne doit pas révéler si un email existe ou non
         $request->validate([
-            'email' => 'required|email|exists:users,email',
+            'email' => 'required|email',
         ], [
             'email.required' => 'L\'adresse email est requise.',
             'email.email' => 'L\'adresse email n\'est pas valide.',
-            'email.exists' => 'Aucun compte n\'est associé à cette adresse email.',
         ]);
 
         $email = $request->email;
 
-        // Générer un token unique
+        // ✅ CORRECTION: Vérifier si l'utilisateur existe
+        $user = User::where('email', $email)->first();
+
+        // ✅ SÉCURITÉ: Toujours retourner le même message, même si l'email n'existe pas
+        // Cela évite de révéler quels emails sont enregistrés dans la base de données
+        if (!$user) {
+            \Log::info('Password reset requested for non-existent email', [
+                'email' => $email,
+                'ip' => $request->ip(),
+            ]);
+            // Retourner le même message de succès pour ne pas révéler que l'email n'existe pas
+            return response()->json([
+                'message' => 'Si cet email existe dans notre système, un lien de réinitialisation a été envoyé.',
+                'success' => true,
+            ], 200);
+        }
+
+        // ✅ CORRECTION: Générer un token unique
         $token = Str::random(64);
 
-        // Supprimer les anciens tokens pour cet email
+        // ✅ IMPORTANT: Supprimer les anciens tokens pour cet email AVANT d'en créer un nouveau
+        // Cela invalide automatiquement les anciens liens de réinitialisation
         DB::table('password_reset_tokens')
             ->where('email', $email)
             ->delete();
@@ -48,29 +67,36 @@ class PasswordResetController extends Controller
             'created_at' => Carbon::now(),
         ]);
 
-        // Récupérer l'utilisateur
-        $user = User::where('email', $email)->first();
-
-        // Envoyer l'email avec le lien de réinitialisation
+        // ✅ CORRECTION: Envoyer l'email avec le lien de réinitialisation
+        // Améliorer la gestion des erreurs pour mieux diagnostiquer les problèmes en production
         try {
             Mail::to($email)->send(new \App\Mail\ResetPassword($user, $token));
             \Log::info('Password reset email sent successfully', [
                 'email' => $email,
                 'user_id' => $user->id,
+                'mailer' => config('mail.default'),
+                'mail_from' => config('mail.from.address'),
             ]);
         } catch (\Exception $e) {
             \Log::error('Erreur lors de l\'envoi de l\'email de réinitialisation', [
                 'email' => $email,
+                'user_id' => $user->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
+                'mailer' => config('mail.default'),
+                'mail_from' => config('mail.from.address'),
+                'mail_host' => config('mail.mailers.smtp.host'),
             ]);
+            // ✅ CORRECTION: Retourner une erreur plus détaillée pour le débogage
             return response()->json([
-                'message' => 'Erreur lors de l\'envoi de l\'email. Veuillez réessayer.',
+                'message' => 'Erreur lors de l\'envoi de l\'email. Veuillez réessayer plus tard.',
+                'error' => app()->environment('local', 'development') ? $e->getMessage() : null,
             ], 500);
         }
 
         \Log::info('Password reset link response sent', [
             'email' => $email,
+            'user_id' => $user->id,
         ]);
 
         return response()->json([
