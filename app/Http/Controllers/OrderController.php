@@ -1619,6 +1619,12 @@ class OrderController extends Controller
                         // Admin Notif
                         $user = $order->user; // S'assurer que user est chargé
                         $profileUrl = url('/') . '/' . $user->username;
+
+                        Log::info('Chap Chap Pay: Création de la notification admin', [
+                            'order_id' => $order->id,
+                            'user_id' => $user->id
+                        ]);
+
                         \App\Models\AdminNotification::create([
                             'type' => 'order_validated',
                             'user_id' => $user->id,
@@ -1629,20 +1635,65 @@ class OrderController extends Controller
                         ]);
 
                         // Email Client
-                        \Mail::to($user->email)->send(new \App\Mail\OrderValidated($order, $user));
+                        Log::info('Chap Chap Pay: Envoi email client', [
+                            'order_id' => $order->id,
+                            'user_email' => $user->email
+                        ]);
+
+                        try {
+                            \Mail::to($user->email)->send(new \App\Mail\OrderValidated($order, $user));
+                            Log::info('Chap Chap Pay: Email client envoyé avec succès', [
+                                'order_id' => $order->id,
+                                'user_email' => $user->email
+                            ]);
+                        } catch (\Throwable $emailError) {
+                            Log::error('Chap Chap Pay: Erreur envoi email client', [
+                                'order_id' => $order->id,
+                                'user_email' => $user->email,
+                                'error' => $emailError->getMessage(),
+                                'file' => $emailError->getFile(),
+                                'line' => $emailError->getLine(),
+                                'trace' => $emailError->getTraceAsString()
+                            ]);
+                        }
 
                         // Email Admin
-                        $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
-                        \Mail::to('charleshaba454@gmail.com')->send($mailable);
+                        $adminEmail = 'charleshaba454@gmail.com';
+                        Log::info('Chap Chap Pay: Envoi email admin', [
+                            'order_id' => $order->id,
+                            'admin_email' => $adminEmail
+                        ]);
 
-                        Log::info('Chap Chap Pay: Notifications et emails envoyés', [
+                        try {
+                            // Note: AdminOrderPaymentNotification définit déjà le destinataire dans build()
+                            $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
+                            \Mail::send($mailable);
+                            Log::info('Chap Chap Pay: Email admin envoyé avec succès', [
+                                'order_id' => $order->id,
+                                'admin_email' => $adminEmail
+                            ]);
+                        } catch (\Throwable $emailError) {
+                            Log::error('Chap Chap Pay: Erreur envoi email admin', [
+                                'order_id' => $order->id,
+                                'admin_email' => $adminEmail,
+                                'error' => $emailError->getMessage(),
+                                'file' => $emailError->getFile(),
+                                'line' => $emailError->getLine(),
+                                'trace' => $emailError->getTraceAsString()
+                            ]);
+                        }
+
+                        Log::info('Chap Chap Pay: Notifications et emails traités', [
                             'order_id' => $order->id,
                             'user_email' => $user->email
                         ]);
 
                     } catch (\Throwable $e) {
-                        Log::error('Erreur notifications webhook: ' . $e->getMessage(), [
+                        Log::error('Chap Chap Pay: Erreur notifications webhook', [
                             'order_id' => $order->id,
+                            'error' => $e->getMessage(),
+                            'file' => $e->getFile(),
+                            'line' => $e->getLine(),
                             'trace' => $e->getTraceAsString()
                         ]);
                     }
