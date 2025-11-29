@@ -1445,7 +1445,7 @@ class OrderController extends Controller
             Log::info('Chap Chap Pay: Webhook appelé', [
                 'method' => $request->method(),
                 'content_type' => $request->header('Content-Type'),
-                'has_content' => $request->hasContent(),
+                'has_content' => strlen($request->getContent()) > 0,
                 'content_length' => strlen($request->getContent()),
                 'all_headers' => $request->headers->all(),
             ]);
