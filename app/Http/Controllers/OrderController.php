@@ -1303,7 +1303,27 @@ class OrderController extends Controller
             // ✅ MODIFICATION: return_url pointe maintenant vers une page simple /payment/close
             // L'onglet principal fait du polling pour détecter le paiement
             // On passe l'ID de commande dans l'URL pour permettre la simulation en développement
-            $frontendUrl = env('FRONTEND_URL', 'https://digicard.arccenciel.com');
+            // ✅ CORRECTION: Utiliser config('app.frontend_url') qui gère déjà la logique de nettoyage
+            $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
+
+            // ✅ CORRECTION: Nettoyer l'URL pour ne prendre que la première URL valide
+            // Si plusieurs URLs sont séparées par une virgule, prendre seulement la première
+            if (strpos($frontendUrl, ',') !== false) {
+                $urls = explode(',', $frontendUrl);
+                $frontendUrl = trim($urls[0]); // Prendre la première URL
+            }
+            $frontendUrl = trim($frontendUrl);
+
+            // ✅ CRITIQUE: En production, s'assurer que l'URL pointe vers le frontend, pas le backend
+            if (app()->environment('production') && str_contains($frontendUrl, 'digicard-api.arccenciel.com')) {
+                // Remplacer digicard-api par digicard pour pointer vers le frontend
+                $frontendUrl = str_replace('digicard-api.arccenciel.com', 'digicard.arccenciel.com', $frontendUrl);
+                Log::warning("OrderController: Frontend URL corrigée pour pointer vers le frontend", [
+                    'original_url' => config('app.frontend_url'),
+                    'corrected_url' => $frontendUrl,
+                ]);
+            }
+
             $returnUrl = rtrim($frontendUrl, '/') . '/payment/close?order_id=' . $order->id;
 
             $notifyUrl = url('/') . '/api/payment/webhook'; // URL du webhook (URL complète pour que Chap Chap Pay puisse l'appeler)
@@ -1421,17 +1441,62 @@ class OrderController extends Controller
     public function paymentWebhook(Request $request)
     {
         try {
+            // ✅ Log initial pour confirmer que le webhook est appelé
+            Log::info('Chap Chap Pay: Webhook appelé', [
+                'method' => $request->method(),
+                'content_type' => $request->header('Content-Type'),
+                'has_content' => $request->hasContent(),
+                'content_length' => strlen($request->getContent()),
+                'all_headers' => $request->headers->all(),
+            ]);
+
             // 1. Tenter de récupérer les données (Méthode standard + Méthode brute fallback)
             $data = $request->all();
+
+            // Log des données standard
+            Log::info('Chap Chap Pay: Données via request->all()', [
+                'data' => $data,
+                'is_empty' => empty($data),
+                'count' => count($data)
+            ]);
 
             // Si Laravel n'a rien trouvé via input(), on force le décodage du JSON brut
             if (empty($data)) {
                 $content = $request->getContent();
-                $data = json_decode($content, true) ?? [];
+                Log::info('Chap Chap Pay: Tentative de décodage JSON brut', [
+                    'content_length' => strlen($content),
+                    'content_preview' => substr($content, 0, 500),
+                ]);
+
+                $data = json_decode($content, true);
+
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    Log::warning('Chap Chap Pay: Erreur de décodage JSON', [
+                        'error' => json_last_error_msg(),
+                        'content' => $content
+                    ]);
+                    $data = [];
+                } else {
+                    Log::info('Chap Chap Pay: JSON décodé avec succès', [
+                        'data' => $data
+                    ]);
+                }
             }
 
-            Log::info('Chap Chap Pay: Webhook reçu (Données brutes décodées)', [
-                'data' => $data
+            // Si toujours vide, essayer de parser comme query string
+            if (empty($data)) {
+                parse_str($request->getContent(), $parsedData);
+                if (!empty($parsedData)) {
+                    $data = $parsedData;
+                    Log::info('Chap Chap Pay: Données parsées depuis query string', [
+                        'data' => $data
+                    ]);
+                }
+            }
+
+            Log::info('Chap Chap Pay: Webhook reçu (Données finales)', [
+                'data' => $data,
+                'data_keys' => array_keys($data ?? [])
             ]);
 
             // 2. Récupération des champs depuis $data (et non plus $request->input)
@@ -1453,25 +1518,60 @@ class OrderController extends Controller
             }
 
             // 3. Recherche de la commande (ID ou Numéro)
+            // ✅ IMPORTANT: Chap Chap Pay envoie order_number comme order_id (voir validate() ligne 1320)
             $order = null;
-            if (is_numeric($orderIdOrNumber)) {
+
+            // Essayer d'abord par order_number (format le plus probable depuis Chap Chap Pay)
+            $order = Order::where('order_number', $orderIdOrNumber)->first();
+
+            // Si pas trouvé et que c'est numérique, essayer par ID
+            if (!$order && is_numeric($orderIdOrNumber)) {
                 $order = Order::find((int) $orderIdOrNumber);
             }
+
+            // Si toujours pas trouvé, essayer de chercher dans les différents formats possibles
             if (!$order) {
-                $order = Order::where('order_number', $orderIdOrNumber)->first();
+                // Peut-être que Chap Chap Pay envoie un format différent
+                // Essayer de chercher avec différents formats
+                $order = Order::where('order_number', 'like', '%' . $orderIdOrNumber . '%')->first();
             }
 
             if (!$order) {
-                Log::error('Chap Chap Pay: Commande introuvable', ['id' => $orderIdOrNumber]);
+                Log::error('Chap Chap Pay: Commande introuvable', [
+                    'order_id_received' => $orderIdOrNumber,
+                    'type' => gettype($orderIdOrNumber),
+                    'is_numeric' => is_numeric($orderIdOrNumber),
+                    'data_received' => $data
+                ]);
                 return response()->json(['message' => 'Commande non trouvée.'], 404);
             }
 
+            Log::info('Chap Chap Pay: Commande trouvée', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'current_status' => $order->status,
+                'order_id_received' => $orderIdOrNumber
+            ]);
+
             // 4. Validation du paiement
             if ($status === 'success' || $status === 'paid' || $status === 'completed') {
-                if ($order->status !== 'validated') {
+                $wasAlreadyValidated = $order->status === 'validated';
+
+                if (!$wasAlreadyValidated) {
+                    // Mettre à jour le statut de la commande
                     $order->update([
                         'status' => 'validated',
                         'subscription_start_date' => now()->format('Y-m-d'),
+                    ]);
+
+                    // Recharger la commande pour avoir le statut à jour
+                    $order->refresh();
+
+                    Log::info('Chap Chap Pay: Commande validée avec succès', [
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                        'new_status' => $order->status,
+                        'subscription_start_date' => $order->subscription_start_date
                     ]);
 
                     // Notifications (Email & Admin)
@@ -1495,18 +1595,51 @@ class OrderController extends Controller
                         $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
                         \Mail::to('charleshaba454@gmail.com')->send($mailable);
 
+                        Log::info('Chap Chap Pay: Notifications et emails envoyés', [
+                            'order_id' => $order->id,
+                            'user_email' => $user->email
+                        ]);
+
                     } catch (\Throwable $e) {
-                        Log::error('Erreur notifications webhook: ' . $e->getMessage());
+                        Log::error('Erreur notifications webhook: ' . $e->getMessage(), [
+                            'order_id' => $order->id,
+                            'trace' => $e->getTraceAsString()
+                        ]);
                     }
+                } else {
+                    Log::info('Chap Chap Pay: Commande déjà validée (webhook reçu plusieurs fois)', [
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                        'current_status' => $order->status
+                    ]);
                 }
 
-                return response()->json(['message' => 'Paiement confirmé avec succès.']);
+                return response()->json([
+                    'message' => 'Paiement confirmé avec succès.',
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'status' => $order->status,
+                    'was_already_validated' => $wasAlreadyValidated
+                ]);
             } else {
-                return response()->json(['message' => 'Statut non valide: ' . $status]);
+                Log::warning('Chap Chap Pay: Statut de paiement non valide', [
+                    'order_id' => $order->id ?? null,
+                    'order_number' => $order->order_number ?? null,
+                    'status_received' => $status,
+                    'raw_status' => $rawStatus
+                ]);
+                return response()->json(['message' => 'Statut non valide: ' . $status], 400);
             }
 
         } catch (\Exception $e) {
-            Log::error('Erreur Webhook Fatal: ' . $e->getMessage());
+            Log::error('Erreur Webhook Fatal', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'request_data' => $request->all(),
+                'request_content' => $request->getContent(),
+            ]);
             return response()->json(['message' => 'Erreur serveur.'], 500);
         }
     }
@@ -1518,24 +1651,38 @@ class OrderController extends Controller
     public function paymentWebhookAdditionalCards(Request $request)
     {
         try {
-            Log::info('Chap Chap Pay: Webhook cartes supplémentaires reçu', [
-                'request_data' => $request->all(),
-                'headers' => $request->headers->all(),
+            // 1. Tenter de récupérer les données (Méthode standard + Méthode brute fallback)
+            $data = $request->all();
+
+            // Si Laravel n'a rien trouvé via input(), on force le décodage du JSON brut
+            if (empty($data)) {
+                $content = $request->getContent();
+                $data = json_decode($content, true) ?? [];
+            }
+
+            Log::info('Chap Chap Pay: Webhook cartes supplémentaires reçu (Données brutes décodées)', [
+                'data' => $data
             ]);
 
-            // Valider les données reçues du webhook
-            $validatedData = $request->validate([
-                'order_id' => 'required|string', // Format: order_number-ADD-payment_id
-                'transaction_id' => 'nullable|string',
-                'status' => 'required|string', // 'success', 'paid', 'completed', etc.
-                'amount' => 'nullable|integer',
-                'operation_id' => 'nullable|string',
-            ]);
+            // 2. Récupération des champs depuis $data (et non plus $request->validate)
+            $orderIdOrNumber = $data['order_id'] ?? null;
+            $rawStatus = $data['status'] ?? null;
+            $transactionId = $data['transaction_id'] ?? null;
+            $operationId = $data['operation_id'] ?? null;
 
-            $orderIdOrNumber = $validatedData['order_id'];
-            $status = $validatedData['status'];
-            $transactionId = $validatedData['transaction_id'] ?? null;
-            $operationId = $validatedData['operation_id'] ?? null;
+            // Gestion intelligente du statut (String ou Objet)
+            $status = null;
+            if (is_array($rawStatus) && isset($rawStatus['code'])) {
+                $status = $rawStatus['code'];
+            } elseif (is_string($rawStatus)) {
+                $status = $rawStatus;
+            }
+
+            // Vérification des données requises
+            if (!$orderIdOrNumber || !$status) {
+                Log::error('Chap Chap Pay: Données incomplètes après décodage (cartes supplémentaires)', ['data' => $data]);
+                return response()->json(['message' => 'Données incomplètes.'], 400);
+            }
 
             // Extraire l'ID du paiement supplémentaire depuis order_id (format: order_number-ADD-payment_id)
             $additionalPaymentId = null;
@@ -1724,6 +1871,30 @@ class OrderController extends Controller
                         'order_id' => $order->id,
                         'additional_payment_id' => $additionalPayment->id,
                         'error' => $t->getTraceAsString(),
+                    ]);
+                }
+
+                // ✅ NOUVEAU: Envoyer l'email de confirmation au client pour les cartes supplémentaires
+                try {
+                    $clientMailable = new \App\Mail\AdditionalCardsAdded($order, $user, $additionalPayment);
+                    \Mail::to($user->email)->send($clientMailable);
+
+                    \Log::info('Email de confirmation client envoyé avec succès pour cartes supplémentaires', [
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                        'additional_payment_id' => $additionalPayment->id,
+                        'user_id' => $user->id,
+                        'user_email' => $user->email,
+                    ]);
+                } catch (\Exception $e) {
+                    \Log::error('Erreur lors de l\'envoi de l\'email de confirmation client pour cartes supplémentaires', [
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString(),
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                        'additional_payment_id' => $additionalPayment->id,
+                        'user_id' => $user->id,
+                        'user_email' => $user->email,
                     ]);
                 }
 
@@ -3412,7 +3583,7 @@ class OrderController extends Controller
      * Cette méthode est appelée depuis PaymentCloseView.vue en mode développement
      * pour simuler la validation du paiement quand le webhook ne peut pas atteindre localhost
      */
-    public function simulateWebhook($orderId)
+    public function simulateWebhook($orderId, Request $request)
     {
         // ✅ SÉCURITÉ: Interdire cette route en production
         if (!app()->environment('local', 'development')) {
@@ -3424,6 +3595,109 @@ class OrderController extends Controller
         }
 
         try {
+            // Vérifier si c'est un paiement supplémentaire
+            $additionalPaymentId = $request->input('additional_payment_id');
+
+            if ($additionalPaymentId) {
+                // Simuler le webhook pour un paiement supplémentaire
+                $additionalPayment = \App\Models\AdditionalCardPayment::find($additionalPaymentId);
+
+                if (!$additionalPayment) {
+                    return response()->json([
+                        'success' => false,
+                        'error' => 'Paiement supplémentaire non trouvé',
+                    ], 404);
+                }
+
+                if ($additionalPayment->payment_status === 'paid') {
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Paiement supplémentaire déjà confirmé',
+                        'additional_payment_id' => $additionalPayment->id,
+                        'payment_status' => $additionalPayment->payment_status,
+                    ]);
+                }
+
+                // Simuler le traitement du webhook pour paiement supplémentaire
+                $order = $additionalPayment->order;
+                $user = $additionalPayment->user;
+                $quantity = $additionalPayment->quantity;
+                $distribution = $additionalPayment->distribution;
+                $totalPrice = $additionalPayment->total_price;
+
+                // Charger les order_employees
+                $order->load(['orderEmployees.employee']);
+
+                // Appliquer la distribution des cartes (même logique que dans paymentWebhookAdditionalCards)
+                if (($order->order_type === 'business' || $order->order_type === 'entreprise') && $distribution) {
+                    $adminQuantity = isset($distribution['admin']) ? (int) $distribution['admin'] : 0;
+                    $employeesDistribution = $distribution['employees'] ?? [];
+
+                    if ($adminQuantity > 0) {
+                        $adminOrderEmployee = $order->orderEmployees->where('employee_id', $user->id)->first();
+                        if ($adminOrderEmployee) {
+                            $adminOrderEmployee->increment('card_quantity', $adminQuantity);
+                        }
+                    }
+
+                    foreach ($employeesDistribution as $employeeId => $employeeQuantity) {
+                        $employeeQuantityInt = (int) $employeeQuantity;
+                        if ($employeeQuantityInt > 0) {
+                            $employeeOrderEmployee = $order->orderEmployees->where('employee_id', $employeeId)->first();
+                            if ($employeeOrderEmployee) {
+                                $employeeOrderEmployee->increment('card_quantity', $employeeQuantityInt);
+                            }
+                        }
+                    }
+                    $order->increment('card_quantity', $quantity);
+                } else {
+                    $order->increment('card_quantity', $quantity);
+                }
+
+                // Mettre à jour les compteurs
+                $order->increment('additional_cards_count', $quantity);
+                $order->increment('additional_cards_total_price', $totalPrice);
+                $order->increment('total_price', $totalPrice);
+
+                // Mettre à jour le statut du paiement
+                $additionalPayment->update([
+                    'payment_status' => 'paid',
+                    'paid_at' => now(),
+                ]);
+
+                // ✅ Envoyer l'email de confirmation au client
+                try {
+                    $clientMailable = new \App\Mail\AdditionalCardsAdded($order, $user, $additionalPayment);
+                    \Mail::to($user->email)->send($clientMailable);
+
+                    Log::info('Email de confirmation client envoyé (simulation webhook)', [
+                        'additional_payment_id' => $additionalPayment->id,
+                        'user_email' => $user->email,
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('Erreur lors de l\'envoi de l\'email de confirmation client (simulation webhook)', [
+                        'error' => $e->getMessage(),
+                        'additional_payment_id' => $additionalPayment->id,
+                    ]);
+                }
+
+                Log::info('Webhook simulé avec succès - Paiement supplémentaire confirmé', [
+                    'additional_payment_id' => $additionalPayment->id,
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Webhook simulé avec succès (paiement supplémentaire)',
+                    'additional_payment_id' => $additionalPayment->id,
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'payment_status' => $additionalPayment->payment_status,
+                ]);
+            }
+
+            // Sinon, simuler le webhook pour une commande principale
             $order = Order::findOrFail($orderId);
 
             Log::info('Simulation de webhook (développement)', [
@@ -3433,16 +3707,22 @@ class OrderController extends Controller
             ]);
 
             // Si la commande n'est pas déjà validée, la valider
-            if ($order->status !== 'validated') {
+            $wasAlreadyValidated = $order->status === 'validated';
+
+            if (!$wasAlreadyValidated) {
                 $order->update([
                     'status' => 'validated',
                     'subscription_start_date' => now()->format('Y-m-d'),
                 ]);
 
+                // Recharger la commande pour avoir le statut à jour
+                $order->refresh();
+
                 $user = $order->user;
 
-                // Notification super admin : commande validée
+                // Notifications (Email & Admin)
                 try {
+                    // Notification super admin : commande validée
                     $profileUrl = url('/') . '/' . $user->username;
                     if ($order->is_configured) {
                         $profileUrl .= '?order=' . $order->id;
@@ -3460,6 +3740,18 @@ class OrderController extends Controller
                             'simulated_via' => 'webhook',
                         ],
                     ]);
+
+                    // Email Client
+                    \Mail::to($user->email)->send(new \App\Mail\OrderValidated($order, $user));
+
+                    // Email Admin
+                    $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
+                    \Mail::to('charleshaba454@gmail.com')->send($mailable);
+
+                    Log::info('Emails envoyés (simulation webhook)', [
+                        'order_id' => $order->id,
+                        'user_email' => $user->email
+                    ]);
                 } catch (\Throwable $t) {
                     Log::error('Erreur lors de la création de la notification admin (simulation webhook): ' . $t->getMessage());
                 }
@@ -3467,6 +3759,7 @@ class OrderController extends Controller
                 Log::info('Webhook simulé avec succès - Commande validée', [
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
+                    'new_status' => $order->status,
                 ]);
             } else {
                 Log::info('Webhook simulé - Commande déjà validée', [
