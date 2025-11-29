@@ -1752,38 +1752,36 @@ class OrderController extends Controller
                 'count' => count($data)
             ]);
 
-            // Vérifier si $data est un tableau avec une seule chaîne JSON (cas spécial)
-            $needsJsonDecode = false;
+            // Vérifier si $data est un tableau avec une seule chaîne JSON (cas spécial de Chap Chap Pay)
             if (is_array($data) && count($data) === 1 && isset($data[0]) && is_string($data[0])) {
-                // Vérifier si c'est du JSON valide
-                $testDecode = json_decode($data[0], true);
-                if (json_last_error() === JSON_ERROR_NONE && is_array($testDecode)) {
-                    $needsJsonDecode = true;
+                Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Détection d\'une chaîne JSON dans un tableau', [
+                    'first_element_preview' => substr($data[0], 0, 200)
+                ]);
+                $decoded = json_decode($data[0], true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                    $data = $decoded;
+                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Chaîne JSON décodée avec succès depuis tableau', [
+                        'data' => $data
+                    ]);
+                } else {
+                    Log::warning('Chap Chap Pay: Webhook cartes supplémentaires - Échec du décodage JSON depuis tableau', [
+                        'error' => json_last_error_msg()
+                    ]);
                 }
             }
 
-            // Si Laravel n'a rien trouvé via input() OU si on a détecté une chaîne JSON dans un tableau
-            if (empty($data) || $needsJsonDecode) {
+            // Si Laravel n'a rien trouvé via input(), on force le décodage du JSON brut
+            if (empty($data) || (is_array($data) && !isset($data['order_id']))) {
                 $content = $request->getContent();
-
-                // Si on a déjà une chaîne JSON dans le tableau, l'utiliser
-                if ($needsJsonDecode && isset($data[0])) {
-                    $content = $data[0];
-                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Utilisation de la chaîne JSON du tableau', [
-                        'content_length' => strlen($content),
-                        'content_preview' => substr($content, 0, 200),
-                    ]);
-                } else {
-                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Tentative de décodage JSON brut', [
-                        'content_length' => strlen($content),
-                        'content_preview' => substr($content, 0, 200),
-                    ]);
-                }
+                Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Tentative de décodage JSON brut', [
+                    'content_length' => strlen($content),
+                    'content_preview' => substr($content, 0, 200),
+                ]);
 
                 $decodedData = json_decode($content, true);
 
                 if (json_last_error() !== JSON_ERROR_NONE) {
-                    Log::warning('Chap Chap Pay: Webhook cartes supplémentaires - Erreur de décodage JSON', [
+                    Log::warning('Chap Chap Pay: Webhook cartes supplémentaires - Erreur de décodage JSON brut', [
                         'error' => json_last_error_msg(),
                         'content' => substr($content, 0, 500)
                     ]);
@@ -1793,21 +1791,7 @@ class OrderController extends Controller
                     }
                 } else {
                     $data = $decodedData;
-                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - JSON décodé avec succès', [
-                        'data' => $data
-                    ]);
-                }
-            }
-
-            // Gestion spéciale : Si $data est un tableau avec une seule chaîne JSON
-            if (is_array($data) && count($data) === 1 && isset($data[0]) && is_string($data[0])) {
-                Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Détection d\'une chaîne JSON dans un tableau', [
-                    'first_element' => substr($data[0], 0, 200)
-                ]);
-                $decoded = json_decode($data[0], true);
-                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                    $data = $decoded;
-                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Chaîne JSON décodée avec succès', [
+                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - JSON brut décodé avec succès', [
                         'data' => $data
                     ]);
                 }
@@ -1817,8 +1801,20 @@ class OrderController extends Controller
                 'data' => $data,
                 'data_keys' => array_keys($data ?? []),
                 'data_type' => gettype($data),
-                'is_array' => is_array($data)
+                'is_array' => is_array($data),
+                'is_numeric_array' => is_array($data) && isset($data[0])
             ]);
+
+            // Vérification finale : Si $data est toujours un tableau avec une seule chaîne JSON, décoder
+            if (is_array($data) && count($data) === 1 && isset($data[0]) && is_string($data[0])) {
+                $testDecode = json_decode($data[0], true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($testDecode)) {
+                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Décodage final de la chaîne JSON', [
+                        'decoded_data' => $testDecode
+                    ]);
+                    $data = $testDecode;
+                }
+            }
 
             // 2. Récupération des champs depuis $data (et non plus $request->validate)
             $orderIdOrNumber = $data['order_id'] ?? null;
@@ -1834,9 +1830,17 @@ class OrderController extends Controller
                 $status = $rawStatus;
             }
 
-            // Vérification des données requises
+            // Vérification des données requises avec logging détaillé
             if (!$orderIdOrNumber || !$status) {
-                Log::error('Chap Chap Pay: Données incomplètes après décodage (cartes supplémentaires)', ['data' => $data]);
+                Log::error('Chap Chap Pay: Données incomplètes après décodage (cartes supplémentaires)', [
+                    'data' => $data,
+                    'order_id' => $orderIdOrNumber,
+                    'status' => $status,
+                    'raw_status' => $rawStatus,
+                    'data_type' => gettype($data),
+                    'is_array' => is_array($data),
+                    'data_keys' => is_array($data) ? array_keys($data) : 'not_array'
+                ]);
                 return response()->json(['message' => 'Données incomplètes.'], 400);
             }
 
@@ -2075,19 +2079,17 @@ class OrderController extends Controller
                         'order_number' => $order->order_number,
                         'additional_payment_id' => $additionalPayment->id,
                         'user_id' => $user->id,
-                        'admin_email' => 'charleshaba454@gmail.com',
-                        'mailer_used' => $mailer,
+                        'admin_email' => $adminEmail,
                     ]);
-                } catch (\Exception $e) {
-                    \Log::error('Erreur lors de l\'envoi de l\'email de notification admin pour cartes supplémentaires', [
-                        'error' => $e->getMessage(),
-                        'trace' => $e->getTraceAsString(),
+                } catch (\Throwable $e) {
+                    Log::error('Chap Chap Pay: Erreur envoi email admin (cartes supplémentaires)', [
                         'order_id' => $order->id,
-                        'order_number' => $order->order_number,
+                        'admin_email' => $adminEmail,
+                        'error' => $e->getMessage(),
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine(),
+                        'trace' => $e->getTraceAsString(),
                         'additional_payment_id' => $additionalPayment->id,
-                        'user_id' => $user->id,
-                        'admin_email' => 'charleshaba454@gmail.com',
-                        'mailer' => config('mail.default', 'log'),
                     ]);
                 }
 
