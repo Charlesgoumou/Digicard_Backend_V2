@@ -157,8 +157,8 @@ class AdminOrderPaymentNotification extends Mailable
      */
     public function build()
     {
-        $fromAddress = config('mail.from.address', 'contact@arccenciel.com');
-        $fromName = config('mail.from.name', 'Arcc En Ciel');
+        $fromAddress = config('mail.from.address', 'noreply@arccenciel.com');
+        $fromName = config('mail.from.name', 'DigiCard');
         
         $subject = $this->isAdditionalCards 
             ? 'Nouveau paiement - Cartes supplémentaires - Commande #' . $this->order->order_number
@@ -166,7 +166,6 @@ class AdminOrderPaymentNotification extends Mailable
         
         return $this->from($fromAddress, $fromName)
             ->replyTo($fromAddress, $fromName)
-            ->to('charleshaba454@gmail.com')
             ->subject($subject)
             ->view('emails.admin-order-payment-notification')
             ->with([
@@ -191,8 +190,8 @@ class AdminOrderPaymentNotification extends Mailable
             
         return new Envelope(
             from: new \Illuminate\Mail\Mailables\Address(
-                config('mail.from.address', 'contact@arccenciel.com'),
-                config('mail.from.name', 'Arcc En Ciel')
+                config('mail.from.address', 'noreply@arccenciel.com'),
+                config('mail.from.name', 'DigiCard')
             ),
             subject: $subject,
         );

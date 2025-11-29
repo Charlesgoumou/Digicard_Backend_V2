@@ -41,12 +41,12 @@ class OrderValidated extends Mailable
      */
     public function build()
     {
-        $fromAddress = config('mail.from.address', 'contact@arccenciel.com');
-        $fromName = config('mail.from.name', 'Arcc En Ciel');
+        $fromAddress = config('mail.from.address', 'noreply@arccenciel.com');
+        $fromName = config('mail.from.name', 'DigiCard');
         
         return $this->from($fromAddress, $fromName)
             ->replyTo($fromAddress, $fromName)
-            ->subject('Confirmation de votre commande #' . $this->order->order_number . ' - Arcc En Ciel')
+            ->subject('Confirmation de votre commande #' . $this->order->order_number . ' - DigiCard')
             ->view('emails.order-validated')
             ->with([
                 'order' => $this->order,
@@ -65,10 +65,10 @@ class OrderValidated extends Mailable
     {
         return new Envelope(
             from: new \Illuminate\Mail\Mailables\Address(
-                config('mail.from.address', 'contact@arccenciel.com'),
-                config('mail.from.name', 'Arcc En Ciel')
+                config('mail.from.address', 'noreply@arccenciel.com'),
+                config('mail.from.name', 'DigiCard')
             ),
-            subject: 'Confirmation de votre commande - Arcc En Ciel',
+            subject: 'Confirmation de votre commande - DigiCard',
         );
     }
 

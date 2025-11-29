@@ -1665,9 +1665,9 @@ class OrderController extends Controller
                         ]);
 
                         try {
-                            // Note: AdminOrderPaymentNotification définit déjà le destinataire dans build()
                             $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
-                            \Mail::send($mailable);
+                            // Utiliser Mail::to() pour garantir l'envoi même si le destinataire est défini dans build()
+                            \Mail::to($adminEmail)->send($mailable);
                             Log::info('Chap Chap Pay: Email admin envoyé avec succès', [
                                 'order_id' => $order->id,
                                 'admin_email' => $adminEmail
