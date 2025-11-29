@@ -1741,6 +1741,13 @@ class OrderController extends Controller
      */
     public function paymentWebhookAdditionalCards(Request $request)
     {
+        // ✅ Log TRÈS tôt pour confirmer que la méthode est appelée
+        \Log::info('=== WEBHOOK CARTES SUPPLEMENTAIRES DEBUT ===', [
+            'timestamp' => now()->toDateTimeString(),
+            'method' => $request->method(),
+            'ip' => $request->ip(),
+        ]);
+
         try {
             // ✅ Log initial pour confirmer que le webhook est appelé
             Log::info('Chap Chap Pay: Webhook cartes supplémentaires appelé', [
@@ -1757,40 +1764,41 @@ class OrderController extends Controller
             Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Données via request->all()', [
                 'data' => $data,
                 'is_empty' => empty($data),
-                'count' => count($data),
-                'data_type' => gettype($data)
+                'count' => count($data)
             ]);
 
-            // Vérifier si $data est un tableau avec une seule chaîne JSON (cas spécial de Chap Chap Pay)
+            // Vérifier si $data est un tableau avec une seule chaîne JSON (cas spécial)
+            $needsJsonDecode = false;
             if (is_array($data) && count($data) === 1 && isset($data[0]) && is_string($data[0])) {
-                Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Détection d\'une chaîne JSON dans un tableau', [
-                    'first_element_preview' => substr($data[0], 0, 200)
-                ]);
-                $decoded = json_decode($data[0], true);
-                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                    $data = $decoded;
-                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Chaîne JSON décodée avec succès depuis tableau', [
-                        'data' => $data
-                    ]);
-                } else {
-                    Log::warning('Chap Chap Pay: Webhook cartes supplémentaires - Échec du décodage JSON depuis tableau', [
-                        'error' => json_last_error_msg()
-                    ]);
+                // Vérifier si c'est du JSON valide
+                $testDecode = json_decode($data[0], true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($testDecode)) {
+                    $needsJsonDecode = true;
                 }
             }
 
-            // Si Laravel n'a rien trouvé via input(), on force le décodage du JSON brut
-            if (empty($data) || (is_array($data) && !isset($data['order_id']))) {
+            // Si Laravel n'a rien trouvé via input() OU si on a détecté une chaîne JSON dans un tableau
+            if (empty($data) || $needsJsonDecode) {
                 $content = $request->getContent();
-                Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Tentative de décodage JSON brut', [
-                    'content_length' => strlen($content),
-                    'content_preview' => substr($content, 0, 200),
-                ]);
+
+                // Si on a déjà une chaîne JSON dans le tableau, l'utiliser
+                if ($needsJsonDecode && isset($data[0])) {
+                    $content = $data[0];
+                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Utilisation de la chaîne JSON du tableau', [
+                        'content_length' => strlen($content),
+                        'content_preview' => substr($content, 0, 500),
+                    ]);
+                } else {
+                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Tentative de décodage JSON brut', [
+                        'content_length' => strlen($content),
+                        'content_preview' => substr($content, 0, 500),
+                    ]);
+                }
 
                 $decodedData = json_decode($content, true);
 
                 if (json_last_error() !== JSON_ERROR_NONE) {
-                    Log::warning('Chap Chap Pay: Webhook cartes supplémentaires - Erreur de décodage JSON brut', [
+                    Log::warning('Chap Chap Pay: Webhook cartes supplémentaires - Erreur de décodage JSON', [
                         'error' => json_last_error_msg(),
                         'content' => substr($content, 0, 500)
                     ]);
@@ -1800,7 +1808,18 @@ class OrderController extends Controller
                     }
                 } else {
                     $data = $decodedData;
-                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - JSON brut décodé avec succès', [
+                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - JSON décodé avec succès', [
+                        'data' => $data
+                    ]);
+                }
+            }
+
+            // Si toujours vide, essayer de parser comme query string
+            if (empty($data)) {
+                parse_str($request->getContent(), $parsedData);
+                if (!empty($parsedData)) {
+                    $data = $parsedData;
+                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Données parsées depuis query string', [
                         'data' => $data
                     ]);
                 }
@@ -1810,18 +1829,20 @@ class OrderController extends Controller
                 'data' => $data,
                 'data_keys' => array_keys($data ?? []),
                 'data_type' => gettype($data),
-                'is_array' => is_array($data),
-                'is_numeric_array' => is_array($data) && isset($data[0])
+                'is_array' => is_array($data)
             ]);
 
-            // Vérification finale : Si $data est toujours un tableau avec une seule chaîne JSON, décoder
+            // Gestion spéciale : Si $data est un tableau avec une seule chaîne JSON
             if (is_array($data) && count($data) === 1 && isset($data[0]) && is_string($data[0])) {
-                $testDecode = json_decode($data[0], true);
-                if (json_last_error() === JSON_ERROR_NONE && is_array($testDecode)) {
-                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Décodage final de la chaîne JSON', [
-                        'decoded_data' => $testDecode
+                Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Détection d\'une chaîne JSON dans un tableau', [
+                    'first_element' => substr($data[0], 0, 200)
+                ]);
+                $decoded = json_decode($data[0], true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                    $data = $decoded;
+                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Chaîne JSON décodée avec succès', [
+                        'data' => $data
                     ]);
-                    $data = $testDecode;
                 }
             }
 
@@ -2136,10 +2157,13 @@ class OrderController extends Controller
                 ]);
             }
         } catch (\Exception $e) {
-            Log::error('Chap Chap Pay: Erreur lors du traitement du webhook cartes supplémentaires', [
+            \Log::error('=== WEBHOOK CARTES SUPPLEMENTAIRES ERREUR ===', [
                 'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString(),
                 'request_data' => $request->all(),
+                'request_content' => $request->getContent(),
             ]);
 
             return response()->json([
