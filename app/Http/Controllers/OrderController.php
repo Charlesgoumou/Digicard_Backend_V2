@@ -1460,23 +1460,47 @@ class OrderController extends Controller
                 'count' => count($data)
             ]);
 
-            // Si Laravel n'a rien trouvé via input(), on force le décodage du JSON brut
-            if (empty($data)) {
-                $content = $request->getContent();
-                Log::info('Chap Chap Pay: Tentative de décodage JSON brut', [
-                    'content_length' => strlen($content),
-                    'content_preview' => substr($content, 0, 500),
-                ]);
+            // Vérifier si $data est un tableau avec une seule chaîne JSON (cas spécial)
+            $needsJsonDecode = false;
+            if (is_array($data) && count($data) === 1 && isset($data[0]) && is_string($data[0])) {
+                // Vérifier si c'est du JSON valide
+                $testDecode = json_decode($data[0], true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($testDecode)) {
+                    $needsJsonDecode = true;
+                }
+            }
 
-                $data = json_decode($content, true);
+            // Si Laravel n'a rien trouvé via input() OU si on a détecté une chaîne JSON dans un tableau
+            if (empty($data) || $needsJsonDecode) {
+                $content = $request->getContent();
+
+                // Si on a déjà une chaîne JSON dans le tableau, l'utiliser
+                if ($needsJsonDecode && isset($data[0])) {
+                    $content = $data[0];
+                    Log::info('Chap Chap Pay: Utilisation de la chaîne JSON du tableau', [
+                        'content_length' => strlen($content),
+                        'content_preview' => substr($content, 0, 500),
+                    ]);
+                } else {
+                    Log::info('Chap Chap Pay: Tentative de décodage JSON brut', [
+                        'content_length' => strlen($content),
+                        'content_preview' => substr($content, 0, 500),
+                    ]);
+                }
+
+                $decodedData = json_decode($content, true);
 
                 if (json_last_error() !== JSON_ERROR_NONE) {
                     Log::warning('Chap Chap Pay: Erreur de décodage JSON', [
                         'error' => json_last_error_msg(),
-                        'content' => $content
+                        'content' => substr($content, 0, 500)
                     ]);
-                    $data = [];
+                    // Ne pas écraser $data si le décodage échoue
+                    if (empty($data)) {
+                        $data = [];
+                    }
                 } else {
+                    $data = $decodedData;
                     Log::info('Chap Chap Pay: JSON décodé avec succès', [
                         'data' => $data
                     ]);
@@ -1496,8 +1520,24 @@ class OrderController extends Controller
 
             Log::info('Chap Chap Pay: Webhook reçu (Données finales)', [
                 'data' => $data,
-                'data_keys' => array_keys($data ?? [])
+                'data_keys' => array_keys($data ?? []),
+                'data_type' => gettype($data),
+                'is_array' => is_array($data)
             ]);
+
+            // Gestion spéciale : Si $data est un tableau avec une seule chaîne JSON
+            if (is_array($data) && count($data) === 1 && isset($data[0]) && is_string($data[0])) {
+                Log::info('Chap Chap Pay: Détection d\'une chaîne JSON dans un tableau', [
+                    'first_element' => substr($data[0], 0, 200)
+                ]);
+                $decoded = json_decode($data[0], true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                    $data = $decoded;
+                    Log::info('Chap Chap Pay: Chaîne JSON décodée avec succès', [
+                        'data' => $data
+                    ]);
+                }
+            }
 
             // 2. Récupération des champs depuis $data (et non plus $request->input)
             $orderIdOrNumber = $data['order_id'] ?? null;
