@@ -1745,14 +1745,79 @@ class OrderController extends Controller
             // 1. Tenter de récupérer les données (Méthode standard + Méthode brute fallback)
             $data = $request->all();
 
-            // Si Laravel n'a rien trouvé via input(), on force le décodage du JSON brut
-            if (empty($data)) {
-                $content = $request->getContent();
-                $data = json_decode($content, true) ?? [];
+            // Log des données standard
+            Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Données via request->all()', [
+                'data' => $data,
+                'is_empty' => empty($data),
+                'count' => count($data)
+            ]);
+
+            // Vérifier si $data est un tableau avec une seule chaîne JSON (cas spécial)
+            $needsJsonDecode = false;
+            if (is_array($data) && count($data) === 1 && isset($data[0]) && is_string($data[0])) {
+                // Vérifier si c'est du JSON valide
+                $testDecode = json_decode($data[0], true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($testDecode)) {
+                    $needsJsonDecode = true;
+                }
             }
 
-            Log::info('Chap Chap Pay: Webhook cartes supplémentaires reçu (Données brutes décodées)', [
-                'data' => $data
+            // Si Laravel n'a rien trouvé via input() OU si on a détecté une chaîne JSON dans un tableau
+            if (empty($data) || $needsJsonDecode) {
+                $content = $request->getContent();
+
+                // Si on a déjà une chaîne JSON dans le tableau, l'utiliser
+                if ($needsJsonDecode && isset($data[0])) {
+                    $content = $data[0];
+                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Utilisation de la chaîne JSON du tableau', [
+                        'content_length' => strlen($content),
+                        'content_preview' => substr($content, 0, 200),
+                    ]);
+                } else {
+                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Tentative de décodage JSON brut', [
+                        'content_length' => strlen($content),
+                        'content_preview' => substr($content, 0, 200),
+                    ]);
+                }
+
+                $decodedData = json_decode($content, true);
+
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    Log::warning('Chap Chap Pay: Webhook cartes supplémentaires - Erreur de décodage JSON', [
+                        'error' => json_last_error_msg(),
+                        'content' => substr($content, 0, 500)
+                    ]);
+                    // Ne pas écraser $data si le décodage échoue
+                    if (empty($data)) {
+                        $data = [];
+                    }
+                } else {
+                    $data = $decodedData;
+                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - JSON décodé avec succès', [
+                        'data' => $data
+                    ]);
+                }
+            }
+
+            // Gestion spéciale : Si $data est un tableau avec une seule chaîne JSON
+            if (is_array($data) && count($data) === 1 && isset($data[0]) && is_string($data[0])) {
+                Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Détection d\'une chaîne JSON dans un tableau', [
+                    'first_element' => substr($data[0], 0, 200)
+                ]);
+                $decoded = json_decode($data[0], true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                    $data = $decoded;
+                    Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Chaîne JSON décodée avec succès', [
+                        'data' => $data
+                    ]);
+                }
+            }
+
+            Log::info('Chap Chap Pay: Webhook cartes supplémentaires reçu (Données finales)', [
+                'data' => $data,
+                'data_keys' => array_keys($data ?? []),
+                'data_type' => gettype($data),
+                'is_array' => is_array($data)
             ]);
 
             // 2. Récupération des champs depuis $data (et non plus $request->validate)
@@ -1966,45 +2031,46 @@ class OrderController extends Controller
                 }
 
                 // ✅ NOUVEAU: Envoyer l'email de confirmation au client pour les cartes supplémentaires
+                Log::info('Chap Chap Pay: Envoi email client (cartes supplémentaires)', [
+                    'order_id' => $order->id,
+                    'user_email' => $user->email
+                ]);
+
                 try {
                     $clientMailable = new \App\Mail\AdditionalCardsAdded($order, $user, $additionalPayment);
                     \Mail::to($user->email)->send($clientMailable);
 
-                    \Log::info('Email de confirmation client envoyé avec succès pour cartes supplémentaires', [
+                    Log::info('Chap Chap Pay: Email client envoyé avec succès (cartes supplémentaires)', [
                         'order_id' => $order->id,
                         'order_number' => $order->order_number,
                         'additional_payment_id' => $additionalPayment->id,
                         'user_id' => $user->id,
                         'user_email' => $user->email,
                     ]);
-                } catch (\Exception $e) {
-                    \Log::error('Erreur lors de l\'envoi de l\'email de confirmation client pour cartes supplémentaires', [
-                        'error' => $e->getMessage(),
-                        'trace' => $e->getTraceAsString(),
+                } catch (\Throwable $e) {
+                    Log::error('Chap Chap Pay: Erreur envoi email client (cartes supplémentaires)', [
                         'order_id' => $order->id,
-                        'order_number' => $order->order_number,
-                        'additional_payment_id' => $additionalPayment->id,
-                        'user_id' => $user->id,
                         'user_email' => $user->email,
+                        'error' => $e->getMessage(),
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine(),
+                        'trace' => $e->getTraceAsString(),
+                        'additional_payment_id' => $additionalPayment->id,
                     ]);
                 }
 
                 // ✅ NOUVEAU: Envoyer l'email de notification au super admin pour les cartes supplémentaires
+                $adminEmail = 'charleshaba454@gmail.com';
+                Log::info('Chap Chap Pay: Envoi email admin (cartes supplémentaires)', [
+                    'order_id' => $order->id,
+                    'admin_email' => $adminEmail
+                ]);
+
                 try {
-                    $mailer = config('mail.default', 'log');
-                    \Log::info('Tentative d\'envoi email notification admin cartes supplémentaires - Configuration', [
-                        'mailer' => $mailer,
-                        'mail_from' => config('mail.from.address'),
-                        'mail_host' => config('mail.mailers.smtp.host'),
-                        'order_id' => $order->id,
-                        'additional_payment_id' => $additionalPayment->id,
-                        'admin_email' => 'charleshaba454@gmail.com',
-                    ]);
-
                     $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, true, $additionalPayment);
-                    \Mail::to('charleshaba454@gmail.com')->send($mailable);
+                    \Mail::to($adminEmail)->send($mailable);
 
-                    \Log::info('Email de notification admin envoyé avec succès pour cartes supplémentaires', [
+                    Log::info('Chap Chap Pay: Email admin envoyé avec succès (cartes supplémentaires)', [
                         'order_id' => $order->id,
                         'order_number' => $order->order_number,
                         'additional_payment_id' => $additionalPayment->id,
