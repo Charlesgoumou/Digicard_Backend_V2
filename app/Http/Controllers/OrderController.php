@@ -1742,6 +1742,14 @@ class OrderController extends Controller
     public function paymentWebhookAdditionalCards(Request $request)
     {
         try {
+            // ✅ Log initial pour confirmer que le webhook est appelé
+            Log::info('Chap Chap Pay: Webhook cartes supplémentaires appelé', [
+                'method' => $request->method(),
+                'content_type' => $request->header('Content-Type'),
+                'has_content' => strlen($request->getContent()) > 0,
+                'content_length' => strlen($request->getContent()),
+            ]);
+
             // 1. Tenter de récupérer les données (Méthode standard + Méthode brute fallback)
             $data = $request->all();
 
@@ -1749,7 +1757,8 @@ class OrderController extends Controller
             Log::info('Chap Chap Pay: Webhook cartes supplémentaires - Données via request->all()', [
                 'data' => $data,
                 'is_empty' => empty($data),
-                'count' => count($data)
+                'count' => count($data),
+                'data_type' => gettype($data)
             ]);
 
             // Vérifier si $data est un tableau avec une seule chaîne JSON (cas spécial de Chap Chap Pay)
