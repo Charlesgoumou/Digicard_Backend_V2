@@ -24,7 +24,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // C'est la partie manquante qui bloque ChapChap
         $middleware->validateCsrfTokens(except: [
             'api/payment/webhook',
+            'api/payment/webhook-additional-cards',
             'api/payment/callback', // Au cas où
+            'api/payment/simulate-webhook/*', // Routes de simulation pour développement
+            'api/payment/simulate-success/*', // Routes de simulation pour développement
             'payment/*',           // Sécurité supplémentaire
         ]);
 

@@ -2426,20 +2426,72 @@ class OrderController extends Controller
                             Log::error('Erreur lors de la création de la notification admin pour cartes supplémentaires: ' . $t->getMessage());
                         }
 
+                        // ✅ NOUVEAU: Envoyer l'email de confirmation au client pour les cartes supplémentaires
+                        try {
+                            Log::info('Tentative d\'envoi de l\'email client (cartes supplémentaires - validation automatique)', [
+                                'order_id' => $order->id,
+                                'user_email' => $user->email,
+                                'additional_payment_id' => $additionalPayment->id,
+                                'mailer' => config('mail.default', 'log'),
+                                'mail_host' => config('mail.mailers.smtp.host'),
+                                'mail_from' => config('mail.from.address'),
+                            ]);
+                            
+                            $clientMailable = new \App\Mail\AdditionalCardsAdded($order, $user, $additionalPayment);
+                            \Mail::to($user->email)->send($clientMailable);
+
+                            Log::info('Email client envoyé avec succès pour cartes supplémentaires (validation automatique)', [
+                                'order_id' => $order->id,
+                                'order_number' => $order->order_number,
+                                'additional_payment_id' => $additionalPayment->id,
+                                'user_id' => $user->id,
+                                'user_email' => $user->email,
+                                'mailer' => config('mail.default', 'log'),
+                            ]);
+                        } catch (\Throwable $e) {
+                            Log::error('Erreur lors de l\'envoi de l\'email client pour cartes supplémentaires (validation automatique)', [
+                                'order_id' => $order->id,
+                                'user_email' => $user->email,
+                                'error' => $e->getMessage(),
+                                'file' => $e->getFile(),
+                                'line' => $e->getLine(),
+                                'trace' => $e->getTraceAsString(),
+                                'additional_payment_id' => $additionalPayment->id,
+                                'mailer' => config('mail.default', 'log'),
+                            ]);
+                        }
+
                         // ✅ NOUVEAU: Envoyer l'email de notification au super admin
                         try {
+                            Log::info('Tentative d\'envoi de l\'email admin (cartes supplémentaires - validation automatique)', [
+                                'order_id' => $order->id,
+                                'admin_email' => 'charleshaba454@gmail.com',
+                                'additional_payment_id' => $additionalPayment->id,
+                                'mailer' => config('mail.default', 'log'),
+                                'mail_host' => config('mail.mailers.smtp.host'),
+                                'mail_from' => config('mail.from.address'),
+                            ]);
+                            
                             $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, true, $additionalPayment);
                             \Mail::to('charleshaba454@gmail.com')->send($mailable);
 
                             Log::info('Email de notification admin envoyé avec succès pour cartes supplémentaires (validation automatique)', [
                                 'order_id' => $order->id,
+                                'order_number' => $order->order_number,
                                 'additional_payment_id' => $additionalPayment->id,
+                                'admin_email' => 'charleshaba454@gmail.com',
+                                'mailer' => config('mail.default', 'log'),
                             ]);
                         } catch (\Exception $e) {
                             Log::error('Erreur lors de l\'envoi de l\'email de notification admin pour cartes supplémentaires (validation automatique)', [
                                 'error' => $e->getMessage(),
+                                'file' => $e->getFile(),
+                                'line' => $e->getLine(),
+                                'trace' => $e->getTraceAsString(),
                                 'order_id' => $order->id,
                                 'additional_payment_id' => $additionalPayment->id,
+                                'admin_email' => 'charleshaba454@gmail.com',
+                                'mailer' => config('mail.default', 'log'),
                             ]);
                         }
 
@@ -2683,25 +2735,73 @@ class OrderController extends Controller
                         Log::error('Erreur lors de la création de la notification admin pour cartes supplémentaires (route publique): ' . $t->getMessage());
                     }
 
+                    // ✅ NOUVEAU: Envoyer l'email de confirmation au client pour les cartes supplémentaires
+                    try {
+                        Log::info('Tentative d\'envoi de l\'email client (cartes supplémentaires - route publique)', [
+                            'order_id' => $order->id,
+                            'user_email' => $user->email,
+                            'additional_payment_id' => $additionalPayment->id,
+                            'mailer' => config('mail.default', 'log'),
+                            'mail_host' => config('mail.mailers.smtp.host'),
+                            'mail_from' => config('mail.from.address'),
+                        ]);
+                        
+                        $clientMailable = new \App\Mail\AdditionalCardsAdded($order, $user, $additionalPayment);
+                        \Mail::to($user->email)->send($clientMailable);
+
+                        Log::info('Email client envoyé avec succès pour cartes supplémentaires (route publique)', [
+                            'order_id' => $order->id,
+                            'order_number' => $order->order_number,
+                            'additional_payment_id' => $additionalPayment->id,
+                            'user_id' => $user->id,
+                            'user_email' => $user->email,
+                            'mailer' => config('mail.default', 'log'),
+                        ]);
+                    } catch (\Throwable $e) {
+                        Log::error('Erreur lors de l\'envoi de l\'email client pour cartes supplémentaires (route publique)', [
+                            'order_id' => $order->id,
+                            'user_email' => $user->email,
+                            'error' => $e->getMessage(),
+                            'file' => $e->getFile(),
+                            'line' => $e->getLine(),
+                            'trace' => $e->getTraceAsString(),
+                            'additional_payment_id' => $additionalPayment->id,
+                            'mailer' => config('mail.default', 'log'),
+                        ]);
+                    }
+
                     // ✅ NOUVEAU: Envoyer l'email de notification au super admin
                     try {
+                        Log::info('Tentative d\'envoi de l\'email admin (cartes supplémentaires - route publique)', [
+                            'order_id' => $order->id,
+                            'admin_email' => 'charleshaba454@gmail.com',
+                            'additional_payment_id' => $additionalPayment->id,
+                            'mailer' => config('mail.default', 'log'),
+                            'mail_host' => config('mail.mailers.smtp.host'),
+                            'mail_from' => config('mail.from.address'),
+                        ]);
+                        
                         $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, true, $additionalPayment);
                         \Mail::to('charleshaba454@gmail.com')->send($mailable);
 
                         Log::info('Email de notification admin envoyé avec succès pour cartes supplémentaires (route publique)', [
                             'order_id' => $order->id,
-                            'additional_payment_id' => $additionalPayment->id,
                             'order_number' => $order->order_number,
+                            'additional_payment_id' => $additionalPayment->id,
                             'user_id' => $user->id,
                             'admin_email' => 'charleshaba454@gmail.com',
+                            'mailer' => config('mail.default', 'log'),
                         ]);
                     } catch (\Exception $e) {
                         Log::error('Erreur lors de l\'envoi de l\'email de notification admin pour cartes supplémentaires (route publique)', [
                             'error' => $e->getMessage(),
+                            'file' => $e->getFile(),
+                            'line' => $e->getLine(),
                             'trace' => $e->getTraceAsString(),
                             'order_id' => $order->id,
                             'additional_payment_id' => $additionalPayment->id,
                             'admin_email' => 'charleshaba454@gmail.com',
+                            'mailer' => config('mail.default', 'log'),
                         ]);
                     }
 
@@ -3677,9 +3777,129 @@ class OrderController extends Controller
             return response()->json(['error' => 'Accès non autorisé'], 403);
         }
 
+        // ✅ IMPORTANT: Recharger la commande depuis la base de données pour avoir le statut à jour
+        $order->refresh();
+        
+        // ✅ VALIDATION AUTOMATIQUE: Si la commande est en attente en localhost, valider automatiquement
+        // (comme pour les cartes supplémentaires, pour avoir la même vitesse de validation)
+        if ($order->status === 'configured' && app()->environment('local')) {
+            // Calculer le temps depuis la création du paiement
+            $minutesSinceCreation = abs($order->created_at->diffInMinutes(now()));
+            
+            Log::info('Chap Chap Pay: Validation automatique de la commande (environnement local)', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'minutes_since_creation' => $minutesSinceCreation,
+            ]);
+            
+            // Valider automatiquement la commande (simuler le webhook)
+            try {
+                $order->update([
+                    'status' => 'validated',
+                    'subscription_start_date' => now()->format('Y-m-d'),
+                ]);
+                
+                $order->refresh();
+                
+                $user = $order->user;
+                
+                // Notification super admin
+                try {
+                    $profileUrl = url('/') . '/' . $user->username;
+                    if ($order->is_configured) {
+                        $profileUrl .= '?order=' . $order->id;
+                    }
+                    \App\Models\AdminNotification::create([
+                        'type' => 'order_validated',
+                        'user_id' => $user->id,
+                        'order_id' => $order->id,
+                        'message' => 'Commande validée par ' . $user->name . ' (#' . $order->order_number . ') [VALIDATION AUTOMATIQUE]',
+                        'url' => $profileUrl,
+                        'meta' => [
+                            'order_number' => $order->order_number,
+                            'total_price' => $order->total_price,
+                            'simulated' => true,
+                            'simulated_via' => 'automatic_validation',
+                        ],
+                    ]);
+                } catch (\Throwable $t) {
+                    Log::error('Erreur lors de la création de la notification admin (validation automatique): ' . $t->getMessage());
+                }
+                
+                // Email Client
+                try {
+                    Log::info('Tentative d\'envoi de l\'email client (validation automatique)', [
+                        'order_id' => $order->id,
+                        'user_email' => $user->email,
+                        'mailer' => config('mail.default', 'log'),
+                    ]);
+                    
+                    \Mail::to($user->email)->send(new \App\Mail\OrderValidated($order, $user));
+                    
+                    Log::info('Email client envoyé avec succès (validation automatique)', [
+                        'order_id' => $order->id,
+                        'user_email' => $user->email,
+                        'mailer' => config('mail.default', 'log'),
+                    ]);
+                } catch (\Throwable $emailError) {
+                    Log::error('Erreur lors de l\'envoi de l\'email client (validation automatique)', [
+                        'order_id' => $order->id,
+                        'user_email' => $user->email,
+                        'error' => $emailError->getMessage(),
+                        'mailer' => config('mail.default', 'log'),
+                    ]);
+                }
+                
+                // Email Admin
+                try {
+                    Log::info('Tentative d\'envoi de l\'email admin (validation automatique)', [
+                        'order_id' => $order->id,
+                        'admin_email' => 'charleshaba454@gmail.com',
+                        'mailer' => config('mail.default', 'log'),
+                    ]);
+                    
+                    $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
+                    \Mail::to('charleshaba454@gmail.com')->send($mailable);
+                    
+                    Log::info('Email admin envoyé avec succès (validation automatique)', [
+                        'order_id' => $order->id,
+                        'admin_email' => 'charleshaba454@gmail.com',
+                        'mailer' => config('mail.default', 'log'),
+                    ]);
+                } catch (\Throwable $emailError) {
+                    Log::error('Erreur lors de l\'envoi de l\'email admin (validation automatique)', [
+                        'order_id' => $order->id,
+                        'admin_email' => 'charleshaba454@gmail.com',
+                        'error' => $emailError->getMessage(),
+                        'mailer' => config('mail.default', 'log'),
+                    ]);
+                }
+                
+                Log::info('Chap Chap Pay: Commande validée automatiquement', [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Erreur lors de la validation automatique de la commande', [
+                    'order_id' => $order->id,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
+            }
+        }
+        
         // ✅ Retourner uniquement les informations essentielles pour le polling
         // Format standardisé pour faciliter la détection côté frontend
+        $order->refresh(); // Recharger après la validation automatique si elle a eu lieu
+        
         $isPaid = $order->status === 'validated';
+        
+        Log::info('getOrderStatus appelé', [
+            'order_id' => $order->id,
+            'order_number' => $order->order_number,
+            'status' => $order->status,
+            'is_paid' => $isPaid,
+        ]);
 
         return response()->json([
             'order_id' => $order->id,
@@ -3809,10 +4029,19 @@ class OrderController extends Controller
     public function simulateWebhook($orderId, Request $request)
     {
         // ✅ SÉCURITÉ: Interdire cette route en production
+        $environment = app()->environment();
+        Log::info('SimulateWebhook appelé', [
+            'order_id' => $orderId,
+            'environment' => $environment,
+            'is_local' => app()->environment('local'),
+            'is_development' => app()->environment('development'),
+            'allowed' => app()->environment('local', 'development'),
+        ]);
+        
         if (!app()->environment('local', 'development')) {
             Log::warning('Tentative d\'accès à simulateWebhook en production', [
                 'order_id' => $orderId,
-                'environment' => app()->environment(),
+                'environment' => $environment,
             ]);
             abort(403, 'Cette route n\'est disponible qu\'en développement');
         }
@@ -3890,17 +4119,69 @@ class OrderController extends Controller
 
                 // ✅ Envoyer l'email de confirmation au client
                 try {
+                    Log::info('Tentative d\'envoi de l\'email client (cartes supplémentaires - simulation webhook)', [
+                        'order_id' => $order->id,
+                        'user_email' => $user->email,
+                        'additional_payment_id' => $additionalPayment->id,
+                        'mailer' => config('mail.default', 'log'),
+                        'mail_host' => config('mail.mailers.smtp.host'),
+                        'mail_from' => config('mail.from.address'),
+                    ]);
+                    
                     $clientMailable = new \App\Mail\AdditionalCardsAdded($order, $user, $additionalPayment);
                     \Mail::to($user->email)->send($clientMailable);
 
                     Log::info('Email de confirmation client envoyé (simulation webhook)', [
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
                         'additional_payment_id' => $additionalPayment->id,
                         'user_email' => $user->email,
+                        'mailer' => config('mail.default', 'log'),
                     ]);
-                } catch (\Exception $e) {
+                } catch (\Throwable $e) {
                     Log::error('Erreur lors de l\'envoi de l\'email de confirmation client (simulation webhook)', [
+                        'order_id' => $order->id,
+                        'user_email' => $user->email,
                         'error' => $e->getMessage(),
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine(),
+                        'trace' => $e->getTraceAsString(),
                         'additional_payment_id' => $additionalPayment->id,
+                        'mailer' => config('mail.default', 'log'),
+                    ]);
+                }
+                
+                // ✅ Envoyer l'email de notification au super admin
+                try {
+                    Log::info('Tentative d\'envoi de l\'email admin (cartes supplémentaires - simulation webhook)', [
+                        'order_id' => $order->id,
+                        'admin_email' => 'charleshaba454@gmail.com',
+                        'additional_payment_id' => $additionalPayment->id,
+                        'mailer' => config('mail.default', 'log'),
+                        'mail_host' => config('mail.mailers.smtp.host'),
+                        'mail_from' => config('mail.from.address'),
+                    ]);
+                    
+                    $adminMailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, true, $additionalPayment);
+                    \Mail::to('charleshaba454@gmail.com')->send($adminMailable);
+
+                    Log::info('Email admin envoyé avec succès (cartes supplémentaires - simulation webhook)', [
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                        'additional_payment_id' => $additionalPayment->id,
+                        'admin_email' => 'charleshaba454@gmail.com',
+                        'mailer' => config('mail.default', 'log'),
+                    ]);
+                } catch (\Throwable $e) {
+                    Log::error('Erreur lors de l\'envoi de l\'email admin (cartes supplémentaires - simulation webhook)', [
+                        'order_id' => $order->id,
+                        'admin_email' => 'charleshaba454@gmail.com',
+                        'error' => $e->getMessage(),
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine(),
+                        'trace' => $e->getTraceAsString(),
+                        'additional_payment_id' => $additionalPayment->id,
+                        'mailer' => config('mail.default', 'log'),
                     ]);
                 }
 
@@ -3932,6 +4213,13 @@ class OrderController extends Controller
             // Si la commande n'est pas déjà validée, la valider
             $wasAlreadyValidated = $order->status === 'validated';
 
+            Log::info('SimulateWebhook - État de la commande avant mise à jour', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'current_status' => $order->status,
+                'was_already_validated' => $wasAlreadyValidated,
+            ]);
+
             if (!$wasAlreadyValidated) {
                 $order->update([
                     'status' => 'validated',
@@ -3940,12 +4228,18 @@ class OrderController extends Controller
 
                 // Recharger la commande pour avoir le statut à jour
                 $order->refresh();
+                
+                Log::info('SimulateWebhook - Commande mise à jour', [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'new_status' => $order->status,
+                    'status_from_db' => \App\Models\Order::find($order->id)->status,
+                ]);
 
                 $user = $order->user;
 
-                // Notifications (Email & Admin)
+                // Notification super admin : commande validée
                 try {
-                    // Notification super admin : commande validée
                     $profileUrl = url('/') . '/' . $user->username;
                     if ($order->is_configured) {
                         $profileUrl .= '?order=' . $order->id;
@@ -3963,20 +4257,75 @@ class OrderController extends Controller
                             'simulated_via' => 'webhook',
                         ],
                     ]);
-
-                    // Email Client
-                    \Mail::to($user->email)->send(new \App\Mail\OrderValidated($order, $user));
-
-                    // Email Admin
-                    $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
-                    \Mail::to('charleshaba454@gmail.com')->send($mailable);
-
-                    Log::info('Emails envoyés (simulation webhook)', [
+                    Log::info('Notification admin créée (simulation webhook)', [
                         'order_id' => $order->id,
-                        'user_email' => $user->email
                     ]);
                 } catch (\Throwable $t) {
-                    Log::error('Erreur lors de la création de la notification admin (simulation webhook): ' . $t->getMessage());
+                    Log::error('Erreur lors de la création de la notification admin (simulation webhook)', [
+                        'error' => $t->getMessage(),
+                        'trace' => $t->getTraceAsString(),
+                        'order_id' => $order->id,
+                    ]);
+                }
+
+                // Email Client
+                try {
+                    Log::info('Tentative d\'envoi de l\'email client (simulation webhook)', [
+                        'order_id' => $order->id,
+                        'user_email' => $user->email,
+                        'mailer' => config('mail.default', 'log'),
+                        'mail_host' => config('mail.mailers.smtp.host'),
+                        'mail_from' => config('mail.from.address'),
+                    ]);
+                    
+                    $mailable = new \App\Mail\OrderValidated($order, $user);
+                    \Mail::to($user->email)->send($mailable);
+                    
+                    Log::info('Email client envoyé avec succès (simulation webhook)', [
+                        'order_id' => $order->id,
+                        'user_email' => $user->email,
+                        'mailer' => config('mail.default', 'log'),
+                    ]);
+                } catch (\Throwable $emailError) {
+                    Log::error('Erreur lors de l\'envoi de l\'email client (simulation webhook)', [
+                        'order_id' => $order->id,
+                        'user_email' => $user->email,
+                        'error' => $emailError->getMessage(),
+                        'file' => $emailError->getFile(),
+                        'line' => $emailError->getLine(),
+                        'trace' => $emailError->getTraceAsString(),
+                        'mailer' => config('mail.default', 'log'),
+                    ]);
+                }
+
+                // Email Admin
+                try {
+                    Log::info('Tentative d\'envoi de l\'email admin (simulation webhook)', [
+                        'order_id' => $order->id,
+                        'admin_email' => 'charleshaba454@gmail.com',
+                        'mailer' => config('mail.default', 'log'),
+                        'mail_host' => config('mail.mailers.smtp.host'),
+                        'mail_from' => config('mail.from.address'),
+                    ]);
+                    
+                    $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
+                    \Mail::to('charleshaba454@gmail.com')->send($mailable);
+                    
+                    Log::info('Email admin envoyé avec succès (simulation webhook)', [
+                        'order_id' => $order->id,
+                        'admin_email' => 'charleshaba454@gmail.com',
+                        'mailer' => config('mail.default', 'log'),
+                    ]);
+                } catch (\Throwable $emailError) {
+                    Log::error('Erreur lors de l\'envoi de l\'email admin (simulation webhook)', [
+                        'order_id' => $order->id,
+                        'admin_email' => 'charleshaba454@gmail.com',
+                        'error' => $emailError->getMessage(),
+                        'file' => $emailError->getFile(),
+                        'line' => $emailError->getLine(),
+                        'trace' => $emailError->getTraceAsString(),
+                        'mailer' => config('mail.default', 'log'),
+                    ]);
                 }
 
                 Log::info('Webhook simulé avec succès - Commande validée', [

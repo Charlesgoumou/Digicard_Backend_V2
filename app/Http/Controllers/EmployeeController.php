@@ -269,7 +269,7 @@ class EmployeeController extends Controller
             $employee->delete();
 
             // Message de retour
-            $message = 'Employé supprimé avec succès.';
+            $message = 'Employé supprimé avec succès. Le compte de l\'employé a été supprimé de la plateforme et les slots sont maintenant disponibles pour assigner de nouveaux employés.';
             if (count($ordersToDelete) > 0) {
                 $message .= ' La commande associée a également été supprimée car il ne restait plus de personnel.';
             }
@@ -502,8 +502,13 @@ class EmployeeController extends Controller
                 ], 400);
             }
 
+            // ✅ NOUVEAU: Vérifier si l'employé n'a qu'une seule carte avant le retrait
+            $hadOnlyOneCard = $orderEmployee->card_quantity === 1;
+            $willHaveNoCards = $orderEmployee->card_quantity <= 1; // Après décrémentation, il n'aura plus de cartes
+
             // Décrémenter le nombre de cartes
             $orderEmployee->card_quantity -= 1;
+            $newCardQuantity = $orderEmployee->card_quantity;
 
             // Si le nombre de cartes tombe à 0, supprimer l'entrée
             if ($orderEmployee->card_quantity <= 0) {
@@ -512,6 +517,101 @@ class EmployeeController extends Controller
             } else {
                 $orderEmployee->save();
                 $message = 'Carte retirée avec succès. L\'employé a maintenant ' . $orderEmployee->card_quantity . ' carte(s).';
+            }
+
+            // ✅ NOUVEAU: Si l'employé n'avait qu'une seule carte et qu'on l'a retirée, vérifier s'il a d'autres cartes
+            // Si non, supprimer son compte de la plateforme
+            if ($hadOnlyOneCard && $newCardQuantity <= 0) {
+                // Recharger l'employé depuis la base de données pour avoir les données à jour
+                $employee->refresh();
+
+                // Vérifier si cet employé a des cartes dans d'autres commandes
+                $otherOrderEmployees = \App\Models\OrderEmployee::where('employee_id', $employee->id)
+                    ->where('order_id', '!=', $latestOrder->id)
+                    ->get();
+
+                $hasOtherCards = false;
+                foreach ($otherOrderEmployees as $otherOrderEmployee) {
+                    if ($otherOrderEmployee->card_quantity > 0) {
+                        $hasOtherCards = true;
+                        break;
+                    }
+                }
+
+                // Si l'employé n'a plus de cartes nulle part, supprimer son compte
+                if (!$hasOtherCards) {
+                    Log::info('Suppression du compte employé après retrait de sa dernière carte', [
+                        'employee_id' => $employee->id,
+                        'employee_email' => $employee->email,
+                        'order_id' => $latestOrder->id,
+                    ]);
+
+                    // ✅ NOUVEAU: Libérer le slot de cet employé dans la commande
+                    if ($latestOrder->employee_slots && is_array($latestOrder->employee_slots)) {
+                        $slots = $latestOrder->employee_slots;
+                        foreach ($slots as $index => $slot) {
+                            if (isset($slot['employee_id']) && $slot['employee_id'] == $employee->id) {
+                                $slots[$index]['employee_id'] = null;
+                                $slots[$index]['employee_name'] = null;
+                                $slots[$index]['employee_email'] = null;
+                                $slots[$index]['is_assigned'] = false;
+                                $slots[$index]['is_configured'] = false;
+                                $slots[$index]['cards_quantity'] = 0;
+                            }
+                        }
+                        $latestOrder->employee_slots = $slots;
+                        $latestOrder->save();
+
+                        Log::info('Slot libéré après suppression de l\'employé', [
+                            'employee_id' => $employee->id,
+                            'order_id' => $latestOrder->id,
+                        ]);
+                    }
+
+                    // Sauvegarder les informations avant suppression pour l'email
+                    $employeeId = $employee->id;
+                    $employeeEmail = $employee->email;
+                    $employeeName = $employee->name;
+                    $companyName = $employee->company_name;
+
+                    // Envoyer un email de notification à l'employé
+                    try {
+                        Mail::to($employeeEmail)->send(new EmployeeDeletionNotification(
+                            $employeeName,
+                            $companyName
+                        ));
+                        Log::info('Email de suppression envoyé à ' . $employeeEmail . ' (retrait de carte)');
+                    } catch (\Throwable $t) {
+                        Log::error("Échec de l'envoi de l'email de suppression à " . $employeeEmail . ": " . $t->getMessage());
+                        // On continue même si l'email échoue
+                    }
+
+                    // Révoquer les tokens de l'employé (empêche toute connexion future)
+                    $employee->tokens()->delete();
+
+                    // Supprimer l'avatar de l'employé s'il existe
+                    if ($employee->avatar_url) {
+                        $oldPath = preg_replace('#^/api/storage/#', '', $employee->avatar_url);
+                        $oldPath = preg_replace('#^/storage/#', '', $oldPath);
+                        $oldPath = preg_replace('#^https?://[^/]+/(api/)?storage/#', '', $oldPath);
+                        if (Storage::disk('public')->exists($oldPath)) {
+                            Storage::disk('public')->delete($oldPath);
+                        }
+                    }
+
+                    // Supprimer toutes les OrderEmployee entries restantes pour cet employé
+                    \App\Models\OrderEmployee::where('employee_id', $employeeId)->delete();
+
+                    // Supprimer l'employé de la base de données
+                    $employee->delete();
+
+                    $message = 'Dernière carte retirée. Le compte de l\'employé a été supprimé de la plateforme car il n\'avait plus de cartes. Le slot est maintenant disponible pour assigner un nouvel employé.';
+
+                    Log::info('Compte employé supprimé après retrait de sa dernière carte', [
+                        'employee_id' => $employeeId,
+                        'employee_email' => $employeeEmail,
+                    ]);
+                }
             }
 
             // Mettre à jour aussi le champ JSON employee_slots
@@ -597,32 +697,69 @@ class EmployeeController extends Controller
                 return response()->json(['message' => 'Slot non trouvé.'], 404);
             }
 
-            // Vérifier si le slot est déjà assigné
-            if (isset($slots[$slotIndex]['is_assigned']) && $slots[$slotIndex]['is_assigned']) {
-                return response()->json(['message' => 'Ce slot est déjà assigné.'], 400);
-            }
+            // ✅ LOGIQUE SIMPLIFIÉE: Vérifier si le slot est déjà assigné
+// Un slot est assigné seulement s'il a un employee_id valide dans order_employees avec des cartes
+$slot = $slots[$slotIndex];
+$isSlotAssigned = false;
 
-            // Vérifier si cet email est déjà utilisé par un autre employé actif de cet admin
-            $existingEmployee = User::where('email', $validated['employee_email'])
-                ->where('role', 'employee')
-                ->where('business_admin_id', $admin->id)
-                ->first();
+// Vérifier si le slot a un employee_id
+if (isset($slot['employee_id']) && $slot['employee_id']) {
+    // Vérifier si l'employé existe toujours dans order_employees avec des cartes
+    $orderEmployee = \App\Models\OrderEmployee::where('order_id', $order->id)
+        ->where('employee_id', $slot['employee_id'])
+        ->where('card_quantity', '>', 0)
+        ->first();
 
-            if ($existingEmployee) {
-                // Vérifier si cet employé est déjà assigné à une autre commande active
-                $existingAssignment = \App\Models\OrderEmployee::where('employee_id', $existingEmployee->id)
-                    ->whereHas('order', function($query) {
-                        $query->where('status', '!=', 'cancelled');
-                    })
-                    ->exists();
+    if ($orderEmployee) {
+        $isSlotAssigned = true; // L'employé existe toujours et a des cartes
 
-                if ($existingAssignment) {
-                    return response()->json([
-                        'message' => 'Cette adresse email est déjà utilisée par un autre personnel actif. Veuillez utiliser une adresse email différente.'
-                    ], 400);
-                }
-            }
+        Log::info('assignSlot - Slot déjà assigné', [
+            'slot_number' => $slotNumber,
+            'employee_id' => $slot['employee_id'],
+            'employee_name' => $orderEmployee->employee_name,
+            'card_quantity' => $orderEmployee->card_quantity,
+        ]);
+    } else {
+        // L'employé n'existe plus ou n'a plus de cartes, le slot est libre
+        Log::info('assignSlot - Slot libre (employé supprimé ou sans cartes)', [
+            'slot_number' => $slotNumber,
+            'old_employee_id' => $slot['employee_id'],
+        ]);
+    }
+}
 
+if ($isSlotAssigned) {
+    return response()->json(['message' => 'Ce slot est déjà assigné.'], 400);
+}
+
+
+// Vérifier si cet email est déjà utilisé par un autre employé actif de cet admin
+$existingEmployee = User::where('email', $validated['employee_email'])
+    ->where('role', 'employee')
+    ->where('business_admin_id', $admin->id)
+    ->first();
+
+if ($existingEmployee) {
+    // ✅ NOUVEAU: Vérifier si cet employé est déjà assigné à CETTE commande (même commande)
+    $alreadyInThisOrder = \App\Models\OrderEmployee::where('employee_id', $existingEmployee->id)
+        ->where('order_id', $order->id)
+        ->exists();
+
+    if ($alreadyInThisOrder) {
+        return response()->json([
+            'message' => 'Cet employé est déjà assigné à cette commande.'
+        ], 400);
+    }
+
+    // ✅ AUTORISER la réassignation pour une NOUVELLE commande
+    // L'employé peut être réutilisé dans plusieurs commandes différentes
+    Log::info('Réutilisation d\'un employé existant pour une nouvelle commande', [
+        'employee_id' => $existingEmployee->id,
+        'employee_email' => $existingEmployee->email,
+        'order_id' => $order->id,
+        'order_number' => $order->order_number,
+    ]);
+}
             // Créer ou récupérer l'employé
             $employee = User::where('email', $validated['employee_email'])->first();
 
@@ -650,24 +787,50 @@ class EmployeeController extends Controller
                     'password_reset_required' => true, // Forcer le changement de mot de passe
                 ]);
 
-                // Envoyer l'email de bienvenue
-                try {
-                    $loginUrl = config('app.url_frontend', 'https://digicard.arccenciel.com/');
-                    Mail::to($employee->email)->send(new EmployeeWelcomeMail(
-                        $temporaryPassword,
-                        $employee->email,
-                        $employee->company_name,
-                        $loginUrl
-                    ));
-                } catch (\Throwable $t) {
-                    Log::error("Échec de l'envoi de l'email à " . $employee->email . ": " . $t->getMessage());
-                }
-            } else {
-                // Vérifier que l'employé appartient bien à cet admin
-                if ($employee->business_admin_id !== $admin->id) {
-                    return response()->json(['message' => 'Cet email appartient à un autre compte.'], 400);
-                }
-            }
+                                // Envoyer l'email de bienvenue
+                                try {
+                                    $loginUrl = config('app.url_frontend', 'https://digicard.arccenciel.com/');
+                                    Mail::to($employee->email)->send(new EmployeeWelcomeMail(
+                                        $temporaryPassword,
+                                        $employee->email,
+                                        $employee->company_name,
+                                        $loginUrl
+                                    ));
+
+                                    // ✅ AJOUT: Log pour confirmer l'envoi
+                                    Log::info('Email de bienvenue envoyé au nouvel employé', [
+                                        'employee_email' => $employee->email,
+                                        'order_id' => $order->id,
+                                    ]);
+                                } catch (\Throwable $t) {
+                                    Log::error("Échec de l'envoi de l'email à " . $employee->email . ": " . $t->getMessage());
+                                }
+                            } else {
+                                // Vérifier que l'employé appartient bien à cet admin
+                                if ($employee->business_admin_id !== $admin->id) {
+                                    return response()->json(['message' => 'Cet email appartient à un autre compte.'], 400);
+                                }
+
+                                // ✅ NOUVEAU: Email pour employé existant recevant de nouvelles cartes
+                                try {
+                                    $loginUrl = config('app.url_frontend', 'https://digicard.arccenciel.com/');
+                                    Mail::to($employee->email)->send(new \App\Mail\EmployeeNewCardsNotification(
+                                        $employee->name,
+                                        $slots[$slotIndex]['cards_quantity'],
+                                        $order->order_number,
+                                        $employee->company_name,
+                                        $loginUrl
+                                    ));
+
+                                    Log::info('Email de nouvelles cartes envoyé à l\'employé existant', [
+                                        'employee_email' => $employee->email,
+                                        'order_number' => $order->order_number,
+                                        'card_quantity' => $slots[$slotIndex]['cards_quantity'],
+                                    ]);
+                                } catch (\Throwable $t) {
+                                    Log::error("Échec de l'envoi de l'email de nouvelles cartes à " . $employee->email . ": " . $t->getMessage());
+                                }
+                            }
 
             // Mettre à jour le slot
             $slots[$slotIndex]['employee_id'] = $employee->id;
@@ -681,12 +844,28 @@ class EmployeeController extends Controller
                 $slots[$slotIndex]['cards_quantity'] = 1; // Par défaut 1 carte
             }
 
+            // ✅ NOUVEAU: Si le slot avait un ancien employee_id différent, supprimer l'ancien OrderEmployee
+            $oldEmployeeId = $slot['employee_id'] ?? null;
+            if ($oldEmployeeId && $oldEmployeeId != $employee->id) {
+                // Supprimer l'ancien OrderEmployee pour ce slot
+                \App\Models\OrderEmployee::where('order_id', $order->id)
+                    ->where('employee_id', $oldEmployeeId)
+                    ->delete();
+
+                Log::info('Ancien OrderEmployee supprimé lors de la réassignation du slot', [
+                    'order_id' => $order->id,
+                    'slot_number' => $slotNumber,
+                    'old_employee_id' => $oldEmployeeId,
+                    'new_employee_id' => $employee->id,
+                ]);
+            }
+
             // Sauvegarder les slots mis à jour
             $order->employee_slots = $slots;
             $order->save();
 
-            // Créer l'entrée OrderEmployee
-            $orderEmployee = \App\Models\OrderEmployee::firstOrCreate(
+            // Créer l'entrée OrderEmployee (ou mettre à jour si elle existe déjà)
+            $orderEmployee = \App\Models\OrderEmployee::updateOrCreate(
                 [
                     'order_id' => $order->id,
                     'employee_id' => $employee->id,
@@ -694,7 +873,7 @@ class EmployeeController extends Controller
                 [
                     'employee_email' => $employee->email,
                     'employee_name' => $employee->name,
-                    'card_quantity' => $slots[$slotIndex]['cards_quantity'],
+                    'card_quantity' => max(1, $slots[$slotIndex]['cards_quantity']), // ✅ MINIMUM 1 carte
                     'is_configured' => false,
                 ]
             );
