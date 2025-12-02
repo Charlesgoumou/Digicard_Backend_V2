@@ -2212,6 +2212,11 @@ class OrderController extends Controller
         try {
             $additionalPayment = \App\Models\AdditionalCardPayment::find($additionalPaymentId);
 
+            // ✅ FORCER LE RECHARGEMENT depuis la base de données (éviter le cache)
+            if ($additionalPayment) {
+                $additionalPayment->refresh();
+            }
+
             if (!$additionalPayment) {
                 return response()->json([
                     'message' => 'Paiement supplémentaire non trouvé.',
@@ -2267,9 +2272,9 @@ class OrderController extends Controller
                     'environment' => app()->environment(),
                 ]);
 
-                // ✅ VALIDATION AUTOMATIQUE: Si on est en local ou si le paiement est récent
-                // En production, le webhook devrait normalement être appelé par Chap Chap Pay,
-                // mais on traite automatiquement comme fallback si le paiement est récent et toujours pending
+                // ✅ VALIDATION AUTOMATIQUE: UNIQUEMENT en local
+                // En production, seul le webhook de Chap Chap Pay doit valider les paiements
+                // Cela évite de valider des paiements avant que l'utilisateur ait effectivement payé
                 $shouldProcess = false;
 
                 if (app()->environment('local')) {
@@ -2279,27 +2284,15 @@ class OrderController extends Controller
                         'additional_payment_id' => $additionalPayment->id,
                         'order_id' => $order->id,
                     ]);
-                } elseif ($minutesSinceCreation < 120) {
-                    // En production, traiter si le paiement est récent (moins de 2 heures)
-                    // Cela sert de fallback si le webhook n'a pas été appelé ou a échoué
-                    // On attend un peu plus qu'en local pour laisser le temps au webhook de s'exécuter
-                    $shouldProcess = true;
-                    Log::info('Chap Chap Pay: Traitement automatique du paiement supplémentaire (production - fallback, paiement récent)', [
-                        'additional_payment_id' => $additionalPayment->id,
-                        'order_id' => $order->id,
-                        'order_number' => $order->order_number,
-                        'minutes_since_creation' => $minutesSinceCreation,
-                        'note' => 'Webhook peut ne pas avoir été appelé ou avoir échoué, traitement automatique comme fallback',
-                    ]);
                 } else {
-                    // Paiement trop ancien, ne pas traiter automatiquement
-                    // L'utilisateur devra contacter le support ou le webhook sera appelé plus tard
-                    Log::warning('Chap Chap Pay: Paiement supplémentaire trop ancien pour traitement automatique', [
+                    // ✅ EN PRODUCTION: Ne JAMAIS valider automatiquement
+                    // Seul le webhook de Chap Chap Pay doit valider le paiement après confirmation du paiement réel
+                    Log::info('Chap Chap Pay: Paiement supplémentaire en attente (production - attente du webhook)', [
                         'additional_payment_id' => $additionalPayment->id,
                         'order_id' => $order->id,
                         'order_number' => $order->order_number,
                         'minutes_since_creation' => $minutesSinceCreation,
-                        'note' => 'Le webhook devrait normalement traiter ce paiement. Si le statut reste pending, contacter le support.',
+                        'note' => 'Le webhook de Chap Chap Pay validera le paiement après confirmation du paiement réel',
                     ]);
                 }
 
@@ -2436,7 +2429,7 @@ class OrderController extends Controller
                                 'mail_host' => config('mail.mailers.smtp.host'),
                                 'mail_from' => config('mail.from.address'),
                             ]);
-                            
+
                             $clientMailable = new \App\Mail\AdditionalCardsAdded($order, $user, $additionalPayment);
                             \Mail::to($user->email)->send($clientMailable);
 
@@ -2471,7 +2464,7 @@ class OrderController extends Controller
                                 'mail_host' => config('mail.mailers.smtp.host'),
                                 'mail_from' => config('mail.from.address'),
                             ]);
-                            
+
                             $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, true, $additionalPayment);
                             \Mail::to('charleshaba454@gmail.com')->send($mailable);
 
@@ -2572,6 +2565,11 @@ class OrderController extends Controller
         try {
             $additionalPayment = \App\Models\AdditionalCardPayment::find($additionalPaymentId);
 
+            // ✅ FORCER LE RECHARGEMENT depuis la base de données (éviter le cache)
+            if ($additionalPayment) {
+                $additionalPayment->refresh();
+            }
+
             if (!$additionalPayment) {
                 return response()->json([
                     'message' => 'Paiement supplémentaire non trouvé.',
@@ -2612,18 +2610,19 @@ class OrderController extends Controller
                     'environment' => app()->environment(),
                 ]);
 
-                // ✅ VALIDATION AUTOMATIQUE: En local ou si le paiement est récent
+                // ✅ VALIDATION AUTOMATIQUE: UNIQUEMENT en local (route publique)
+                // En production, seul le webhook de Chap Chap Pay doit valider les paiements
                 $shouldProcess = false;
 
                 if (app()->environment('local')) {
                     $shouldProcess = true;
-                    Log::info('Chap Chap Pay: Traitement automatique du paiement supplémentaire (environnement local)', [
+                    Log::info('Chap Chap Pay: Traitement automatique du paiement supplémentaire (environnement local - route publique)', [
                         'additional_payment_id' => $additionalPayment->id,
                         'order_id' => $order->id,
                     ]);
-                } elseif ($minutesSinceCreation < 120) {
-                    $shouldProcess = true;
-                    Log::info('Chap Chap Pay: Traitement automatique du paiement supplémentaire (production - fallback)', [
+                } else {
+                    // ✅ EN PRODUCTION: Ne JAMAIS valider automatiquement (route publique)
+                    Log::info('Chap Chap Pay: Paiement supplémentaire en attente (production - route publique - attente du webhook)', [
                         'additional_payment_id' => $additionalPayment->id,
                         'order_id' => $order->id,
                         'order_number' => $order->order_number,
@@ -2745,7 +2744,7 @@ class OrderController extends Controller
                             'mail_host' => config('mail.mailers.smtp.host'),
                             'mail_from' => config('mail.from.address'),
                         ]);
-                        
+
                         $clientMailable = new \App\Mail\AdditionalCardsAdded($order, $user, $additionalPayment);
                         \Mail::to($user->email)->send($clientMailable);
 
@@ -2780,7 +2779,7 @@ class OrderController extends Controller
                             'mail_host' => config('mail.mailers.smtp.host'),
                             'mail_from' => config('mail.from.address'),
                         ]);
-                        
+
                         $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, true, $additionalPayment);
                         \Mail::to('charleshaba454@gmail.com')->send($mailable);
 
@@ -3779,30 +3778,30 @@ class OrderController extends Controller
 
         // ✅ IMPORTANT: Recharger la commande depuis la base de données pour avoir le statut à jour
         $order->refresh();
-        
+
         // ✅ VALIDATION AUTOMATIQUE: Si la commande est en attente en localhost, valider automatiquement
         // (comme pour les cartes supplémentaires, pour avoir la même vitesse de validation)
         if ($order->status === 'configured' && app()->environment('local')) {
             // Calculer le temps depuis la création du paiement
             $minutesSinceCreation = abs($order->created_at->diffInMinutes(now()));
-            
+
             Log::info('Chap Chap Pay: Validation automatique de la commande (environnement local)', [
                 'order_id' => $order->id,
                 'order_number' => $order->order_number,
                 'minutes_since_creation' => $minutesSinceCreation,
             ]);
-            
+
             // Valider automatiquement la commande (simuler le webhook)
             try {
                 $order->update([
                     'status' => 'validated',
                     'subscription_start_date' => now()->format('Y-m-d'),
                 ]);
-                
+
                 $order->refresh();
-                
+
                 $user = $order->user;
-                
+
                 // Notification super admin
                 try {
                     $profileUrl = url('/') . '/' . $user->username;
@@ -3825,7 +3824,7 @@ class OrderController extends Controller
                 } catch (\Throwable $t) {
                     Log::error('Erreur lors de la création de la notification admin (validation automatique): ' . $t->getMessage());
                 }
-                
+
                 // Email Client
                 try {
                     Log::info('Tentative d\'envoi de l\'email client (validation automatique)', [
@@ -3833,9 +3832,9 @@ class OrderController extends Controller
                         'user_email' => $user->email,
                         'mailer' => config('mail.default', 'log'),
                     ]);
-                    
+
                     \Mail::to($user->email)->send(new \App\Mail\OrderValidated($order, $user));
-                    
+
                     Log::info('Email client envoyé avec succès (validation automatique)', [
                         'order_id' => $order->id,
                         'user_email' => $user->email,
@@ -3849,7 +3848,7 @@ class OrderController extends Controller
                         'mailer' => config('mail.default', 'log'),
                     ]);
                 }
-                
+
                 // Email Admin
                 try {
                     Log::info('Tentative d\'envoi de l\'email admin (validation automatique)', [
@@ -3857,10 +3856,10 @@ class OrderController extends Controller
                         'admin_email' => 'charleshaba454@gmail.com',
                         'mailer' => config('mail.default', 'log'),
                     ]);
-                    
+
                     $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
                     \Mail::to('charleshaba454@gmail.com')->send($mailable);
-                    
+
                     Log::info('Email admin envoyé avec succès (validation automatique)', [
                         'order_id' => $order->id,
                         'admin_email' => 'charleshaba454@gmail.com',
@@ -3874,7 +3873,7 @@ class OrderController extends Controller
                         'mailer' => config('mail.default', 'log'),
                     ]);
                 }
-                
+
                 Log::info('Chap Chap Pay: Commande validée automatiquement', [
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
@@ -3887,13 +3886,13 @@ class OrderController extends Controller
                 ]);
             }
         }
-        
+
         // ✅ Retourner uniquement les informations essentielles pour le polling
         // Format standardisé pour faciliter la détection côté frontend
         $order->refresh(); // Recharger après la validation automatique si elle a eu lieu
-        
+
         $isPaid = $order->status === 'validated';
-        
+
         Log::info('getOrderStatus appelé', [
             'order_id' => $order->id,
             'order_number' => $order->order_number,
@@ -4037,7 +4036,7 @@ class OrderController extends Controller
             'is_development' => app()->environment('development'),
             'allowed' => app()->environment('local', 'development'),
         ]);
-        
+
         if (!app()->environment('local', 'development')) {
             Log::warning('Tentative d\'accès à simulateWebhook en production', [
                 'order_id' => $orderId,
@@ -4127,7 +4126,7 @@ class OrderController extends Controller
                         'mail_host' => config('mail.mailers.smtp.host'),
                         'mail_from' => config('mail.from.address'),
                     ]);
-                    
+
                     $clientMailable = new \App\Mail\AdditionalCardsAdded($order, $user, $additionalPayment);
                     \Mail::to($user->email)->send($clientMailable);
 
@@ -4150,7 +4149,7 @@ class OrderController extends Controller
                         'mailer' => config('mail.default', 'log'),
                     ]);
                 }
-                
+
                 // ✅ Envoyer l'email de notification au super admin
                 try {
                     Log::info('Tentative d\'envoi de l\'email admin (cartes supplémentaires - simulation webhook)', [
@@ -4161,7 +4160,7 @@ class OrderController extends Controller
                         'mail_host' => config('mail.mailers.smtp.host'),
                         'mail_from' => config('mail.from.address'),
                     ]);
-                    
+
                     $adminMailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, true, $additionalPayment);
                     \Mail::to('charleshaba454@gmail.com')->send($adminMailable);
 
@@ -4228,7 +4227,7 @@ class OrderController extends Controller
 
                 // Recharger la commande pour avoir le statut à jour
                 $order->refresh();
-                
+
                 Log::info('SimulateWebhook - Commande mise à jour', [
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
@@ -4277,10 +4276,10 @@ class OrderController extends Controller
                         'mail_host' => config('mail.mailers.smtp.host'),
                         'mail_from' => config('mail.from.address'),
                     ]);
-                    
+
                     $mailable = new \App\Mail\OrderValidated($order, $user);
                     \Mail::to($user->email)->send($mailable);
-                    
+
                     Log::info('Email client envoyé avec succès (simulation webhook)', [
                         'order_id' => $order->id,
                         'user_email' => $user->email,
@@ -4307,10 +4306,10 @@ class OrderController extends Controller
                         'mail_host' => config('mail.mailers.smtp.host'),
                         'mail_from' => config('mail.from.address'),
                     ]);
-                    
+
                     $mailable = new \App\Mail\AdminOrderPaymentNotification($order, $user, false);
                     \Mail::to('charleshaba454@gmail.com')->send($mailable);
-                    
+
                     Log::info('Email admin envoyé avec succès (simulation webhook)', [
                         'order_id' => $order->id,
                         'admin_email' => 'charleshaba454@gmail.com',
