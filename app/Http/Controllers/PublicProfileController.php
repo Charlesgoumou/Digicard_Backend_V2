@@ -21,12 +21,12 @@ class PublicProfileController extends Controller
     public function show(Request $request, User $user)
     {
         $orderId = $request->query('order');
-        
+
         // IMPORTANT: Le token peut contenir des caractères spéciaux comme & qui sont interprétés comme des séparateurs de paramètres
         // Récupérer le token depuis la chaîne de requête complète pour éviter la troncature
         $accessToken = $request->query('token');
         $queryString = $request->getQueryString();
-        
+
         // Si un token est présent dans l'URL, essayer de le récupérer depuis la chaîne de requête complète
         // car $request->query('token') peut être tronqué si le token contient des &
         if ($queryString && strpos($queryString, 'token=') !== false) {
@@ -34,12 +34,12 @@ class PublicProfileController extends Controller
             // alors tout ce qui suit jusqu'à la fin est le token (les & font partie du token)
             if (preg_match('/[?&]token=(.+)$/', $queryString, $matches)) {
                 $fullToken = urldecode($matches[1]);
-                
+
                 // Si le token extrait est plus long que celui obtenu via query('token'),
                 // c'est probablement le token complet
                 if (strlen($fullToken) > strlen($accessToken ?? '')) {
                     $accessToken = $fullToken;
-                    
+
                     Log::info("PublicProfileController: Token complet récupéré depuis queryString", [
                         'token_from_query' => $request->query('token'),
                         'token_complet' => $accessToken,
@@ -55,7 +55,7 @@ class PublicProfileController extends Controller
                 }
             }
         }
-        
+
         $order = null;
         $orderEmployee = null;
 
@@ -65,7 +65,7 @@ class PublicProfileController extends Controller
             // Décoder le token pour s'assurer qu'il correspond à celui en base de données
             // Le token peut déjà être décodé si récupéré depuis getQueryString()
             $decodedToken = urldecode($accessToken);
-            
+
             Log::info("PublicProfileController: Recherche de commande par token", [
                 'access_token_raw' => $accessToken,
                 'access_token_decoded' => $decodedToken,
@@ -75,19 +75,19 @@ class PublicProfileController extends Controller
                 'user_role' => $user->role,
                 'query_string' => $request->getQueryString(),
             ]);
-            
+
             // Essayer d'abord avec le token décodé
             $order = Order::where('access_token', $decodedToken)
                 ->where('status', 'validated')
                 ->first();
-            
+
             // Si pas trouvé, essayer avec le token brut (au cas où il n'est pas encodé)
             if (!$order) {
                 $order = Order::where('access_token', $accessToken)
                     ->where('status', 'validated')
                     ->first();
             }
-            
+
             // Si toujours pas trouvé, essayer sans le filtre de statut (au cas où la commande n'est pas encore validée)
             if (!$order) {
                 $order = Order::where('access_token', $decodedToken)->first();
@@ -95,15 +95,15 @@ class PublicProfileController extends Controller
                     $order = Order::where('access_token', $accessToken)->first();
                 }
             }
-            
+
             if ($order) {
                 $orderId = $order->id;
-                
+
                 // IMPORTANT: Toujours utiliser la commande trouvée par token, même si elle n'est pas configurée
                 // Ne pas la remplacer par une autre commande, car l'utilisateur a cliqué sur une commande spécifique
                 // Forcer le rechargement complet pour avoir toutes les données à jour
                 $order->refresh();
-                
+
                 Log::info("PublicProfileController: Commande trouvée par token (utilisée tel quel)", [
                     'order_id' => $orderId,
                     'order_number' => $order->order_number,
@@ -122,7 +122,7 @@ class PublicProfileController extends Controller
                     'user_id' => $user->id,
                     'user_username' => $user->username,
                 ]);
-                
+
                 // Essayer de trouver la commande via order_employees pour cet utilisateur
                 // au cas où le token serait incorrect mais qu'on peut trouver la commande autrement
                 if ($user->role === 'employee' || $user->role === 'business_admin') {
@@ -130,7 +130,7 @@ class PublicProfileController extends Controller
                         ->where('is_configured', true)
                         ->orderBy('id', 'desc')
                         ->first();
-                    
+
                     if ($orderEmployeeFallback) {
                         $order = Order::find($orderEmployeeFallback->order_id);
                         if ($order) {
@@ -164,7 +164,7 @@ class PublicProfileController extends Controller
                     if (!$order) {
                         $order = Order::find($orderId);
                     }
-                    
+
                     // IMPORTANT: Logger les données pour déboguer
                     Log::info("PublicProfileController: orderEmployee trouvé", [
                         'order_id' => $orderId,
@@ -177,7 +177,7 @@ class PublicProfileController extends Controller
                         'employee_name' => $orderEmployee->employee_name,
                         'is_configured' => $orderEmployee->is_configured,
                     ]);
-                    
+
                     // IMPORTANT: S'assurer que les données de profil sont bien présentes
                     // Si profile_name ou profile_title sont vides, logger pour déboguer
                     if (empty($orderEmployee->profile_name) && empty($orderEmployee->profile_title)) {
@@ -219,7 +219,7 @@ class PublicProfileController extends Controller
                         // Forcer le rechargement complet depuis la base de données pour s'assurer que toutes les colonnes sont chargées
                         // IMPORTANT: Même si is_configured = false, on doit quand même charger cette commande spécifique
                         $order->refresh();
-                        
+
                         Log::info("PublicProfileController: Commande spécifique chargée (via token/orderId)", [
                             'order_id' => $order->id,
                             'order_number' => $order->order_number,
@@ -238,12 +238,12 @@ class PublicProfileController extends Controller
                     // IMPORTANT: Ne pas filtrer par user_id non plus si c'est un admin qui accède au profil
                     $order = Order::where('id', $orderId)
                         ->first(); // Ne pas filtrer par user_id pour permettre aux admins de voir tous les profils
-                    
+
                     if ($order) {
                         // Vérifier que l'utilisateur peut accéder à cette commande
                         // (soit c'est sa commande, soit c'est un admin)
                         $canAccess = ($order->user_id === $user->id) || ($user->role === 'super_admin');
-                        
+
                         if (!$canAccess) {
                             Log::warning("PublicProfileController: Accès refusé à la commande", [
                                 'order_id' => $orderId,
@@ -255,7 +255,7 @@ class PublicProfileController extends Controller
                         } else {
                             // Forcer le rechargement complet depuis la base de données
                             $order->refresh();
-                            
+
                             Log::info("PublicProfileController: Commande chargée par orderId explicite", [
                                 'order_id' => $order->id,
                                 'order_number' => $order->order_number,
@@ -278,11 +278,11 @@ class PublicProfileController extends Controller
                 }
             }
         }
-        
+
         // IMPORTANT: Si un orderId ou token a été fourni dans l'URL, on NE DOIT PAS chercher une autre commande
         // même si la commande trouvée n'est pas configurée. On utilise celle qui a été spécifiée.
         $orderIdOrTokenProvided = !is_null($orderId) || !is_null($accessToken);
-        
+
         // Pour les comptes individuels, si aucun order n'a été trouvé avec orderId ou token,
         // ET qu'aucun orderId/token n'a été fourni dans l'URL, chercher la dernière commande configurée
         if (!$order && $user->role === 'individual' && !$orderIdOrTokenProvided) {
@@ -291,7 +291,7 @@ class PublicProfileController extends Controller
                 ->where('is_configured', true)
                 ->orderBy('updated_at', 'desc')
                 ->get(['id', 'order_number', 'profile_name', 'profile_title', 'status', 'updated_at', 'is_configured']);
-            
+
             Log::info("PublicProfileController: Toutes les commandes configurées pour individual", [
                 'user_id' => $user->id,
                 'user_username' => $user->username,
@@ -307,7 +307,7 @@ class PublicProfileController extends Controller
                     ];
                 })->toArray(),
             ]);
-            
+
             // Priorité 1: Chercher une commande validée avec un titre défini
             $order = Order::where('user_id', $user->id)
                 ->where('is_configured', true)
@@ -316,7 +316,7 @@ class PublicProfileController extends Controller
                 ->where('profile_title', '!=', '')
                 ->orderBy('updated_at', 'desc')
                 ->first();
-            
+
             // Priorité 2: Chercher une commande validée (même sans titre)
             if (!$order) {
                 $order = Order::where('user_id', $user->id)
@@ -325,7 +325,7 @@ class PublicProfileController extends Controller
                     ->orderBy('updated_at', 'desc')
                     ->first();
             }
-            
+
             // Priorité 3: Chercher une commande configurée avec un titre défini (même non validée)
             if (!$order) {
                 $order = Order::where('user_id', $user->id)
@@ -335,7 +335,7 @@ class PublicProfileController extends Controller
                     ->orderBy('updated_at', 'desc')
                     ->first();
             }
-            
+
             // Priorité 4: Chercher n'importe quelle commande configurée
             if (!$order) {
                 $order = Order::where('user_id', $user->id)
@@ -343,11 +343,11 @@ class PublicProfileController extends Controller
                     ->orderBy('updated_at', 'desc')
                     ->first();
             }
-            
+
             if ($order) {
                 // Forcer le rechargement complet depuis la base de données AVANT de logger
                 $order->refresh();
-                
+
                 Log::info("PublicProfileController: Commande configurée trouvée pour individual (sans orderId/token)", [
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
@@ -364,14 +364,14 @@ class PublicProfileController extends Controller
                 ]);
             }
         }
-        
+
         // Pour TOUTES les commandes (individual, business_admin, employee), rafraîchir depuis la base de données
         // pour s'assurer que toutes les colonnes sont chargées (notamment les JSON comme phone_numbers, emails)
         // IMPORTANT: Cela garantit que les données récentes sont toujours utilisées
         if ($order && !$orderEmployee) {
             // Forcer le rechargement complet depuis la base de données
             $order->refresh();
-            
+
             Log::info("PublicProfileController: Données de commande (après refresh final)", [
                 'order_id' => $order->id,
                 'order_number' => $order->order_number,
@@ -417,7 +417,7 @@ class PublicProfileController extends Controller
 
         // Vérifier si l'utilisateur individual a un portfolio configuré
         $portfolioConfigured = false;
-        
+
         if ($user->role === 'business_admin') {
             // Pour un business_admin, vérifier sa propre page
             // Si une commande est fournie, utiliser la page entreprise de cette commande spécifique
@@ -426,7 +426,7 @@ class PublicProfileController extends Controller
                     ->where('user_id', $user->id)
                     ->where('is_published', true)
                     ->first();
-                
+
                 // Si pas de page pour cette commande, fallback sur une page sans order_id
                 if (!$companyPage) {
                     $companyPage = CompanyPage::where('user_id', $user->id)
@@ -440,7 +440,7 @@ class PublicProfileController extends Controller
                     ->where('is_published', true)
                     ->first();
             }
-            
+
             $companyPagePublished = !is_null($companyPage);
             if ($companyPagePublished) {
                 $companyPageUsername = $user->username;
@@ -451,7 +451,7 @@ class PublicProfileController extends Controller
             // Pour un employé, trouver son business admin via order_employees
             // Utiliser la commande spécifique si disponible (orderEmployee), sinon chercher
             $targetOrderId = null;
-            
+
             if ($orderEmployee && $orderEmployee->order_id) {
                 // Si un orderEmployee est fourni, utiliser sa commande
                 $targetOrderId = $orderEmployee->order_id;
@@ -478,7 +478,7 @@ class PublicProfileController extends Controller
                             ->where('user_id', $businessAdmin->id)
                             ->where('is_published', true)
                             ->first();
-                        
+
                         // Si pas de page pour cette commande, fallback sur une page sans order_id
                         if (!$companyPage) {
                             $companyPage = CompanyPage::where('user_id', $businessAdmin->id)
@@ -486,7 +486,7 @@ class PublicProfileController extends Controller
                                 ->where('is_published', true)
                                 ->first();
                         }
-                        
+
                         $companyPagePublished = !is_null($companyPage);
                         if ($companyPagePublished) {
                             $companyPageUsername = $businessAdmin->username;
@@ -537,10 +537,10 @@ class PublicProfileController extends Controller
                 'user_username' => $user->username,
                 'user_role' => $user->role,
             ]);
-            
+
             $order = Order::where('access_token', $accessToken)
                 ->first(); // Ne pas filtrer par status pour permettre l'affichage de toutes les commandes
-            
+
             if ($order) {
                 $orderId = $order->id;
                 Log::info("PublicProfileController: Commande trouvée par token", [
@@ -585,7 +585,7 @@ class PublicProfileController extends Controller
                     ->first();
             }
         }
-        
+
         // Pour les comptes individuels, chercher la commande configurée si aucune commande n'a été trouvée
         if (!$order && !$orderEmployee && $user->role === 'individual') {
             // Chercher d'abord une commande validée
@@ -594,7 +594,7 @@ class PublicProfileController extends Controller
                 ->where('status', 'validated')
                 ->orderBy('updated_at', 'desc')
                 ->first();
-            
+
             // Si aucune commande validée, chercher une commande configurée (même non validée)
             if (!$order) {
                 $order = Order::where('user_id', $user->id)
@@ -602,7 +602,7 @@ class PublicProfileController extends Controller
                     ->orderBy('updated_at', 'desc')
                     ->first();
             }
-            
+
             if ($order) {
                 $order->refresh(); // Forcer le rechargement complet
                 Log::info("PublicProfileController downloadVcard: Commande configurée trouvée pour individual", [
@@ -618,7 +618,7 @@ class PublicProfileController extends Controller
 
         // Utiliser les données de orderEmployee si disponible, sinon utiliser les données de order, sinon user
         $profileData = $orderEmployee ?? $order ?? $user;
-        
+
         // Logger les données utilisées pour le vCard
         Log::info("PublicProfileController downloadVcard: Données utilisées pour le vCard", [
             'user_id' => $user->id,
@@ -731,53 +731,101 @@ class PublicProfileController extends Controller
             $avatarUrl = $user->avatar_url;
         }
 
+        // ✅ CORRECTION : Variable pour stocker le chemin du fichier temporaire à supprimer après
+        $tempPhotoPath = null;
+
         if ($avatarUrl) {
-            // Normaliser le chemin : enlever /storage/ du début si présent
+            // ✅ CORRECTION COMPLETE : Normaliser le chemin pour extraire le chemin relatif
+            // Gérer tous les formats possibles :
+            // - URLs complètes : https://domain.com/storage/... ou https://domain.com/api/storage/...
+            // - Chemins relatifs : /storage/..., /api/storage/..., storage/...
             $relativePath = $avatarUrl;
-            // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
-            if (str_starts_with($avatarUrl, '/api/storage/')) {
+
+            // 1. D'abord, enlever le domaine si c'est une URL complète
+            if (preg_match('#^https?://[^/]+/(?:api/)?storage/(.+)$#', $avatarUrl, $matches)) {
+                $relativePath = $matches[1];
+            }
+            // 2. Ensuite, gérer les chemins relatifs
+            elseif (str_starts_with($avatarUrl, '/api/storage/')) {
                 $relativePath = str_replace('/api/storage/', '', $avatarUrl);
             } elseif (str_starts_with($avatarUrl, '/storage/')) {
                 $relativePath = str_replace('/storage/', '', $avatarUrl);
             } elseif (str_starts_with($avatarUrl, 'storage/')) {
                 $relativePath = str_replace('storage/', '', $avatarUrl);
             }
-            
+
+            Log::info("vCard: Tentative d'ajout de photo", [
+                'user_id' => $user->id,
+                'avatarUrl_original' => $avatarUrl,
+                'relativePath_extracted' => $relativePath,
+            ]);
+
             // Vérifier si le fichier existe
             if (Storage::disk('public')->exists($relativePath)) {
                 $fullPath = Storage::disk('public')->path($relativePath);
+                Log::info("vCard: Fichier photo trouvé", [
+                    'fullPath' => $fullPath,
+                    'file_exists' => file_exists($fullPath),
+                    'file_size' => file_exists($fullPath) ? filesize($fullPath) : 0,
+                ]);
+
                 try {
                     // Créer une version réduite de l'image pour la vCard
-                    $imageInfo = \getimagesize($fullPath);
+                    $imageInfo = @\getimagesize($fullPath);
                     if ($imageInfo !== false) {
                         $mimeType = $imageInfo['mime'];
+                        Log::info("vCard: Image info", [
+                            'mime' => $mimeType,
+                            'width' => $imageInfo[0],
+                            'height' => $imageInfo[1],
+                        ]);
 
                         // Charger l'image selon son type
                         $sourceImage = null;
                         if ($mimeType === 'image/jpeg' || $mimeType === 'image/jpg') {
-                            $sourceImage = \imagecreatefromjpeg($fullPath);
+                            $sourceImage = @\imagecreatefromjpeg($fullPath);
                         } elseif ($mimeType === 'image/png') {
-                            $sourceImage = \imagecreatefrompng($fullPath);
+                            $sourceImage = @\imagecreatefrompng($fullPath);
                         } elseif ($mimeType === 'image/gif') {
-                            $sourceImage = \imagecreatefromgif($fullPath);
+                            $sourceImage = @\imagecreatefromgif($fullPath);
+                        } elseif ($mimeType === 'image/webp') {
+                            // ✅ NOUVEAU: Support WebP
+                            $sourceImage = @\imagecreatefromwebp($fullPath);
                         }
 
                         if ($sourceImage !== null) {
-                            // Redimensionner à 150x150 pour réduire la taille
-                            $resizedImage = \imagescale($sourceImage, 150, 150);
+                            // Redimensionner à 200x200 pour une meilleure qualité
+                            $resizedImage = \imagescale($sourceImage, 200, 200);
 
-                            // Sauvegarder temporairement avec une compression élevée
-                            $tempPath = storage_path('app/temp_vcard_photo_' . $user->id . '.jpg');
-                            \imagejpeg($resizedImage, $tempPath, 60); // Qualité 60% pour réduire la taille
+                            // Sauvegarder temporairement avec une compression modérée
+                            $tempPhotoPath = storage_path('app/temp_vcard_photo_' . $user->id . '_' . time() . '.jpg');
+                            \imagejpeg($resizedImage, $tempPhotoPath, 75); // Qualité 75% pour meilleure qualité
 
-                            // Ajouter la photo réduite à la vCard
-                            $vcard->addPhoto($tempPath);
+                            Log::info("vCard: Photo temporaire créée", [
+                                'tempPath' => $tempPhotoPath,
+                                'file_exists' => file_exists($tempPhotoPath),
+                                'file_size' => file_exists($tempPhotoPath) ? filesize($tempPhotoPath) : 0,
+                            ]);
 
-                            // Nettoyer
+                            // ✅ CORRECTION: Ajouter la photo AVANT de générer le vCard output
+                            // La bibliothèque JeroenDesloovere\VCard encode la photo en base64
+                            $vcard->addPhoto($tempPhotoPath);
+
+                            Log::info("vCard: Photo ajoutée à la vCard avec succès");
+
+                            // Nettoyer les ressources GD (mais PAS le fichier temporaire encore)
                             \imagedestroy($sourceImage);
                             \imagedestroy($resizedImage);
-                            @unlink($tempPath); // Supprimer le fichier temporaire
+                        } else {
+                            Log::warning("vCard: Impossible de charger l'image source", [
+                                'mimeType' => $mimeType,
+                                'fullPath' => $fullPath,
+                            ]);
                         }
+                    } else {
+                        Log::warning("vCard: Impossible d'obtenir les informations de l'image", [
+                            'fullPath' => $fullPath,
+                        ]);
                     }
                 } catch (\Exception $e) {
                     Log::warning("Impossible d'ajouter la photo optimisée à la vCard pour l'utilisateur {$user->id}: {$e->getMessage()}", [
@@ -785,6 +833,7 @@ class PublicProfileController extends Controller
                         'relativePath' => $relativePath,
                         'fullPath' => $fullPath ?? null,
                         'file_exists' => isset($fullPath) && file_exists($fullPath),
+                        'exception' => $e->getTraceAsString(),
                     ]);
                 }
             } else {
@@ -792,14 +841,30 @@ class PublicProfileController extends Controller
                     'user_id' => $user->id,
                     'avatarUrl' => $avatarUrl,
                     'relativePath' => $relativePath,
-                    'storage_disk' => Storage::disk('public')->exists($relativePath),
+                    'storage_path' => Storage::disk('public')->path($relativePath),
                 ]);
             }
+        } else {
+            Log::info("vCard: Aucune URL d'avatar disponible", [
+                'user_id' => $user->id,
+                'orderEmployee_avatar' => $orderEmployee ? $orderEmployee->employee_avatar_url : null,
+                'order_avatar' => $order ? $order->order_avatar_url : null,
+                'user_avatar' => $user->avatar_url,
+            ]);
         }
 
         $filename = Str::slug(($profileData->profile_name ?? $profileData->name) ?: 'contact') . '.vcf';
 
-        return response($vcard->getOutput(), 200)
+        // ✅ CORRECTION: Générer le output de la vCard AVANT de supprimer le fichier temporaire
+        $vcardOutput = $vcard->getOutput();
+
+        // ✅ Maintenant on peut supprimer le fichier temporaire en toute sécurité
+        if ($tempPhotoPath && file_exists($tempPhotoPath)) {
+            @unlink($tempPhotoPath);
+            Log::info("vCard: Fichier temporaire supprimé", ['tempPath' => $tempPhotoPath]);
+        }
+
+        return response($vcardOutput, 200)
                 ->header('Content-Type', 'text/vcard; charset=utf-8')
                 ->header('Content-Disposition', 'attachment; filename="' . $filename . '"');
     }

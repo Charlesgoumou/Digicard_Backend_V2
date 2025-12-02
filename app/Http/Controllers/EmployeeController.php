@@ -127,7 +127,11 @@ class EmployeeController extends Controller
     }
 
     /**
-     * Supprime un employé et met à jour les slots associés
+     * Supprime un employé d'une commande spécifique et libère le slot
+     * Si l'employé n'a plus d'autres commandes, son compte est supprimé
+     *
+     * @param Request $request - Peut contenir order_id pour spécifier la commande
+     * @param User $employee
      */
     public function destroy(Request $request, User $employee)
     {
@@ -144,11 +148,34 @@ class EmployeeController extends Controller
         }
 
         try {
-            // Récupérer toutes les OrderEmployee entries pour cet employé
-            $orderEmployees = \App\Models\OrderEmployee::where('employee_id', $employee->id)->get();
+            // ✅ NOUVEAU: Si un order_id est spécifié, retirer l'employé seulement de cette commande
+            $specificOrderId = $request->input('order_id');
+
+            Log::info('Suppression employé demandée', [
+                'employee_id' => $employee->id,
+                'employee_email' => $employee->email,
+                'admin_id' => $admin->id,
+                'specific_order_id' => $specificOrderId,
+            ]);
+
+            // Récupérer les OrderEmployee entries pour cet employé
+            if ($specificOrderId) {
+                // Seulement pour la commande spécifiée
+                $orderEmployees = \App\Models\OrderEmployee::where('employee_id', $employee->id)
+                    ->where('order_id', $specificOrderId)
+                    ->get();
+            } else {
+                // Toutes les commandes (comportement legacy)
+                $orderEmployees = \App\Models\OrderEmployee::where('employee_id', $employee->id)->get();
+            }
+
+            if ($orderEmployees->isEmpty()) {
+                return response()->json(['message' => 'Aucune assignation trouvée pour cet employé.'], 404);
+            }
 
             // Tableau pour stocker les commandes à supprimer
             $ordersToDelete = [];
+            $slotsFreed = 0;
 
             // Supprimer les OrderEmployee entries et mettre à jour les slots
             foreach ($orderEmployees as $orderEmployee) {
@@ -163,17 +190,27 @@ class EmployeeController extends Controller
 
                 $employeeCardQuantity = $orderEmployee->card_quantity; // Sauvegarder le nombre de cartes de l'employé
 
+                // ✅ NOUVEAU: Libérer le slot et le rendre disponible pour un nouvel employé
                 if ($order && $order->employee_slots && is_array($order->employee_slots)) {
                     $slots = $order->employee_slots;
 
-                    // Réinitialiser le slot de cet employé
+                    // Réinitialiser le slot de cet employé pour qu'il soit réassignable
                     foreach ($slots as $index => $slot) {
                         if (isset($slot['employee_id']) && $slot['employee_id'] == $employee->id) {
+                            // ✅ IMPORTANT: Garder cards_quantity pour permettre la réassignation
                             $slots[$index]['employee_id'] = null;
                             $slots[$index]['employee_name'] = null;
                             $slots[$index]['employee_email'] = null;
                             $slots[$index]['is_assigned'] = false;
                             $slots[$index]['is_configured'] = false;
+                            // ✅ NE PAS mettre cards_quantity à 0 - garder la valeur pour le slot
+                            $slotsFreed++;
+
+                            Log::info('Slot libéré pour réassignation', [
+                                'order_id' => $order->id,
+                                'slot_index' => $index,
+                                'cards_quantity' => $slots[$index]['cards_quantity'] ?? 1,
+                            ]);
                         }
                     }
 
@@ -185,26 +222,25 @@ class EmployeeController extends Controller
 
                 $order->save();
 
-                // ✅ Si la commande n'est pas validée, mettre à jour le nombre total de cartes et le prix
+                // ✅ Recalculer les totaux de la commande
                 if ($order && $order->status !== 'validated') {
-                    // Recalculer le nombre total de cartes basé sur les employee_slots actifs
+                    // Recalculer le nombre total de cartes basé sur les employee_slots
                     $totalCards = 0;
                     $totalPrice = 0;
-                    $activePersonnelCount = 0; // Compter le nombre de personnel actif (hors business admin)
+                    $activePersonnelCount = 0;
 
-                    // Parcourir tous les slots pour compter les cartes et le personnel actif
                     if ($order->employee_slots && is_array($order->employee_slots)) {
                         foreach ($order->employee_slots as $slot) {
-                            // Compter seulement les slots qui ne sont PAS marqués comme supprimés
-                            if (!isset($slot['is_assigned']) || $slot['is_assigned'] !== false) {
-                                $cardsQuantity = $slot['cards_quantity'] ?? 1;
+                            // Compter TOUS les slots avec des cartes (assignés ou non)
+                            $cardsQuantity = $slot['cards_quantity'] ?? 1;
+                            if ($cardsQuantity > 0) {
                                 $totalCards += $cardsQuantity;
                                 $totalPrice += \App\Helpers\PricingHelper::calculatePrice($cardsQuantity);
+                            }
 
-                                // Compter le personnel actif (hors business admin)
-                                if (isset($slot['employee_id']) && $slot['employee_id'] != $order->user_id) {
-                                    $activePersonnelCount++;
-                                }
+                            // Compter le personnel actif (hors business admin)
+                            if (isset($slot['employee_id']) && $slot['employee_id'] && $slot['employee_id'] != $order->user_id) {
+                                $activePersonnelCount++;
                             }
                         }
                     }
@@ -212,74 +248,85 @@ class EmployeeController extends Controller
                     $order->card_quantity = $totalCards;
                     $order->total_price = $totalPrice;
                     $order->save();
+                }
+            }
 
-                    // ✅ Si aucun personnel actif ne reste (hors business admin) → supprimer la commande
-                    if ($activePersonnelCount === 0) {
-                        $ordersToDelete[] = $order;
+            // ✅ NOUVEAU: Vérifier si l'employé a d'autres commandes actives
+            $remainingOrderEmployees = \App\Models\OrderEmployee::where('employee_id', $employee->id)->count();
+
+            Log::info('Vérification des commandes restantes pour l\'employé', [
+                'employee_id' => $employee->id,
+                'remaining_orders' => $remainingOrderEmployees,
+                'slots_freed' => $slotsFreed,
+            ]);
+
+            // Message de base
+            $message = "L'employé a été retiré de cette commande. Le slot est maintenant disponible pour assigner un nouvel employé.";
+            $accountDeleted = false;
+
+            // ✅ Si l'employé n'a plus aucune commande, supprimer son compte
+            if ($remainingOrderEmployees === 0) {
+                // Sauvegarder les informations avant suppression pour l'email
+                $employeeEmail = $employee->email;
+                $employeeName = $employee->name;
+                $companyName = $employee->company_name;
+
+                // Envoyer un email de notification à l'employé
+                try {
+                    Mail::to($employeeEmail)->send(new EmployeeDeletionNotification(
+                        $employeeName,
+                        $companyName
+                    ));
+                    Log::info('Email de suppression envoyé à ' . $employeeEmail);
+                } catch (\Throwable $t) {
+                    Log::error("Échec de l'envoi de l'email de suppression à " . $employeeEmail . ": " . $t->getMessage());
+                    // On continue même si l'email échoue
+                }
+
+                // Révoquer les tokens de l'employé (empêche toute connexion future)
+                $employee->tokens()->delete();
+
+                // Supprimer l'avatar de l'employé s'il existe
+                if ($employee->avatar_url) {
+                    // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
+                    $oldPath = preg_replace('#^/api/storage/#', '', $employee->avatar_url);
+                    $oldPath = preg_replace('#^/storage/#', '', $oldPath);
+                    $oldPath = preg_replace('#^https?://[^/]+/(api/)?storage/#', '', $oldPath);
+                    if (Storage::disk('public')->exists($oldPath)) {
+                        Storage::disk('public')->delete($oldPath);
                     }
                 }
-            }
 
-            // Supprimer les commandes qui n'ont plus de personnel
-            foreach ($ordersToDelete as $orderToDelete) {
-                // Supprimer tous les OrderEmployee associés à cette commande
-                \App\Models\OrderEmployee::where('order_id', $orderToDelete->id)->delete();
+                // Supprimer l'employé de la base de données
+                $employee->delete();
+                $accountDeleted = true;
 
-                // Supprimer la commande
-                $orderToDelete->delete();
+                $message = "L'employé a été retiré de cette commande et son compte a été supprimé de la plateforme car il n'avait plus d'autres commandes. Le slot est maintenant disponible pour assigner un nouvel employé.";
 
-                Log::info('Commande automatiquement supprimée après suppression du dernier personnel', [
-                    'order_id' => $orderToDelete->id,
-                    'order_number' => $orderToDelete->order_number,
+                Log::info('Compte employé supprimé (plus aucune commande)', [
+                    'employee_id' => $employee->id ?? 'deleted',
+                    'employee_email' => $employeeEmail,
                 ]);
-            }
-
-            // Sauvegarder les informations avant suppression pour l'email
-            $employeeEmail = $employee->email;
-            $employeeName = $employee->name;
-            $companyName = $employee->company_name;
-
-            // Envoyer un email de notification à l'employé
-            try {
-                Mail::to($employeeEmail)->send(new EmployeeDeletionNotification(
-                    $employeeName,
-                    $companyName
-                ));
-                Log::info('Email de suppression envoyé à ' . $employeeEmail);
-            } catch (\Throwable $t) {
-                Log::error("Échec de l'envoi de l'email de suppression à " . $employeeEmail . ": " . $t->getMessage());
-                // On continue même si l'email échoue
-            }
-
-            // Révoquer les tokens de l'employé (empêche toute connexion future)
-            $employee->tokens()->delete();
-
-            // Supprimer l'avatar de l'employé s'il existe
-            if ($employee->avatar_url) {
-                // ✅ CORRECTION : Gérer les deux formats (/storage/ et /api/storage/)
-                $oldPath = preg_replace('#^/api/storage/#', '', $employee->avatar_url);
-                $oldPath = preg_replace('#^/storage/#', '', $oldPath);
-                $oldPath = preg_replace('#^https?://[^/]+/(api/)?storage/#', '', $oldPath);
-                if (Storage::disk('public')->exists($oldPath)) {
-                    Storage::disk('public')->delete($oldPath);
-                }
-            }
-
-            // Supprimer l'employé de la base de données
-            $employee->delete();
-
-            // Message de retour
-            $message = 'Employé supprimé avec succès. Le compte de l\'employé a été supprimé de la plateforme et les slots sont maintenant disponibles pour assigner de nouveaux employés.';
-            if (count($ordersToDelete) > 0) {
-                $message .= ' La commande associée a également été supprimée car il ne restait plus de personnel.';
+            } else {
+                // L'employé a encore d'autres commandes, on ne supprime pas son compte
+                Log::info('Employé retiré de la commande mais compte conservé (autres commandes existantes)', [
+                    'employee_id' => $employee->id,
+                    'employee_email' => $employee->email,
+                    'remaining_orders' => $remainingOrderEmployees,
+                ]);
             }
 
             return response()->json([
                 'message' => $message,
+                'slots_freed' => $slotsFreed,
+                'account_deleted' => $accountDeleted,
+                'remaining_orders' => $remainingOrderEmployees,
             ], 200);
 
         } catch (\Exception $e) {
-            Log::error('Échec de la suppression de l\'employé ID ' . $employee->id . ': ' . $e->getMessage());
+            Log::error('Échec de la suppression de l\'employé ID ' . $employee->id . ': ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
             return response()->json(['message' => 'Erreur lors de la suppression de l\'employé.'], 500);
         }
     }

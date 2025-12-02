@@ -14,7 +14,7 @@ class OrderController extends Controller
 {
     /**
      * Liste paginée de toutes les commandes avec filtres
-     * 
+     *
      * @param Request $request
      * @return \Illuminate\Http\JsonResponse
      */
@@ -65,6 +65,7 @@ class OrderController extends Controller
         // Chargement des relations
         // IMPORTANT: Inclure les champs de design et card_quantity dans orderEmployees pour les commandes business
         // IMPORTANT: Inclure aussi le username et access_token pour les profils publics
+        // ✅ NOUVEAU: Inclure employee_avatar_url pour la colonne Photo
         $query->with([
             'user:id,name,email,username,role,vcard_phone,phone_numbers',
             'orderEmployees' => function ($query) {
@@ -80,6 +81,7 @@ class OrderController extends Controller
                     'card_design_number',
                     'card_design_custom_url',
                     'no_design_yet',
+                    'employee_avatar_url', // ✅ NOUVEAU: Pour la colonne Photo
                 ]);
             },
             'orderEmployees.employee:id,name,email,username,role'
@@ -110,13 +112,13 @@ class OrderController extends Controller
                     }
                 }
             }
-            
+
             // Pour toutes les commandes, s'assurer que le username et access_token sont accessibles
             // au niveau racine pour faciliter l'accès depuis le frontend
             if ($order->user && $order->user->username) {
                 $order->profile_username = $order->user->username;
             }
-            
+
             return $order;
         });
 
@@ -138,7 +140,7 @@ class OrderController extends Controller
 
     /**
      * Affiche les détails d'une commande spécifique
-     * 
+     *
      * @param Order $order
      * @return \Illuminate\Http\JsonResponse
      */
@@ -146,6 +148,7 @@ class OrderController extends Controller
     {
         // Charger toutes les relations utiles
         // IMPORTANT: Inclure les champs de design et card_quantity dans orderEmployees pour les commandes business
+        // ✅ NOUVEAU: Inclure employee_avatar_url pour la colonne Photo
         $order->load([
             'user:id,name,email,username,role,company_name,avatar_url,vcard_phone,phone_numbers,emails',
             'orderEmployees' => function ($query) {
@@ -161,6 +164,7 @@ class OrderController extends Controller
                     'card_design_number',
                     'card_design_custom_url',
                     'no_design_yet',
+                    'employee_avatar_url', // ✅ NOUVEAU: Pour la colonne Photo
                 ]);
             },
             'orderEmployees.employee:id,name,email,username,avatar_url,role',
@@ -197,12 +201,30 @@ class OrderController extends Controller
                 }
             }
         }
-        
+
         // Pour toutes les commandes, s'assurer que le username et access_token sont accessibles
         // au niveau racine pour faciliter l'accès depuis le frontend
         if ($order->user && $order->user->username) {
             $order->profile_username = $order->user->username;
         }
+
+        // ✅ NOUVEAU: Logger les données de photos pour le débogage
+        Log::info('Admin OrderController::show - Données de photos', [
+            'order_id' => $order->id,
+            'order_number' => $order->order_number,
+            'order_type' => $order->order_type,
+            'order_avatar_url' => $order->order_avatar_url,
+            'order_employees_count' => $order->orderEmployees->count(),
+            'order_employees_with_photos' => $order->orderEmployees->filter(function($emp) {
+                return !empty($emp->employee_avatar_url);
+            })->map(function($emp) {
+                return [
+                    'employee_name' => $emp->employee_name,
+                    'employee_avatar_url' => $emp->employee_avatar_url,
+                    'is_configured' => $emp->is_configured,
+                ];
+            })->values()->toArray(),
+        ]);
 
         return response()->json([
             'order' => $order,
@@ -212,7 +234,7 @@ class OrderController extends Controller
 
     /**
      * Met à jour le statut d'une commande
-     * 
+     *
      * @param Request $request
      * @param Order $order
      * @return \Illuminate\Http\JsonResponse
@@ -260,7 +282,7 @@ class OrderController extends Controller
         if ($newStatus === 'validated') {
             try {
                 Mail::to($order->user->email)->send(new OrderValidated($order, $order->user));
-                
+
                 Log::info('Order validation email sent', [
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
@@ -306,7 +328,7 @@ class OrderController extends Controller
 
     /**
      * Statistiques globales pour le dashboard des commandes
-     * 
+     *
      * @return \Illuminate\Http\JsonResponse
      */
     public function stats()
