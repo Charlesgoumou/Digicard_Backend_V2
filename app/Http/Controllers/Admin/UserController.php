@@ -6,12 +6,13 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class UserController extends Controller
 {
     /**
      * Liste paginée de tous les utilisateurs avec filtres
-     * 
+     *
      * @param Request $request
      * @return \Illuminate\Http\JsonResponse
      */
@@ -59,7 +60,7 @@ class UserController extends Controller
 
     /**
      * Affiche les détails d'un utilisateur spécifique
-     * 
+     *
      * @param User $user
      * @return \Illuminate\Http\JsonResponse
      */
@@ -88,7 +89,7 @@ class UserController extends Controller
 
     /**
      * Suspend ou réactive un utilisateur
-     * 
+     *
      * @param User $user
      * @return \Illuminate\Http\JsonResponse
      */
@@ -127,8 +128,8 @@ class UserController extends Controller
             'timestamp' => now(),
         ]);
 
-        $message = $user->is_suspended 
-            ? 'Utilisateur suspendu avec succès' 
+        $message = $user->is_suspended
+            ? 'Utilisateur suspendu avec succès'
             : 'Utilisateur réactivé avec succès';
 
         return response()->json([
@@ -139,7 +140,7 @@ class UserController extends Controller
 
     /**
      * Impersonate (se connecter en tant qu'un autre utilisateur)
-     * 
+     *
      * @param User $user
      * @return \Illuminate\Http\JsonResponse
      */
@@ -192,7 +193,7 @@ class UserController extends Controller
 
     /**
      * Arrêter l'impersonation et retourner au compte admin
-     * 
+     *
      * @param Request $request
      * @return \Illuminate\Http\JsonResponse
      */
@@ -202,7 +203,7 @@ class UserController extends Controller
 
         // Vérifier si le token actuel est un token d'impersonation
         $currentToken = $request->user()->currentAccessToken();
-        
+
         if (!$currentToken || !str_starts_with($currentToken->name, 'admin-impersonation-')) {
             return response()->json([
                 'message' => 'Aucune impersonation en cours'
