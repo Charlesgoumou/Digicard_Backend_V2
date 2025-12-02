@@ -4,17 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ $portfolio->name ?? $user->name }} - Portfolio</title>
-    
+
+    <!-- ✅ Favicons DigiCard -->
+    <link rel="icon" type="image/png" sizes="16x16" href="https://digicard.arccenciel.com/logo2-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="https://digicard.arccenciel.com/logo2-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="https://digicard.arccenciel.com/logo2-180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="https://digicard.arccenciel.com/logo2-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="https://digicard.arccenciel.com/logo2-512.png" />
+
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
-    
+
     <style>
-        body { 
-            font-family: 'Inter', sans-serif; 
-            background-color: #f3f4f6; 
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
         }
         .modal-content {
             transition: transform 0.3s ease-in-out;
@@ -115,7 +122,7 @@
                     </h2>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         @foreach($portfolio->projects as $index => $project)
-                        <div 
+                        <div
                             class="bg-white shadow-xl rounded-lg overflow-hidden transform hover:scale-105 transition-transform duration-300 cursor-pointer project-card"
                             data-project-index="{{ $index }}"
                             onclick="openProjectModal({{ $index }})"
@@ -202,13 +209,13 @@ const projectsData = Object.values(projects);
 function openProjectModal(index) {
     const project = projectsData[index];
     if (!project) return;
-    
+
     document.getElementById('modalTitle').textContent = project.title || '';
-    
+
     // Afficher la description courte si details_html n'existe pas
-    document.getElementById('modalContent').innerHTML = project.details_html || 
+    document.getElementById('modalContent').innerHTML = project.details_html ||
         '<p>' + (project.short_description || '') + '</p>';
-    
+
     // Afficher le lien s'il existe
     const modalLink = document.getElementById('modalLink');
     if (project.link) {
@@ -217,7 +224,7 @@ function openProjectModal(index) {
     } else {
         modalLink.classList.add('hidden');
     }
-    
+
     document.getElementById('projectModal').classList.remove('hidden');
     document.getElementById('projectModal').classList.add('flex');
 }

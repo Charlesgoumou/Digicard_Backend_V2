@@ -9,7 +9,7 @@
         // Utiliser les données de orderEmployee en priorité
         $displayName = $orderEmployee->profile_name ?? $orderEmployee->employee_name ?? $user->name;
         $displayTitle = $orderEmployee->profile_title ?? $user->title ?? null;
-        
+
         // DEBUG: Logger pour déboguer
         \Log::info("PublicProfile Blade: orderEmployee trouvé", [
             'order_employee_id' => $orderEmployee->id ?? null,
@@ -24,7 +24,7 @@
         // Utiliser les données de order
         $displayName = $order->profile_name ?? $user->name;
         $displayTitle = $order->profile_title ?? $user->title ?? null;
-        
+
         // DEBUG: Logger pour déboguer avec toutes les données
         \Log::info("PublicProfile Blade: order trouvé (pas orderEmployee)", [
             'order_id' => $order->id ?? null,
@@ -45,7 +45,7 @@
         // Fallback sur les données de user
         $displayName = $user->name;
         $displayTitle = $user->title ?? null;
-        
+
         // DEBUG: Logger pour déboguer
         \Log::info("PublicProfile Blade: Aucun orderEmployee ni order trouvé", [
             'user_id' => $user->id ?? null,
@@ -126,6 +126,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ $displayName }} - Arcc En Ciel</title>
+
+    <!-- ✅ Favicons DigiCard -->
+    <link rel="icon" type="image/png" sizes="16x16" href="https://digicard.arccenciel.com/logo2-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="https://digicard.arccenciel.com/logo2-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="https://digicard.arccenciel.com/logo2-180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="https://digicard.arccenciel.com/logo2-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="https://digicard.arccenciel.com/logo2-512.png" />
 
     <script src="https://cdn.tailwindcss.com"></script>
 
@@ -218,7 +225,7 @@
                         // ✅ CORRECTION: Parser FRONTEND_URL pour extraire uniquement la première URL valide
                         $frontendUrlRaw = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
                         $frontendUrl = $frontendUrlRaw;
-                        
+
                         // Si FRONTEND_URL contient plusieurs URLs séparées par des virgules, prendre la première
                         if (strpos($frontendUrlRaw, ',') !== false) {
                             $urls = array_map('trim', explode(',', $frontendUrlRaw));
@@ -230,7 +237,7 @@
                                 }
                             }
                         }
-                        
+
                         $servicesButtonUrl = $frontendUrl . '/entreprise/' . $companyPageUsername;
                         // Ajouter l'order_id à l'URL si une commande est fournie pour afficher le contenu spécifique de cette commande
                         if ($order && $order->id) {
