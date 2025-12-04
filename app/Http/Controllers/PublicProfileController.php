@@ -694,6 +694,45 @@ class PublicProfileController extends Controller
             $vcard->addURL($profileData->website_url);
         }
 
+        // === NOUVEAU CHAMP : Lien "Mettre à jour le contact" ===
+        // Construire l'URL du profil public avec le token pour permettre la mise à jour automatique
+        $updateContactUrl = null;
+
+        // Récupérer le token d'accès (priorité : token fourni en paramètre > token de la commande)
+        $updateToken = $accessToken;
+        if (!$updateToken && $order && $order->access_token) {
+            $updateToken = $order->access_token;
+        }
+
+        // Construire l'URL complète du profil public
+        if ($updateToken) {
+            // Utiliser l'URL complète avec le token
+            $updateContactUrl = route('profile.public.show', ['user' => $user->username]) . '?token=' . urlencode($updateToken);
+        } else {
+            // Si pas de token, utiliser l'URL sans token (moins sécurisé mais fonctionnel)
+            $updateContactUrl = route('profile.public.show', ['user' => $user->username]);
+        }
+
+        // Ajouter l'URL de mise à jour au vCard
+        // La bibliothèque VCard ajoute l'URL comme champ URL standard
+        $vcard->addURL($updateContactUrl);
+
+        // Ajouter une note avec le label "Mettre à jour le contact" pour que ce soit visible dans les applications de contacts
+        // Format: "Mettre à jour le contact: [URL]" - L'URL sera cliquable via le champ URL ci-dessus
+        $vcard->addNote("Mettre à jour le contact: " . $updateContactUrl);
+
+        // Utiliser une extension personnalisée vCard pour le label (si supporté par l'application de contacts)
+        // Format X-UPDATE-CONTACT pour vCard 4.0
+        // Note: La bibliothèque peut ne pas supporter directement les extensions personnalisées,
+        // mais on peut les ajouter manuellement au output si nécessaire
+
+        Log::info("vCard: Lien 'Mettre à jour le contact' ajouté", [
+            'user_id' => $user->id,
+            'username' => $user->username,
+            'update_contact_url' => $updateContactUrl,
+            'has_token' => !empty($updateToken),
+        ]);
+
         // === NOUVEAUX CHAMPS : Adresse complète ===
         $street = implode(', ', array_filter([
             $profileData->address_neighborhood,
