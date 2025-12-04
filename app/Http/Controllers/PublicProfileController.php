@@ -704,27 +704,18 @@ class PublicProfileController extends Controller
             $updateToken = $order->access_token;
         }
 
-        // Construire l'URL complète du profil public
+        // Construire l'URL complète du profil public avec le token
         if ($updateToken) {
             // Utiliser l'URL complète avec le token
             $updateContactUrl = route('profile.public.show', ['user' => $user->username]) . '?token=' . urlencode($updateToken);
         } else {
-            // Si pas de token, utiliser l'URL sans token (moins sécurisé mais fonctionnel)
+            // Si pas de token, utiliser l'URL sans token (fallback)
             $updateContactUrl = route('profile.public.show', ['user' => $user->username]);
         }
 
         // Ajouter l'URL de mise à jour au vCard
         // La bibliothèque VCard ajoute l'URL comme champ URL standard
         $vcard->addURL($updateContactUrl);
-
-        // Ajouter une note avec le label "Mettre à jour le contact" pour que ce soit visible dans les applications de contacts
-        // Format: "Mettre à jour le contact: [URL]" - L'URL sera cliquable via le champ URL ci-dessus
-        $vcard->addNote("Mettre à jour le contact: " . $updateContactUrl);
-
-        // Utiliser une extension personnalisée vCard pour le label (si supporté par l'application de contacts)
-        // Format X-UPDATE-CONTACT pour vCard 4.0
-        // Note: La bibliothèque peut ne pas supporter directement les extensions personnalisées,
-        // mais on peut les ajouter manuellement au output si nécessaire
 
         Log::info("vCard: Lien 'Mettre à jour le contact' ajouté", [
             'user_id' => $user->id,
