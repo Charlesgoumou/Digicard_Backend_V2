@@ -94,11 +94,13 @@ class Order extends Model
     /**
      * Génère un token d'accès unique pour la commande
      * Le token est composé de chiffres, lettres et caractères spéciaux
+     * Note: Les caractères spéciaux sont gérés par le contrôleur PublicProfileController
      */
     public function generateAccessToken()
     {
         // Générer un token aléatoire de 32 caractères
         // Utiliser des caractères alphanumériques et quelques caractères spéciaux sécurisés
+        // Note: Le contrôleur PublicProfileController reconstruit le token si & est présent
         $characters = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*';
         $token = '';
         

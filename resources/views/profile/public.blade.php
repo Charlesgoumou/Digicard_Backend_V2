@@ -94,27 +94,54 @@
         'displayTitle' => $displayTitle,
     ]);
 
-    if ($avatarUrl && str_starts_with($avatarUrl, '/storage/')) {
-        $displayAvatar = url($avatarUrl);
-        // Ajouter un timestamp pour éviter le cache
-        $displayAvatar .= '?t=' . time();
-        // Vérifier que le fichier existe
-        $relativePath = str_replace('/storage/', '', $avatarUrl);
-        $fileExists = \Storage::disk('public')->exists($relativePath);
-        if (!$fileExists) {
-            \Log::warning("PublicProfile Blade: Fichier avatar introuvable", [
-                'avatarUrl' => $avatarUrl,
-                'relativePath' => $relativePath,
-                'fullPath' => \Storage::disk('public')->path($relativePath),
-            ]);
-            $displayAvatar = 'https://ui-avatars.com/api/?name=' . urlencode($displayName) . '&background=4b5563&color=ffffff&size=128';
+    // Gérer différents formats d'URL d'avatar
+    if ($avatarUrl) {
+        // Si l'URL est déjà complète (http:// ou https://)
+        if (str_starts_with($avatarUrl, 'http://') || str_starts_with($avatarUrl, 'https://')) {
+            // Extraire le chemin relatif pour vérifier l'existence du fichier
+            $parsedUrl = parse_url($avatarUrl);
+            $path = $parsedUrl['path'] ?? '';
+            
+            // Si le chemin contient /storage/, extraire le chemin relatif
+            if (str_contains($path, '/storage/')) {
+                $relativePath = str_replace('/storage/', '', $path);
+                $fileExists = \Storage::disk('public')->exists($relativePath);
+                
+                if ($fileExists) {
+                    // Ajouter un timestamp pour éviter le cache
+                    $displayAvatar = $avatarUrl . (str_contains($avatarUrl, '?') ? '&' : '?') . 't=' . time();
+                } else {
+                    \Log::warning("PublicProfile Blade: Fichier avatar introuvable", [
+                        'avatarUrl' => $avatarUrl,
+                        'relativePath' => $relativePath,
+                        'fullPath' => \Storage::disk('public')->path($relativePath),
+                    ]);
+                    $displayAvatar = 'https://ui-avatars.com/api/?name=' . urlencode($displayName) . '&background=4b5563&color=ffffff&size=128';
+                }
+            } else {
+                // URL externe, utiliser tel quel
+                $displayAvatar = $avatarUrl;
+            }
+        } elseif (str_starts_with($avatarUrl, '/storage/')) {
+            // Chemin relatif commençant par /storage/
+            $displayAvatar = url($avatarUrl);
+            // Ajouter un timestamp pour éviter le cache
+            $displayAvatar .= '?t=' . time();
+            // Vérifier que le fichier existe
+            $relativePath = str_replace('/storage/', '', $avatarUrl);
+            $fileExists = \Storage::disk('public')->exists($relativePath);
+            if (!$fileExists) {
+                \Log::warning("PublicProfile Blade: Fichier avatar introuvable", [
+                    'avatarUrl' => $avatarUrl,
+                    'relativePath' => $relativePath,
+                    'fullPath' => \Storage::disk('public')->path($relativePath),
+                ]);
+                $displayAvatar = 'https://ui-avatars.com/api/?name=' . urlencode($displayName) . '&background=4b5563&color=ffffff&size=128';
+            }
+        } else {
+            // Autre format d'URL, essayer de construire l'URL complète
+            $displayAvatar = url($avatarUrl);
         }
-    } elseif ($avatarUrl && (str_starts_with($avatarUrl, 'http://') || str_starts_with($avatarUrl, 'https://'))) {
-        // URL complète (externe)
-        $displayAvatar = $avatarUrl;
-    } elseif ($avatarUrl) {
-        // Autre format d'URL, essayer de construire l'URL complète
-        $displayAvatar = url($avatarUrl);
     } else {
         // Aucun avatar, utiliser l'avatar généré
         $displayAvatar = 'https://ui-avatars.com/api/?name=' . urlencode($displayName) . '&background=4b5563&color=ffffff&size=128';
@@ -125,6 +152,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ $displayName }} - Arcc En Ciel</title>
 
     <!-- ✅ Favicons DigiCard -->
@@ -152,6 +180,66 @@
         .social-icon.youtube:hover { color: #FF0000; }
         .social-icon.deezer:hover { color: #EF5466; }
         .social-icon.spotify:hover { color: #1DB954; }
+.social-icon.calendar:hover { color: #0ea5e9; }
+          .social-icon.exchange:hover { color: #10b981; }
+          /* Garantir que les icônes centrales restent toujours au centre visuel */
+        .social-icons-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0;
+        }
+        .social-icons-group {
+            display: flex;
+            align-items: center;
+            gap: 1.25rem;
+        }
+        .social-icons-group.left {
+            justify-content: flex-end;
+            min-width: 60px;
+        }
+        .social-icons-group.right {
+            justify-content: flex-start;
+            min-width: 60px;
+        }
+        .social-icons-center {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            flex-shrink: 0;
+            margin: 0 1.25rem;
+        }
+        .social-icon.calendar,
+        .social-icon.exchange {
+            flex-shrink: 0;
+        }
+        .modal-content {
+            transition: transform 0.3s ease-in-out;
+            max-height: 90vh;
+            max-height: calc(100vh - 2rem);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .modal-content-body {
+            flex: 1;
+            overflow-y: auto;
+            min-height: 0;
+        }
+        @media (max-width: 640px) {
+            .modal-content {
+                max-height: calc(100vh - 1rem);
+                margin: 0.5rem;
+            }
+            .modal-content-body {
+                max-height: calc(100vh - 12rem);
+            }
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
     </style>
 </head>
 <body class="flex items-center justify-center min-h-screen p-4">
@@ -285,61 +373,741 @@
                 $deezer = $user->deezer_url;
                 $spotify = $user->spotify_url;
             }
+            
+            // Vérifier si les rendez-vous sont activés
+            $appointmentEnabled = isset($appointmentSetting) && $appointmentSetting && $appointmentSetting->is_enabled;
         @endphp
-        @if($whatsapp || $linkedin || $facebook || $twitter || $youtube || $deezer || $spotify)
+        @php
+            // Vérifier si les rendez-vous sont activés pour cette commande spécifique
+            // IMPORTANT: Ne PAS utiliser de fallback - l'icône ne s'affiche QUE si activée pour cette commande
+            $appointmentEnabled = isset($appointmentSetting) && $appointmentSetting && $appointmentSetting->is_enabled;
+            
+            // L'échange de contacts est toujours activé
+            $shareContactEnabled = true;
+            
+            // Afficher la section seulement s'il y a au moins une icône, le calendrier ou l'échange
+            $hasSocialIcons = $whatsapp || $linkedin || $facebook || $twitter || $youtube || $deezer || $spotify;
+        @endphp
+        @php
+            // Construire les tableaux d'icônes pour répartition équilibrée
+            $allIcons = [];
+            if ($whatsapp) $allIcons[] = ['type' => 'whatsapp', 'url' => $whatsapp, 'title' => 'WhatsApp'];
+            if ($linkedin) $allIcons[] = ['type' => 'linkedin', 'url' => $linkedin, 'title' => 'LinkedIn'];
+            if ($facebook) $allIcons[] = ['type' => 'facebook', 'url' => $facebook, 'title' => 'Facebook'];
+            if ($twitter) $allIcons[] = ['type' => 'twitter', 'url' => $twitter, 'title' => 'Twitter / X'];
+            if ($youtube) $allIcons[] = ['type' => 'youtube', 'url' => $youtube, 'title' => 'YouTube'];
+            if ($deezer) $allIcons[] = ['type' => 'deezer', 'url' => $deezer, 'title' => 'Deezer'];
+            if ($spotify) $allIcons[] = ['type' => 'spotify', 'url' => $spotify, 'title' => 'Spotify'];
+            
+            // Répartir équitablement de chaque côté du calendrier
+            $midPoint = (int) ceil(count($allIcons) / 2);
+            $leftIcons = array_slice($allIcons, 0, $midPoint);
+            $rightIcons = array_slice($allIcons, $midPoint);
+        @endphp
+        @if($hasSocialIcons || $appointmentEnabled || $shareContactEnabled)
             <hr class="border-gray-600 mb-6">
-            <div class="flex justify-center items-center flex-wrap gap-x-5 gap-y-3">
-                @if($whatsapp)
-                <a href="{{ $whatsapp }}" target="_blank" rel="noopener noreferrer" class="social-icon whatsapp text-gray-400" title="WhatsApp">
-                    <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
-                    </svg>
-                </a>
-                @endif
-                @if($linkedin)
-                <a href="{{ $linkedin }}" target="_blank" rel="noopener noreferrer" class="social-icon linkedin text-gray-400" title="LinkedIn">
-                    <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
-                    </svg>
-                </a>
-                @endif
-                @if($facebook)
-                <a href="{{ $facebook }}" target="_blank" rel="noopener noreferrer" class="social-icon facebook text-gray-400" title="Facebook">
-                    <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-                    </svg>
-                </a>
-                @endif
-                @if($twitter)
-                <a href="{{ $twitter }}" target="_blank" rel="noopener noreferrer" class="social-icon twitter text-gray-400" title="Twitter / X">
-                    <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 300 271">
-                        <path d="M236 0h46L181 115l118 156h-92.6l-72.5-94.8L60 271H14l107-123L14 0h94.9l65.5 86.6L236 0zm-16.1 244h25.5L80.4 26H53l167 218z"/>
-                    </svg>
-                </a>
-                @endif
-                @if($youtube)
-                <a href="{{ $youtube }}" target="_blank" rel="noopener noreferrer" class="social-icon youtube text-gray-400" title="YouTube">
-                    <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-                    </svg>
-                </a>
-                @endif
-                @if($deezer)
-                <a href="{{ $deezer }}" target="_blank" rel="noopener noreferrer" class="social-icon deezer text-gray-400" title="Deezer">
-                    <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M18.81 4.16v3.03h5.19V4.16h-5.19zm0 4.97v3.03h5.19V9.13h-5.19zm0 4.96v3.03h5.19v-3.03h-5.19zm-6.58-9.93v3.03h5.19V4.16h-5.19zm0 4.97v3.03h5.19V9.13h-5.19zm0 4.96v3.03h5.19v-3.03h-5.19zm0 4.97v3.03h5.19v-3.03h-5.19zM5.65 9.13v3.03h5.19V9.13H5.65zm0 4.96v3.03h5.19v-3.03H5.65zm0 4.97v3.03h5.19v-3.03H5.65zM0 14.09v3.03h4.16v-3.03H0zm0 4.97v3.03h4.16v-3.03H0z"/>
-                    </svg>
-                </a>
-                @endif
-                @if($spotify)
-                <a href="{{ $spotify }}" target="_blank" rel="noopener noreferrer" class="social-icon spotify text-gray-400" title="Spotify">
-                    <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
-                    </svg>
-                </a>
-                @endif
+            <div class="social-icons-container">
+                {{-- Groupe GAUCHE des icônes --}}
+                <div class="social-icons-group left">
+                    @foreach($leftIcons as $icon)
+                        @include('profile.partials.social-icon', ['icon' => $icon])
+                    @endforeach
+                </div>
+                
+                {{-- Groupe CENTRAL : Échange + Calendrier --}}
+                <div class="social-icons-center">
+                    {{-- Bouton Échanger Contact --}}
+                    @if($shareContactEnabled)
+                    <button
+                        onclick="openShareContactModal()"
+                        class="social-icon exchange text-gray-400 relative cursor-pointer"
+                        title="Échanger mon contact"
+                    >
+                        <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3L5 6.99h3V14h2V6.99h3L9 3z"/>
+                        </svg>
+                        <span class="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></span>
+                    </button>
+                    @endif
+                    
+                    {{-- Bouton Prendre Rendez-vous (icône calendrier) --}}
+                    @if($appointmentEnabled)
+                    <button
+                        onclick="openBookingModal()"
+                        class="social-icon calendar text-gray-400 relative cursor-pointer"
+                        title="Prendre rendez-vous"
+                    >
+                        <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2zM9 14H7v-2h2v2zm4 0h-2v-2h2v2zm4 0h-2v-2h2v2zm-8 4H7v-2h2v2zm4 0h-2v-2h2v2zm4 0h-2v-2h2v2z"/>
+                        </svg>
+                        <span class="absolute -top-1 -right-1 w-3 h-3 bg-sky-500 rounded-full animate-pulse"></span>
+                    </button>
+                    @endif
+                </div>
+                
+                {{-- Groupe DROITE des icônes --}}
+                <div class="social-icons-group right">
+                    @foreach($rightIcons as $icon)
+                        @include('profile.partials.social-icon', ['icon' => $icon])
+                    @endforeach
+                </div>
             </div>
         @endif
     </div>
+
+{{-- Modal de Réservation de Rendez-vous --}}
+@if($appointmentEnabled)
+<div id="bookingModal" class="fixed inset-0 bg-black bg-opacity-60 hidden items-center justify-center z-50 p-2 sm:p-4 backdrop-blur-sm overflow-y-auto">
+    <div class="modal-content bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl shadow-2xl w-full max-w-lg border border-slate-700 my-auto">
+        <!-- Header -->
+        <div class="relative p-4 sm:p-6 border-b border-slate-700/50 bg-gradient-to-r from-sky-500/10 to-indigo-500/10 flex-shrink-0">
+            <button onclick="closeBookingModal()" class="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-slate-700/50 hover:bg-red-500/80 text-slate-400 hover:text-white transition-all">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-sky-500 to-indigo-500 flex items-center justify-center shadow-lg">
+                    <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z"/></svg>
+                </div>
+                <div>
+                    <h2 class="text-xl font-bold text-white">Prendre Rendez-vous</h2>
+                    <p class="text-sm text-slate-400">avec {{ $displayName }}</p>
+                </div>
+            </div>
+            <!-- Stepper -->
+            <div class="flex items-center justify-center gap-2 mt-6">
+                <div id="step1Indicator" class="w-8 h-1 rounded-full bg-sky-500 transition-all"></div>
+                <div id="step2Indicator" class="w-8 h-1 rounded-full bg-slate-600 transition-all"></div>
+                <div id="step3Indicator" class="w-8 h-1 rounded-full bg-slate-600 transition-all"></div>
+            </div>
+        </div>
+
+        <!-- Content -->
+        <div class="modal-content-body p-4 sm:p-6">
+            <!-- Étape 1: Choix de la date -->
+            <div id="bookingStep1" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-300 mb-2">📅 Choisissez une date</label>
+                    <input type="date" id="bookingDate" class="w-full bg-slate-700/50 border border-slate-600 rounded-xl py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500" />
+                </div>
+                <div id="loadingSlots" class="hidden flex items-center justify-center py-8">
+                    <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-sky-500"></div>
+                </div>
+                <div id="noDateSelected" class="text-center py-8">
+                    <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-700/50 flex items-center justify-center">
+                        <svg class="w-8 h-8 text-slate-500" fill="currentColor" viewBox="0 0 24 24"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10z"/></svg>
+                    </div>
+                    <p class="text-slate-400">Sélectionnez une date pour voir les créneaux disponibles</p>
+                </div>
+            </div>
+
+            <!-- Étape 2: Choix du créneau -->
+            <div id="bookingStep2" class="hidden space-y-4">
+                <div class="flex items-center justify-between mb-2">
+                    <button onclick="goToBookingStep(1)" class="flex items-center gap-1 text-sm text-slate-400 hover:text-sky-400 transition-colors">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg> Modifier la date
+                    </button>
+                    <span id="selectedDateDisplay" class="text-sm text-sky-400 font-medium"></span>
+                </div>
+                <div id="slotsContainer" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
+                <div id="noSlots" class="hidden text-center py-8">
+                    <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-yellow-500/20 flex items-center justify-center">
+                        <svg class="w-8 h-8 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    </div>
+                    <p class="text-yellow-400 font-medium mb-1">Il n'y a pas de Rendez-vous disponible pour cette date</p>
+                    <p class="text-slate-400 text-sm">Veuillez essayer une autre date.</p>
+                </div>
+            </div>
+
+            <!-- Étape 3: Formulaire -->
+            <div id="bookingStep3" class="hidden space-y-4">
+                <button onclick="goToBookingStep(2)" class="flex items-center gap-1 text-sm text-slate-400 hover:text-sky-400 transition-colors mb-4">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg> Modifier le créneau
+                </button>
+                <!-- Récapitulatif -->
+                <div class="bg-gradient-to-r from-sky-500/10 to-indigo-500/10 border border-sky-500/30 rounded-xl p-4 mb-4">
+                    <p class="text-sm text-slate-300">
+                        <span class="text-sky-400 font-medium">📅 Rendez-vous avec {{ $displayName }}</span><br>
+                        Le <span id="recapDate" class="font-bold text-white"></span>
+                        à <span id="recapTime" class="font-bold text-white"></span>
+                        <span id="recapDuration" class="text-slate-400"></span>
+                    </p>
+                </div>
+                <!-- Formulaire -->
+                <form id="bookingForm" onsubmit="submitBooking(event)">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-1">Votre nom *</label>
+                            <input type="text" id="visitorName" required class="w-full bg-slate-700/50 border border-slate-600 rounded-xl py-2.5 px-4 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500" placeholder="Jean Dupont" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-1">Votre email *</label>
+                            <input type="email" id="visitorEmail" required class="w-full bg-slate-700/50 border border-slate-600 rounded-xl py-2.5 px-4 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500" placeholder="jean@example.com" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-1">Téléphone <span class="text-slate-500">(optionnel)</span></label>
+                            <input type="tel" id="visitorPhone" class="w-full bg-slate-700/50 border border-slate-600 rounded-xl py-2.5 px-4 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500" placeholder="+33 6 12 34 56 78" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-1">Message <span class="text-slate-500">(optionnel)</span></label>
+                            <textarea id="visitorMessage" rows="2" class="w-full bg-slate-700/50 border border-slate-600 rounded-xl py-2.5 px-4 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none" placeholder="Précisez le sujet de votre rendez-vous..."></textarea>
+                        </div>
+                        <div id="submitError" class="hidden bg-red-500/20 border border-red-500/50 rounded-xl p-4 text-red-400 text-sm"></div>
+                        <button type="submit" id="submitBtn" class="w-full bg-gradient-to-r from-sky-500 to-indigo-500 hover:from-sky-600 hover:to-indigo-600 disabled:from-slate-600 disabled:to-slate-600 text-white py-3 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 shadow-lg shadow-sky-500/25 disabled:shadow-none">
+                            <span id="submitBtnText">✓ Confirmer le rendez-vous</span>
+                            <span id="submitBtnLoading" class="hidden"><svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Confirmation...</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Étape 4: Succès -->
+            <div id="bookingStep4" class="hidden text-center py-8">
+                <div class="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center shadow-lg shadow-green-500/30">
+                    <svg class="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                </div>
+                <h3 class="text-2xl font-bold text-white mb-2">Rendez-vous confirmé !</h3>
+                <p class="text-slate-400 mb-6">
+                    Votre rendez-vous avec <span class="text-sky-400">{{ $displayName }}</span> a été enregistré.<br>
+                    Un email de confirmation vous sera envoyé.
+                </p>
+                <div id="successRecap" class="bg-slate-700/30 rounded-xl p-4 text-left mb-6"></div>
+                <button onclick="closeBookingModal()" class="bg-slate-700 hover:bg-slate-600 text-white py-2 px-6 rounded-xl font-medium transition-colors">
+                    Fermer
+                </button>
+            </div>
+        </div>
+
+        <!-- Footer avec bouton Continuer -->
+        <div id="bookingFooter" class="p-4 sm:p-6 border-t border-slate-700/50 bg-slate-800/50 flex-shrink-0">
+            <button id="continueBtn" onclick="goToNextBookingStep()" class="hidden w-full bg-sky-500 hover:bg-sky-600 text-white py-3 px-4 sm:px-6 rounded-xl font-semibold transition-colors flex items-center justify-center gap-2 text-sm sm:text-base">
+                <span id="continueBtnText">Choisir un créneau</span>
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ========== HELPER FUNCTIONS ==========
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+}
+
+// ========== BOOKING MODAL ==========
+const userId = {{ $user->id }};
+const orderId = @if(isset($appointmentOrderId) && $appointmentOrderId){{ $appointmentOrderId }}@else null @endif;
+const ownerName = "{{ $displayName }}";
+const apiBaseUrl = "{{ config('app.url') }}";
+
+let currentBookingStep = 1;
+let selectedDate = '';
+let selectedSlot = null;
+let availableSlots = [];
+
+function openBookingModal() {
+    resetBookingModal();
+    document.getElementById('bookingModal').classList.remove('hidden');
+    document.getElementById('bookingModal').classList.add('flex');
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('bookingDate').setAttribute('min', today);
+}
+
+function closeBookingModal() {
+    document.getElementById('bookingModal').classList.add('hidden');
+    document.getElementById('bookingModal').classList.remove('flex');
+}
+
+function resetBookingModal() {
+    currentBookingStep = 1;
+    selectedDate = '';
+    selectedSlot = null;
+    availableSlots = [];
+    document.getElementById('bookingDate').value = '';
+    document.getElementById('visitorName').value = '';
+    document.getElementById('visitorEmail').value = '';
+    document.getElementById('visitorPhone').value = '';
+    document.getElementById('visitorMessage').value = '';
+    document.getElementById('submitError').classList.add('hidden');
+    showBookingStep(1);
+}
+
+function showBookingStep(step) {
+    currentBookingStep = step;
+    document.getElementById('bookingStep1').classList.add('hidden');
+    document.getElementById('bookingStep2').classList.add('hidden');
+    document.getElementById('bookingStep3').classList.add('hidden');
+    document.getElementById('bookingStep4').classList.add('hidden');
+    document.getElementById('bookingStep' + step).classList.remove('hidden');
+    document.getElementById('step1Indicator').className = step >= 1 ? 'w-8 h-1 rounded-full bg-sky-500 transition-all' : 'w-8 h-1 rounded-full bg-slate-600 transition-all';
+    document.getElementById('step2Indicator').className = step >= 2 ? 'w-8 h-1 rounded-full bg-sky-500 transition-all' : 'w-8 h-1 rounded-full bg-slate-600 transition-all';
+    document.getElementById('step3Indicator').className = step >= 3 ? 'w-8 h-1 rounded-full bg-sky-500 transition-all' : 'w-8 h-1 rounded-full bg-slate-600 transition-all';
+    updateBookingFooter();
+}
+
+function goToBookingStep(step) { showBookingStep(step); }
+
+function goToNextBookingStep() {
+    if (currentBookingStep === 1 && selectedDate && availableSlots.length > 0) {
+        showBookingStep(2);
+    } else if (currentBookingStep === 2 && selectedSlot) {
+        showBookingStep(3);
+        updateRecap();
+    }
+}
+
+function updateBookingFooter() {
+    const continueBtn = document.getElementById('continueBtn');
+    const footer = document.getElementById('bookingFooter');
+    if (currentBookingStep === 1 && selectedDate && availableSlots.length > 0) {
+        continueBtn.classList.remove('hidden');
+        continueBtn.classList.add('flex');
+        document.getElementById('continueBtnText').textContent = 'Choisir un créneau';
+        footer.classList.remove('hidden');
+    } else if (currentBookingStep === 2 && selectedSlot) {
+        continueBtn.classList.remove('hidden');
+        continueBtn.classList.add('flex');
+        document.getElementById('continueBtnText').textContent = 'Continuer';
+        footer.classList.remove('hidden');
+    } else if (currentBookingStep >= 3) {
+        footer.classList.add('hidden');
+    } else {
+        continueBtn.classList.add('hidden');
+        continueBtn.classList.remove('flex');
+    }
+}
+
+document.getElementById('bookingDate').addEventListener('change', async function() {
+    selectedDate = this.value;
+    selectedSlot = null;
+    if (!selectedDate) {
+        document.getElementById('noDateSelected').classList.remove('hidden');
+        updateBookingFooter();
+        return;
+    }
+    document.getElementById('noDateSelected').classList.add('hidden');
+    document.getElementById('loadingSlots').classList.remove('hidden');
+    try {
+        let url = `${apiBaseUrl}/api/user/${userId}/slots?date=${selectedDate}`;
+        if (orderId) url += `&order_id=${orderId}`;
+        const response = await fetch(url);
+        const data = await response.json();
+        availableSlots = data.available_slots || [];
+        document.getElementById('loadingSlots').classList.add('hidden');
+        // Toujours passer à l'étape 2 pour afficher les créneaux ou le message "aucun créneau"
+        showBookingStep(2);
+        renderSlots();
+    } catch (error) {
+        console.error('Error fetching slots:', error);
+        document.getElementById('loadingSlots').classList.add('hidden');
+        availableSlots = [];
+        // Passer à l'étape 2 pour afficher le message d'erreur
+        showBookingStep(2);
+        renderSlots();
+    }
+});
+
+function renderSlots() {
+    const container = document.getElementById('slotsContainer');
+    const noSlots = document.getElementById('noSlots');
+    document.getElementById('selectedDateDisplay').textContent = formatDisplayDate(selectedDate);
+    if (availableSlots.length === 0) {
+        container.innerHTML = '';
+        noSlots.classList.remove('hidden');
+        return;
+    }
+    noSlots.classList.add('hidden');
+    container.innerHTML = availableSlots.map((slot, index) => `
+        <button type="button" onclick="selectSlot(${index})" class="slot-btn p-3 rounded-xl border-2 transition-all text-center ${selectedSlot && selectedSlot.start === slot.start ? 'bg-sky-500/20 border-sky-500 text-sky-400' : 'bg-slate-700/30 border-slate-600 text-slate-300 hover:border-sky-400 hover:text-sky-400'}">
+            <div class="font-bold text-lg">${slot.start}</div>
+            <div class="text-xs opacity-70">${formatDuration(slot.duration)}</div>
+        </button>
+    `).join('');
+    updateBookingFooter();
+}
+
+function selectSlot(index) {
+    selectedSlot = availableSlots[index];
+    renderSlots();
+    updateBookingFooter();
+}
+
+function updateRecap() {
+    document.getElementById('recapDate').textContent = formatDisplayDate(selectedDate);
+    document.getElementById('recapTime').textContent = selectedSlot.start;
+    document.getElementById('recapDuration').textContent = `(${formatDuration(selectedSlot.duration)})`;
+}
+
+async function submitBooking(event) {
+    event.preventDefault();
+    const submitBtn = document.getElementById('submitBtn');
+    const submitBtnText = document.getElementById('submitBtnText');
+    const submitBtnLoading = document.getElementById('submitBtnLoading');
+    const errorDiv = document.getElementById('submitError');
+    submitBtn.disabled = true;
+    submitBtnText.classList.add('hidden');
+    submitBtnLoading.classList.remove('hidden');
+    errorDiv.classList.add('hidden');
+    const payload = {
+        visitor_name: document.getElementById('visitorName').value,
+        visitor_email: document.getElementById('visitorEmail').value,
+        visitor_phone: document.getElementById('visitorPhone').value || null,
+        message: document.getElementById('visitorMessage').value || null,
+        date: selectedDate,
+        start_time: selectedSlot.start
+    };
+    if (orderId) payload.order_id = orderId;
+    
+    // Récupérer le token CSRF depuis la meta tag ou le cookie XSRF-TOKEN
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    const xsrfToken = getCookie('XSRF-TOKEN');
+    
+    try {
+        const headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+        };
+        
+        // Ajouter le token CSRF (priorité à la meta tag, sinon cookie XSRF-TOKEN)
+        if (csrfToken) {
+            headers['X-CSRF-TOKEN'] = csrfToken;
+        } else if (xsrfToken) {
+            headers['X-XSRF-TOKEN'] = decodeURIComponent(xsrfToken);
+        }
+        
+        const response = await fetch(`${apiBaseUrl}/api/user/${userId}/appointments`, {
+            method: 'POST',
+            headers: headers,
+            credentials: 'same-origin', // Inclure les cookies (pour XSRF-TOKEN)
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            if (response.status === 409) {
+                errorDiv.textContent = 'Ce créneau vient d\'être réservé. Veuillez en choisir un autre.';
+                errorDiv.classList.remove('hidden');
+                showBookingStep(2);
+                document.getElementById('loadingSlots').classList.remove('hidden');
+                let url = `${apiBaseUrl}/api/user/${userId}/slots?date=${selectedDate}`;
+                if (orderId) url += `&order_id=${orderId}`;
+                const slotsResponse = await fetch(url);
+                const slotsData = await slotsResponse.json();
+                availableSlots = slotsData.available_slots || [];
+                document.getElementById('loadingSlots').classList.add('hidden');
+                renderSlots();
+            } else {
+                throw new Error(data.message || 'Une erreur est survenue');
+            }
+        } else {
+            document.getElementById('successRecap').innerHTML = `
+                <p class="text-sm text-slate-300">
+                    <span class="text-slate-500">📅 Date :</span> ${formatDisplayDate(selectedDate)}<br>
+                    <span class="text-slate-500">⏰ Heure :</span> ${selectedSlot.start} - ${selectedSlot.end || ''}
+                </p>
+            `;
+            showBookingStep(4);
+        }
+    } catch (error) {
+        console.error('Error submitting booking:', error);
+        errorDiv.textContent = error.message || 'Une erreur est survenue. Veuillez réessayer.';
+        errorDiv.classList.remove('hidden');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtnText.classList.remove('hidden');
+        submitBtnLoading.classList.add('hidden');
+    }
+}
+
+function formatDuration(minutes) {
+    if (!minutes) return '';
+    if (minutes < 60) return minutes + 'min';
+    if (minutes === 60) return '1h';
+    if (minutes === 90) return '1h30';
+    if (minutes === 120) return '2h';
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return mins > 0 ? hours + 'h' + mins : hours + 'h';
+}
+
+function formatDisplayDate(dateStr) {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const options = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+    return date.toLocaleDateString('fr-FR', options);
+}
+
+// Fermer le modal en cliquant en dehors
+document.addEventListener('click', function(e) {
+    const bookingModal = document.getElementById('bookingModal');
+    if (e.target === bookingModal) {
+        closeBookingModal();
+    }
+});
+</script>
+@endif
+
+{{-- Modal d'Échange de Contact --}}
+<div id="shareContactModal" class="fixed inset-0 bg-black bg-opacity-60 hidden items-center justify-center z-50 p-2 sm:p-4 backdrop-blur-sm overflow-y-auto">
+    <div class="modal-content bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl shadow-2xl w-full max-w-lg border border-slate-700 my-auto">
+        <!-- Header -->
+        <div class="relative p-4 sm:p-6 border-b border-slate-700/50 bg-gradient-to-r from-emerald-500/10 to-teal-500/10 flex-shrink-0">
+            <button onclick="closeShareContactModal()" class="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-slate-700/50 hover:bg-red-500/80 text-slate-400 hover:text-white transition-all">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-lg">
+                    <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3L5 6.99h3V14h2V6.99h3L9 3z"/></svg>
+                </div>
+                <div>
+                    <h2 class="text-xl font-bold text-white">Échanger mon contact</h2>
+                    <p class="text-sm text-slate-400">avec {{ $displayName }}</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Content -->
+        <div class="modal-content-body p-4 sm:p-6">
+            <!-- Formulaire -->
+            <div id="shareContactForm" class="space-y-4">
+                <p class="text-slate-400 text-sm mb-4">
+                    Partagez vos coordonnées avec {{ $displayName }}. Votre navigateur peut pré-remplir automatiquement les champs.
+                </p>
+                
+                <form id="contactForm" onsubmit="submitShareContact(event)">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-1">Prénom *</label>
+                            <input 
+                                type="text" 
+                                id="shareFirstName" 
+                                name="fname"
+                                autocomplete="given-name"
+                                required 
+                                class="w-full bg-slate-700/50 border border-slate-600 rounded-xl py-2.5 px-4 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500" 
+                                placeholder="Jean" 
+                            />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-1">Nom *</label>
+                            <input 
+                                type="text" 
+                                id="shareLastName" 
+                                name="lname"
+                                autocomplete="family-name"
+                                required 
+                                class="w-full bg-slate-700/50 border border-slate-600 rounded-xl py-2.5 px-4 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500" 
+                                placeholder="Dupont" 
+                            />
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4">
+                        <label class="block text-sm font-medium text-slate-300 mb-1">Email</label>
+                        <input 
+                            type="email" 
+                            id="shareEmail" 
+                            name="email"
+                            autocomplete="email"
+                            class="w-full bg-slate-700/50 border border-slate-600 rounded-xl py-2.5 px-4 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500" 
+                            placeholder="jean.dupont@email.com" 
+                        />
+                    </div>
+                    
+                    <div class="mt-4">
+                        <label class="block text-sm font-medium text-slate-300 mb-1">Téléphone</label>
+                        <input 
+                            type="tel" 
+                            id="sharePhone" 
+                            name="phone"
+                            autocomplete="tel"
+                            class="w-full bg-slate-700/50 border border-slate-600 rounded-xl py-2.5 px-4 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500" 
+                            placeholder="+33 6 12 34 56 78" 
+                        />
+                    </div>
+                    
+                    <div class="mt-4">
+                        <label class="block text-sm font-medium text-slate-300 mb-1">Entreprise <span class="text-slate-500">(optionnel)</span></label>
+                        <input 
+                            type="text" 
+                            id="shareCompany" 
+                            name="organization"
+                            autocomplete="organization"
+                            class="w-full bg-slate-700/50 border border-slate-600 rounded-xl py-2.5 px-4 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500" 
+                            placeholder="Ma Société" 
+                        />
+                    </div>
+                    
+                    <p class="text-xs text-slate-500 mt-4">* Au moins un email ou un téléphone est requis</p>
+                    
+                    <div id="shareContactError" class="hidden mt-4 bg-red-500/20 border border-red-500/50 rounded-xl p-4 text-red-400 text-sm"></div>
+                    
+                    <button 
+                        type="submit" 
+                        id="shareSubmitBtn" 
+                        class="w-full mt-6 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 disabled:from-slate-600 disabled:to-slate-600 text-white py-3 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 disabled:shadow-none"
+                    >
+                        <span id="shareSubmitBtnText">
+                            <svg class="w-5 h-5 inline mr-2" fill="currentColor" viewBox="0 0 24 24"><path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3L5 6.99h3V14h2V6.99h3L9 3z"/></svg>
+                            Échanger
+                        </span>
+                        <span id="shareSubmitBtnLoading" class="hidden">
+                            <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                            Envoi...
+                        </span>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Succès -->
+            <div id="shareContactSuccess" class="hidden text-center py-8">
+                <div class="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/30">
+                    <svg class="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                </div>
+                <h3 class="text-2xl font-bold text-white mb-2">Contact partagé !</h3>
+                <p class="text-slate-400 mb-6">
+                    Vos coordonnées ont été envoyées à<br>
+                    <span class="text-emerald-400 font-medium">{{ $displayName }}</span>
+                </p>
+                <button onclick="closeShareContactModal()" class="bg-slate-700 hover:bg-slate-600 text-white py-2 px-6 rounded-xl font-medium transition-colors">
+                    Fermer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ========== SHARE CONTACT MODAL ==========
+const shareContactUserId = {{ $user->id }};
+const shareContactOrderId = @if(isset($order) && $order){{ $order->id }}@else null @endif;
+
+function openShareContactModal() {
+    resetShareContactModal();
+    document.getElementById('shareContactModal').classList.remove('hidden');
+    document.getElementById('shareContactModal').classList.add('flex');
+    // Focus sur le premier champ pour déclencher l'autofill
+    setTimeout(() => {
+        document.getElementById('shareFirstName').focus();
+    }, 100);
+}
+
+function closeShareContactModal() {
+    document.getElementById('shareContactModal').classList.add('hidden');
+    document.getElementById('shareContactModal').classList.remove('flex');
+}
+
+function resetShareContactModal() {
+    document.getElementById('contactForm').reset();
+    document.getElementById('shareContactForm').classList.remove('hidden');
+    document.getElementById('shareContactSuccess').classList.add('hidden');
+    document.getElementById('shareContactError').classList.add('hidden');
+}
+
+// Récupérer un cookie par son nom
+function getCookieShare(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+}
+
+async function submitShareContact(event) {
+    event.preventDefault();
+    
+    const submitBtn = document.getElementById('shareSubmitBtn');
+    const submitBtnText = document.getElementById('shareSubmitBtnText');
+    const submitBtnLoading = document.getElementById('shareSubmitBtnLoading');
+    const errorDiv = document.getElementById('shareContactError');
+    
+    const firstName = document.getElementById('shareFirstName').value.trim();
+    const lastName = document.getElementById('shareLastName').value.trim();
+    const email = document.getElementById('shareEmail').value.trim();
+    const phone = document.getElementById('sharePhone').value.trim();
+    const company = document.getElementById('shareCompany').value.trim();
+    
+    // Validation
+    if (!email && !phone) {
+        errorDiv.textContent = 'Veuillez fournir au moins un email ou un numéro de téléphone.';
+        errorDiv.classList.remove('hidden');
+        return;
+    }
+    
+    submitBtn.disabled = true;
+    submitBtnText.classList.add('hidden');
+    submitBtnLoading.classList.remove('hidden');
+    errorDiv.classList.add('hidden');
+    
+    const payload = {
+        first_name: firstName,
+        last_name: lastName,
+        email: email || null,
+        phone: phone || null,
+        company: company || null,
+    };
+    if (shareContactOrderId) {
+        payload.order_id = shareContactOrderId;
+    }
+    
+    // Récupérer le token CSRF
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    const xsrfToken = getCookieShare('XSRF-TOKEN');
+    
+    try {
+        const headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+        };
+        
+        if (csrfToken) {
+            headers['X-CSRF-TOKEN'] = csrfToken;
+        } else if (xsrfToken) {
+            headers['X-XSRF-TOKEN'] = decodeURIComponent(xsrfToken);
+        }
+        
+        console.log('Envoi du contact:', { payload, userId: shareContactUserId, headers: Object.keys(headers) });
+        
+        const response = await fetch(`{{ config('app.url') }}/api/user/${shareContactUserId}/share-contact`, {
+            method: 'POST',
+            headers: headers,
+            credentials: 'same-origin',
+            body: JSON.stringify(payload)
+        });
+        
+        console.log('Response status:', response.status);
+        
+        const data = await response.json();
+        console.log('Response data:', data);
+        
+        if (!response.ok) {
+            throw new Error(data.message || 'Une erreur est survenue');
+        }
+        
+        // Succès
+        document.getElementById('shareContactForm').classList.add('hidden');
+        document.getElementById('shareContactSuccess').classList.remove('hidden');
+        
+    } catch (error) {
+        console.error('Error sharing contact:', error);
+        console.error('Error details:', error.message, error.stack);
+        errorDiv.textContent = error.message || 'Une erreur est survenue. Veuillez réessayer.';
+        errorDiv.classList.remove('hidden');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtnText.classList.remove('hidden');
+        submitBtnLoading.classList.add('hidden');
+    }
+}
+
+// Fermer le modal share contact en cliquant en dehors
+document.addEventListener('click', function(e) {
+    const shareModal = document.getElementById('shareContactModal');
+    if (e.target === shareModal) {
+        closeShareContactModal();
+    }
+});
+</script>
+
 </body>
 </html>

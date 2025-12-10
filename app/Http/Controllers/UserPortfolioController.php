@@ -282,10 +282,29 @@ class UserPortfolioController extends Controller
         $portfolio = UserPortfolio::where('user_id', $user->id)
             ->firstOrFail();
 
+        // Récupérer la configuration des rendez-vous
+        // Pour les portfolios, on récupère la première commande configurée pour les rendez-vous
+        $order = Order::where('user_id', $user->id)
+            ->where('status', '!=', 'cancelled')
+            ->orderBy('created_at', 'desc')
+            ->first();
+        
+        $appointmentSetting = null;
+        $appointmentOrderId = null;
+        
+        if ($order) {
+            $appointmentOrderId = $order->id;
+            $appointmentSetting = \App\Models\AppointmentSetting::where('user_id', $user->id)
+                ->where('order_id', $order->id)
+                ->first();
+        }
+
         // Retourner la vue Blade au lieu du JSON
         return view('portfolio.public', [
             'user' => $user,
-            'portfolio' => $portfolio
+            'portfolio' => $portfolio,
+            'appointmentSetting' => $appointmentSetting,
+            'appointmentOrderId' => $appointmentOrderId,
         ]);
     }
 }

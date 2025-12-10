@@ -512,56 +512,86 @@ class CompanyPageController extends Controller
         }
 
         // Log pour debug
+        // IMPORTANT: Utiliser l'opérateur null-safe ?-> pour éviter les erreurs si $contactInfo est null
         Log::info('Company Page Show - Contact Info', [
             'user_id' => $user->id,
             'order_id' => $orderId,
             'company_page_order_id' => $companyPage->order_id ?? null,
             'has_contact_info' => $contactInfo ? 'yes' : 'no',
-            'whatsapp' => $contactInfo->whatsapp_url ?? 'N/A',
-            'linkedin' => $contactInfo->linkedin_url ?? 'N/A',
-            'facebook' => $contactInfo->facebook_url ?? 'N/A',
+            'whatsapp' => $contactInfo?->whatsapp_url ?? 'N/A',
+            'linkedin' => $contactInfo?->linkedin_url ?? 'N/A',
+            'facebook' => $contactInfo?->facebook_url ?? 'N/A',
         ]);
 
         // Retourner les données pour le frontend
+        // IMPORTANT: Passer orderId pour récupérer la configuration de rendez-vous spécifique à la commande
         return response()->json([
             'user' => [
                 'username' => $user->username,
                 'company_name' => $user->company_name,
             ],
-            'pageData' => $this->formatPageData($companyPage, $contactInfo),
+            'pageData' => $this->formatPageData($companyPage, $contactInfo, $user, $orderId),
         ]);
     }
 
     /**
      * Formate les données de la page pour le frontend
+     * 
+     * @param CompanyPage $companyPage
+     * @param mixed $contactInfo
+     * @param User|null $user
+     * @param int|null $orderId Pour récupérer la configuration de rendez-vous spécifique à la commande
      */
-    private function formatPageData($companyPage, $contactInfo = null)
+    private function formatPageData($companyPage, $contactInfo = null, $user = null, $orderId = null)
     {
         $primaryColor = $companyPage->primary_color ?? '#3b82f6';
 
+        // Récupérer la configuration des rendez-vous spécifique à la commande si fournie
+        // IMPORTANT: Ne PAS faire de fallback sur la configuration générale
+        // L'icône ne doit s'afficher QUE si la configuration est activée pour cette commande spécifique
+        $appointmentSetting = null;
+        $userId = null;
+        if ($user) {
+            $userId = $user->id;
+            
+            // Chercher UNIQUEMENT la configuration spécifique à la commande
+            if ($orderId) {
+                $appointmentSetting = AppointmentSetting::where('user_id', $user->id)
+                    ->where('order_id', $orderId)
+                    ->first();
+            }
+        }
+
         // Construire l'adresse complète depuis les données de "Ma Carte"
+        // IMPORTANT: Utiliser l'opérateur null-safe ?-> pour éviter les erreurs si $contactInfo est null
         $fullAddress = null;
         if ($contactInfo) {
             $addressParts = array_filter([
-                $contactInfo->address_neighborhood,
-                $contactInfo->address_commune,
-                $contactInfo->address_city,
-                $contactInfo->address_country
+                $contactInfo->address_neighborhood ?? null,
+                $contactInfo->address_commune ?? null,
+                $contactInfo->address_city ?? null,
+                $contactInfo->address_country ?? null
             ]);
-            $fullAddress = implode(', ', $addressParts);
+            $fullAddress = !empty($addressParts) ? implode(', ', $addressParts) : null;
         }
 
         // Formater les téléphones depuis l'array JSON
+        // IMPORTANT: Utiliser l'opérateur null-safe ?-> pour éviter les erreurs si $contactInfo est null
         $phoneNumbers = null;
-        if ($contactInfo && $contactInfo->phone_numbers) {
-            $phoneNumbers = implode(' / ', array_filter($contactInfo->phone_numbers));
+        if ($contactInfo) {
+            $phones = $contactInfo->phone_numbers ?? null;
+            if ($phones && is_array($phones)) {
+                $phoneNumbers = implode(' / ', array_filter($phones));
+            }
         }
 
         // Récupérer l'email (priorité : CompanyPage, sinon OrderEmployee)
         $contactEmail = $companyPage->contact_email;
-        if (!$contactEmail && $contactInfo && $contactInfo->emails) {
-            $emails = $contactInfo->emails; // Copier dans une variable pour éviter l'erreur "Indirect modification"
-            $contactEmail = is_array($emails) && count($emails) > 0 ? $emails[0] : null;
+        if (!$contactEmail && $contactInfo) {
+            $emails = $contactInfo->emails ?? null;
+            if ($emails && is_array($emails) && count($emails) > 0) {
+                $contactEmail = $emails[0];
+            }
         }
 
         // Déterminer l'URL du site web à afficher dans le footer de contact
@@ -571,9 +601,9 @@ class CompanyPageController extends Controller
         if (!$companyPage->website_featured_in_services_button && $companyPage->company_website_url) {
             // Si la case n'est pas cochée mais que l'URL est définie, utiliser company_website_url
             $footerWebsiteUrl = $companyPage->company_website_url;
-        } elseif ($contactInfo && $contactInfo->website_url) {
+        } elseif ($contactInfo) {
             // Sinon, utiliser website_url depuis contactInfo (depuis "Ma Carte")
-            $footerWebsiteUrl = $contactInfo->website_url;
+            $footerWebsiteUrl = $contactInfo->website_url ?? null;
         }
 
         return [
@@ -603,18 +633,19 @@ class CompanyPageController extends Controller
             'process_logistics_description' => $companyPage->process_logistics_description,
             'process_logistics_steps' => $companyPage->process_logistics_steps,
             // Informations de contact récupérées depuis "Ma Carte" (OrderEmployee)
-            'contact_name' => $contactInfo->profile_name ?? null,
+            // IMPORTANT: Utiliser l'opérateur null-safe ?-> pour éviter les erreurs si $contactInfo est null
+            'contact_name' => $contactInfo?->profile_name ?? null,
             'contact_address' => $fullAddress,
             'contact_phones' => $phoneNumbers,
             'contact_email' => $contactEmail,
             // Réseaux sociaux depuis "Ma Carte"
-            'whatsapp_url' => $contactInfo->whatsapp_url ?? null,
-            'linkedin_url' => $contactInfo->linkedin_url ?? null,
-            'facebook_url' => $contactInfo->facebook_url ?? null,
-            'twitter_url' => $contactInfo->twitter_url ?? null,
-            'youtube_url' => $contactInfo->youtube_url ?? null,
-            'deezer_url' => $contactInfo->deezer_url ?? null,
-            'spotify_url' => $contactInfo->spotify_url ?? null,
+            'whatsapp_url' => $contactInfo?->whatsapp_url ?? null,
+            'linkedin_url' => $contactInfo?->linkedin_url ?? null,
+            'facebook_url' => $contactInfo?->facebook_url ?? null,
+            'twitter_url' => $contactInfo?->twitter_url ?? null,
+            'youtube_url' => $contactInfo?->youtube_url ?? null,
+            'deezer_url' => $contactInfo?->deezer_url ?? null,
+            'spotify_url' => $contactInfo?->spotify_url ?? null,
             // URL du site web : priorité à company_website_url si la case n'est pas cochée, sinon website_url depuis contactInfo
             'website_url' => $footerWebsiteUrl,
             'primary_color' => $primaryColor,
@@ -627,6 +658,12 @@ class CompanyPageController extends Controller
             'text_color_600' => 'text-[' . $primaryColor . ']',
             'text_color_700' => 'text-[' . $primaryColor . ']',
             'hover_text_color_500' => 'hover:text-[' . $primaryColor . ']',
+            // Données pour la prise de rendez-vous
+            'user_id' => $userId,
+            'order_id' => $orderId,
+            'appointment_setting' => $appointmentSetting ? [
+                'is_enabled' => $appointmentSetting->is_enabled,
+            ] : null,
         ];
     }
 

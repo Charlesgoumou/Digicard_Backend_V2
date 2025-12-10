@@ -19,6 +19,8 @@ use App\Http\Controllers\Admin\CompanyPageController as AdminCompanyPageControll
 use App\Http\Controllers\Admin\SettingsController;
 use App\Http\Controllers\StorageController;
 use App\Http\Controllers\SocialController;
+use App\Http\Controllers\AppointmentController;
+use App\Http\Controllers\SharedContactController;
 
 /*
 |--------------------------------------------------------------------------
@@ -148,11 +150,41 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::put('/user-portfolio', [UserPortfolioController::class, 'update'])->name('user-portfolio.update');
     Route::post('/user-portfolio/photo', [UserPortfolioController::class, 'uploadPhoto'])->name('user-portfolio.photo');
     Route::post('/user-portfolio/generate-content', [UserPortfolioController::class, 'generateContent'])->name('user-portfolio.generate-content');
+
+    // --- Routes Rendez-vous (Protégées) ---
+    // Récupérer la configuration des rendez-vous de l'utilisateur connecté
+    Route::get('/appointment-settings', [AppointmentController::class, 'getSettings'])->name('appointment-settings.show');
+    // Mettre à jour la configuration des rendez-vous
+    Route::put('/appointment-settings', [AppointmentController::class, 'updateSettings'])->name('appointment-settings.update');
+    // Récupérer tous les rendez-vous de l'utilisateur connecté
+    Route::get('/appointments', [AppointmentController::class, 'index'])->name('appointments.index');
+    // Annuler un rendez-vous
+    Route::put('/appointments/{id}/cancel', [AppointmentController::class, 'cancel'])->name('appointments.cancel');
+
+    // --- Routes Contacts Partagés (Protégées) ---
+    // Liste des contacts partagés reçus
+    Route::get('/shared-contacts', [SharedContactController::class, 'index'])->name('shared-contacts.index');
+    // Télécharger tous les nouveaux contacts en un seul fichier vCard (AVANT la route avec paramètre)
+    Route::get('/shared-contacts/download-all', [SharedContactController::class, 'downloadAllVCards'])->name('shared-contacts.download-all');
+    // Télécharger un contact au format vCard
+    Route::get('/shared-contacts/{contact}/download', [SharedContactController::class, 'downloadVCard'])->name('shared-contacts.download');
+    // Supprimer un contact
+    Route::delete('/shared-contacts/{contact}', [SharedContactController::class, 'destroy'])->name('shared-contacts.destroy');
 });
 
 // Routes publiques pour afficher les pages
 Route::get('/company/{username}', [CompanyPageController::class, 'show'])->name('company-page.show');
 Route::get('/portfolio/{username}', [UserPortfolioController::class, 'show'])->name('user-portfolio.show');
+
+// --- Routes Rendez-vous (Publiques) ---
+// Récupérer les créneaux disponibles pour un utilisateur à une date donnée
+Route::get('/user/{user}/slots', [AppointmentController::class, 'getPublicSlots'])->name('appointments.slots');
+// Réserver un rendez-vous chez un utilisateur
+Route::post('/user/{user}/appointments', [AppointmentController::class, 'store'])->name('appointments.store');
+
+// --- Routes Échange de Contact (Publique) ---
+// Partager son contact avec un utilisateur (route publique sans auth ni CSRF)
+Route::post('/user/{user}/share-contact', [SharedContactController::class, 'store'])->name('shared-contacts.store');
 
 // --- Routes Admin Publiques (Authentification) ---
 Route::prefix('admin')->name('admin.')->group(function () {

@@ -124,6 +124,22 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
+     * Relation : Récupère la configuration des rendez-vous de cet utilisateur.
+     */
+    public function appointmentSetting()
+    {
+        return $this->hasOne(AppointmentSetting::class);
+    }
+
+    /**
+     * Relation : Récupère les rendez-vous de cet utilisateur (en tant que propriétaire de carte).
+     */
+    public function appointments()
+    {
+        return $this->hasMany(Appointment::class);
+    }
+
+    /**
      * Accesseur pour le téléphone (compatibilité avec le frontend).
      * Retourne vcard_phone comme téléphone principal.
      */

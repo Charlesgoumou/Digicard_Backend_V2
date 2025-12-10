@@ -6,11 +6,12 @@ use App\Models\User;
 use App\Models\Order;
 use App\Models\CompanyPage;
 use App\Models\UserPortfolio;
+use App\Models\AppointmentSetting;
 use Illuminate\Http\Request;
 use JeroenDesloovere\VCard\VCard;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage; // <-- Importez Storage
+use Illuminate\Support\Facades\Storage;
 
 class PublicProfileController extends Controller
 {
@@ -23,37 +24,83 @@ class PublicProfileController extends Controller
         $orderId = $request->query('order');
 
         // IMPORTANT: Le token peut contenir des caractères spéciaux comme & qui sont interprétés comme des séparateurs de paramètres
-        // Récupérer le token depuis la chaîne de requête complète pour éviter la troncature
-        $accessToken = $request->query('token');
-        $queryString = $request->getQueryString();
+        // Exemple: token=ABC%0cDEF%^&6fl devient token=ABC%0cDEF%^ et 6fl= (paramètre séparé)
+        // On doit reconstruire le token complet DEPUIS LA QUERY STRING BRUTE (avant décodage PHP)
+        $accessToken = null;
+        $queryString = $request->server('QUERY_STRING'); // Query string brute, non décodée
 
-        // Si un token est présent dans l'URL, essayer de le récupérer depuis la chaîne de requête complète
-        // car $request->query('token') peut être tronqué si le token contient des &
         if ($queryString && strpos($queryString, 'token=') !== false) {
-            // Si le token est le premier paramètre (l'URL commence par "token=" ou "?token="),
-            // alors tout ce qui suit jusqu'à la fin est le token (les & font partie du token)
-            if (preg_match('/[?&]token=(.+)$/', $queryString, $matches)) {
-                $fullToken = urldecode($matches[1]);
-
-                // Si le token extrait est plus long que celui obtenu via query('token'),
-                // c'est probablement le token complet
-                if (strlen($fullToken) > strlen($accessToken ?? '')) {
-                    $accessToken = $fullToken;
-
-                    Log::info("PublicProfileController: Token complet récupéré depuis queryString", [
-                        'token_from_query' => $request->query('token'),
-                        'token_complet' => $accessToken,
-                        'token_length' => strlen($accessToken),
-                        'query_string' => $queryString,
-                    ]);
+            // Extraire le token depuis la query string brute
+            // La query string peut être : "token=ABC%0cDEF%^&6fl" ou "6fl=&token=ABC%0cDEF%25%5E"
+            
+            // Trouver la position de "token="
+            $tokenPos = strpos($queryString, 'token=');
+            if ($tokenPos !== false) {
+                // Extraire tout ce qui suit "token="
+                $afterToken = substr($queryString, $tokenPos + 6);
+                
+                // Identifier les paramètres légitimes (connus)
+                $knownParams = ['order'];
+                
+                // Si le token contient &, il peut être fragmenté
+                // On doit reconstruire en prenant tout jusqu'au premier paramètre connu ou la fin
+                $tokenEndPos = strlen($afterToken);
+                
+                // Chercher le premier paramètre connu après le token
+                foreach ($knownParams as $param) {
+                    $paramPos = strpos($afterToken, '&' . $param . '=');
+                    if ($paramPos !== false && $paramPos < $tokenEndPos) {
+                        $tokenEndPos = $paramPos;
+                    }
                 }
-            } else {
-                // Si le token n'est pas en fin de chaîne, essayer de le récupérer normalement
-                $parsedToken = $request->query('token');
-                if ($parsedToken && strlen($parsedToken) > strlen($accessToken ?? '')) {
-                    $accessToken = $parsedToken;
+                
+                // Extraire le token brut
+                $rawToken = substr($afterToken, 0, $tokenEndPos);
+                
+                // Vérifier s'il y a des paramètres "orphelins" avant "token=" qui font partie du token
+                // Exemple: "6fl=&token=ABC" signifie que "6fl" est un fragment du token
+                $beforeToken = substr($queryString, 0, $tokenPos);
+                $fragments = [];
+                
+                if ($beforeToken) {
+                    // Parser les paramètres avant "token="
+                    parse_str($beforeToken, $beforeParams);
+                    foreach ($beforeParams as $key => $value) {
+                        // Si la valeur est vide/null et que ce n'est pas un paramètre connu, c'est un fragment
+                        if (($value === '' || $value === null) && !in_array($key, $knownParams)) {
+                            $fragments[] = $key;
+                        }
+                    }
                 }
+                
+                // Reconstruire le token complet si on a des fragments
+                if (!empty($fragments)) {
+                    $rawToken = implode('&', $fragments) . '&' . $rawToken;
+                }
+                
+                // Normaliser l'encodage pour correspondre à la base de données
+                // Décoder %25 -> % et %5E -> ^ (encodage double)
+                $accessToken = str_replace('%25', '%', $rawToken);
+                $accessToken = str_replace('%5E', '^', $accessToken);
+                $accessToken = str_replace('%5e', '^', $accessToken);
+                
+                // Normaliser les codes hexadécimaux en minuscules (%0C -> %0c)
+                $accessToken = preg_replace_callback('/%([0-9A-F]{2})/i', function($m) {
+                    return '%' . strtolower($m[1]);
+                }, $accessToken);
+                
+                Log::info("PublicProfileController: Token extrait de la query string brute", [
+                    'query_string' => $queryString,
+                    'raw_token' => $rawToken,
+                    'fragments' => $fragments,
+                    'access_token' => $accessToken,
+                ]);
             }
+        }
+        
+        // Fallback sur la méthode classique si pas de token trouvé
+        if (!$accessToken) {
+            $accessToken = $request->query('token');
         }
 
         $order = null;
@@ -76,23 +123,58 @@ class PublicProfileController extends Controller
                 'query_string' => $request->getQueryString(),
             ]);
 
-            // Essayer d'abord avec le token décodé
-            $order = Order::where('access_token', $decodedToken)
+            // CORRECTION: Essayer d'abord avec le token BRUT (non décodé)
+            // Car le token en base peut contenir des caractères comme %0c qui sont littéraux, pas encodés
+            $order = Order::where('access_token', $accessToken)
                 ->where('status', 'validated')
                 ->first();
 
-            // Si pas trouvé, essayer avec le token brut (au cas où il n'est pas encodé)
-            if (!$order) {
-                $order = Order::where('access_token', $accessToken)
+            // Si pas trouvé, essayer avec le token décodé (au cas où il est réellement encodé)
+            if (!$order && $decodedToken !== $accessToken) {
+                $order = Order::where('access_token', $decodedToken)
                     ->where('status', 'validated')
                     ->first();
+            }
+            
+            // Si le token semble tronqué (trop court, < 30 caractères) et qu'on n'a pas trouvé de commande,
+            // essayer de chercher avec LIKE pour trouver le token complet
+            // Cela gère le cas où le token contient # qui est tronqué par le navigateur
+            // IMPORTANT: Les tokens font 32 caractères, donc si on a moins de 30, c'est probablement tronqué
+            if (!$order && strlen($accessToken) < 30) {
+                // Chercher avec LIKE mais s'assurer qu'on trouve une seule commande
+                $possibleOrders = Order::where('access_token', 'LIKE', $accessToken . '%')
+                    ->where('status', 'validated')
+                    ->get();
+                
+                // Si on trouve exactement une commande, l'utiliser
+                if ($possibleOrders->count() === 1) {
+                    $order = $possibleOrders->first();
+                    Log::info("PublicProfileController: Token tronqué trouvé avec LIKE", [
+                        'token_tronque' => $accessToken,
+                        'token_complet' => $order->access_token,
+                        'order_id' => $order->id,
+                    ]);
+                } elseif ($possibleOrders->count() > 1) {
+                    // Si plusieurs commandes correspondent, logger un avertissement
+                    Log::warning("PublicProfileController: Plusieurs commandes trouvées avec le préfixe de token", [
+                        'token_tronque' => $accessToken,
+                        'count' => $possibleOrders->count(),
+                    ]);
+                }
             }
 
             // Si toujours pas trouvé, essayer sans le filtre de statut (au cas où la commande n'est pas encore validée)
             if (!$order) {
-                $order = Order::where('access_token', $decodedToken)->first();
-                if (!$order) {
-                    $order = Order::where('access_token', $accessToken)->first();
+                $order = Order::where('access_token', $accessToken)->first();
+                if (!$order && $decodedToken !== $accessToken) {
+                    $order = Order::where('access_token', $decodedToken)->first();
+                }
+                // Dernier recours : chercher avec LIKE sans filtre de statut
+                if (!$order && strlen($accessToken) < 30) {
+                    $possibleOrders = Order::where('access_token', 'LIKE', $accessToken . '%')->get();
+                    if ($possibleOrders->count() === 1) {
+                        $order = $possibleOrders->first();
+                    }
                 }
             }
 
@@ -502,15 +584,31 @@ class PublicProfileController extends Controller
             $portfolioConfigured = !is_null($portfolio) && $portfolio->profile_type !== null;
         }
 
+        // Récupérer la configuration de rendez-vous spécifique à la commande
+        // IMPORTANT: Ne PAS faire de fallback sur la configuration générale
+        // L'icône ne doit s'afficher QUE si la configuration est activée pour cette commande spécifique
+        $appointmentSetting = null;
+        $appointmentOrderId = null;
+        
+        if ($order) {
+            $appointmentOrderId = $order->id;
+            // Chercher UNIQUEMENT la configuration spécifique à cette commande
+            $appointmentSetting = AppointmentSetting::where('user_id', $user->id)
+                ->where('order_id', $order->id)
+                ->first();
+        }
+
         return view('profile.public', [
             'user' => $user,
             'order' => $order,
             'orderEmployee' => $orderEmployee,
             'companyPagePublished' => $companyPagePublished,
-            'companyPageUsername' => $companyPageUsername, // Nouveau : username du business admin
-            'companyWebsiteUrl' => $companyWebsiteUrl, // URL du site web de l'entreprise
-            'websiteFeaturedInServicesButton' => $websiteFeaturedInServicesButton, // Flag pour mettre en avant le site web
-            'portfolioConfigured' => $portfolioConfigured, // Nouveau : portfolio configuré pour individual
+            'companyPageUsername' => $companyPageUsername,
+            'companyWebsiteUrl' => $companyWebsiteUrl,
+            'websiteFeaturedInServicesButton' => $websiteFeaturedInServicesButton,
+            'portfolioConfigured' => $portfolioConfigured,
+            'appointmentSetting' => $appointmentSetting,
+            'appointmentOrderId' => $appointmentOrderId,
         ]);
     }
 
