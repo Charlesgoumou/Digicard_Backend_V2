@@ -31,6 +31,8 @@ class Appointment extends Model
         'start_time',
         'end_time',
         'status',
+        'is_downloaded',
+        'downloaded_at',
     ];
 
     /**
@@ -43,6 +45,8 @@ class Appointment extends Model
         return [
             'start_time' => 'datetime',
             'end_time' => 'datetime',
+            'is_downloaded' => 'boolean',
+            'downloaded_at' => 'datetime',
         ];
     }
 
@@ -93,6 +97,22 @@ class Appointment extends Model
     public function scopePast($query)
     {
         return $query->where('end_time', '<', now());
+    }
+
+    /**
+     * Scope : Filtre les rendez-vous non téléchargés.
+     */
+    public function scopeNotDownloaded($query)
+    {
+        return $query->where('is_downloaded', false);
+    }
+
+    /**
+     * Scope : Filtre les rendez-vous téléchargés.
+     */
+    public function scopeDownloaded($query)
+    {
+        return $query->where('is_downloaded', true);
     }
 
     /**
@@ -149,6 +169,88 @@ class Appointment extends Model
     public function getDurationInMinutes(): int
     {
         return $this->start_time->diffInMinutes($this->end_time);
+    }
+
+    /**
+     * Vérifie si le rendez-vous a été téléchargé.
+     */
+    public function isDownloaded(): bool
+    {
+        return $this->is_downloaded === true;
+    }
+
+    /**
+     * Génère le contenu ICS (iCalendar) pour ce rendez-vous.
+     * 
+     * @return string
+     */
+    public function generateIcsContent(): string
+    {
+        $owner = $this->user;
+        
+        // Formater les dates au format iCalendar (UTC)
+        $dtStart = $this->start_time->setTimezone('UTC')->format('Ymd\THis\Z');
+        $dtEnd = $this->end_time->setTimezone('UTC')->format('Ymd\THis\Z');
+        $dtStamp = now()->setTimezone('UTC')->format('Ymd\THis\Z');
+        $created = $this->created_at->setTimezone('UTC')->format('Ymd\THis\Z');
+        
+        // Identifiant unique pour l'événement
+        $uid = 'digicard-appointment-' . $this->id . '@arccenciel.com';
+        
+        // Description de l'événement
+        $description = "Rendez-vous avec {$this->visitor_name}";
+        if ($this->message) {
+            $description .= "\\n\\nMotif : {$this->message}";
+        }
+        $description .= "\\n\\nContact visiteur :";
+        $description .= "\\nEmail : {$this->visitor_email}";
+        if ($this->visitor_phone) {
+            $description .= "\\nTéléphone : {$this->visitor_phone}";
+        }
+        $description .= "\\n\\nRéservé via DigiCard";
+        
+        // Titre de l'événement
+        $summary = "RDV: {$this->visitor_name}";
+        
+        // Email organisateur
+        $organizerEmail = config('mail.from.address', 'noreply@arccenciel.com');
+        $organizerName = 'DigiCard System';
+        
+        // Email du propriétaire (attendee)
+        $attendeeEmail = $owner ? $owner->email : '';
+        $attendeeName = $owner ? $owner->name : '';
+
+        // Construction du fichier ICS
+        $ics = "BEGIN:VCALENDAR\r\n";
+        $ics .= "VERSION:2.0\r\n";
+        $ics .= "PRODID:-//DigiCard//Appointment System//FR\r\n";
+        $ics .= "CALSCALE:GREGORIAN\r\n";
+        $ics .= "METHOD:PUBLISH\r\n";
+        $ics .= "BEGIN:VEVENT\r\n";
+        $ics .= "UID:{$uid}\r\n";
+        $ics .= "DTSTAMP:{$dtStamp}\r\n";
+        $ics .= "DTSTART:{$dtStart}\r\n";
+        $ics .= "DTEND:{$dtEnd}\r\n";
+        $ics .= "CREATED:{$created}\r\n";
+        $ics .= "SUMMARY:{$summary}\r\n";
+        $ics .= "DESCRIPTION:{$description}\r\n";
+        if ($attendeeEmail) {
+            $ics .= "ORGANIZER;CN={$organizerName}:mailto:{$organizerEmail}\r\n";
+            $ics .= "ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;CN={$attendeeName}:mailto:{$attendeeEmail}\r\n";
+        }
+        $ics .= "STATUS:CONFIRMED\r\n";
+        $ics .= "SEQUENCE:0\r\n";
+        $ics .= "TRANSP:OPAQUE\r\n";
+        // Rappel 30 minutes avant
+        $ics .= "BEGIN:VALARM\r\n";
+        $ics .= "TRIGGER:-PT30M\r\n";
+        $ics .= "ACTION:DISPLAY\r\n";
+        $ics .= "DESCRIPTION:Rappel: {$summary}\r\n";
+        $ics .= "END:VALARM\r\n";
+        $ics .= "END:VEVENT\r\n";
+        $ics .= "END:VCALENDAR\r\n";
+
+        return $ics;
     }
 }
 

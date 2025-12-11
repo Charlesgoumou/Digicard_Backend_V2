@@ -3,30 +3,21 @@
 namespace App\Mail;
 
 use App\Models\Appointment;
-use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Mail\Mailables\Address;
-use Illuminate\Queue\SerializesModels;
 use Carbon\Carbon;
 
-class AppointmentBooked extends Mailable implements ShouldQueue
+/**
+ * Email de notification de rendez-vous confirmé.
+ * 
+ * IMPORTANT: Ce Mailable n'implémente PAS ShouldQueue pour garantir l'envoi synchrone immédiat.
+ * L'email est envoyé directement lors de la confirmation du rendez-vous.
+ */
+class AppointmentBooked extends Mailable
 {
-    use Queueable, SerializesModels;
-    
-    /**
-     * Le nombre de tentatives maximum pour l'envoi.
-     */
-    public $tries = 3;
-    
-    /**
-     * Le timeout de la tâche en secondes.
-     */
-    public $timeout = 30;
-
     /**
      * Le rendez-vous.
      */

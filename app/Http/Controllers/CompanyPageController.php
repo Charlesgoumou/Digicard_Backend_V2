@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AppointmentSetting;
 use App\Models\CompanyPage;
 use App\Models\User;
 use App\Services\GeminiService;
@@ -430,7 +431,16 @@ class CompanyPageController extends Controller
         // Trouver l'utilisateur par username
         $user = User::where('username', $username)
             ->where('role', 'business_admin')
-            ->firstOrFail();
+            ->first();
+        
+        if (!$user) {
+            Log::warning('Company Page Show - Utilisateur non trouvé ou n\'est pas un business_admin', [
+                'username' => $username,
+            ]);
+            return response()->json([
+                'message' => 'Utilisateur non trouvé ou n\'est pas un administrateur d\'entreprise.',
+            ], 404);
+        }
 
         // Récupérer order_id depuis la requête si fourni
         $orderId = $request->query('order');
@@ -446,17 +456,31 @@ class CompanyPageController extends Controller
                 ->first();
 
             if ($order) {
-                // Récupérer la page entreprise de cette commande spécifique
+                // Récupérer la page entreprise de cette commande spécifique (publiée d'abord)
                 $companyPage = CompanyPage::where('order_id', $orderId)
                     ->where('user_id', $user->id)
                     ->where('is_published', true)
                     ->first();
 
-                // Si pas de page pour cette commande, fallback sur une page sans order_id
+                // Si pas de page publiée pour cette commande, essayer une page non publiée
+                if (!$companyPage) {
+                    $companyPage = CompanyPage::where('order_id', $orderId)
+                        ->where('user_id', $user->id)
+                        ->first();
+                }
+
+                // Si toujours pas de page pour cette commande, fallback sur une page sans order_id (publiée d'abord)
                 if (!$companyPage) {
                     $companyPage = CompanyPage::where('user_id', $user->id)
                         ->whereNull('order_id')
                         ->where('is_published', true)
+                        ->first();
+                }
+                
+                // Si toujours pas de page publiée sans order_id, essayer une page non publiée
+                if (!$companyPage) {
+                    $companyPage = CompanyPage::where('user_id', $user->id)
+                        ->whereNull('order_id')
                         ->first();
                 }
 
@@ -501,7 +525,26 @@ class CompanyPageController extends Controller
             $companyPage = CompanyPage::where('user_id', $user->id)
                 ->where('is_published', true)
                 ->orderBy('order_id', 'asc') // Préférer les pages sans order_id d'abord
-                ->firstOrFail();
+                ->first();
+            
+            // Si aucune page publiée n'est trouvée, essayer de trouver une page non publiée
+            if (!$companyPage) {
+                $companyPage = CompanyPage::where('user_id', $user->id)
+                    ->orderBy('order_id', 'asc')
+                    ->first();
+            }
+            
+            // Si toujours aucune page, retourner une erreur 404
+            if (!$companyPage) {
+                Log::warning('Company Page Show - Aucune page entreprise trouvée', [
+                    'user_id' => $user->id,
+                    'username' => $username,
+                    'order_id' => $orderId,
+                ]);
+                return response()->json([
+                    'message' => 'Aucune page entreprise trouvée pour cet utilisateur. Veuillez configurer la section "Nos Services" dans les paramètres.',
+                ], 404);
+            }
 
             // Récupérer les informations de contact depuis le premier OrderEmployee configuré
             if (!$contactInfo) {
@@ -513,10 +556,13 @@ class CompanyPageController extends Controller
 
         // Log pour debug
         // IMPORTANT: Utiliser l'opérateur null-safe ?-> pour éviter les erreurs si $contactInfo est null
-        Log::info('Company Page Show - Contact Info', [
+        Log::info('Company Page Show - Page trouvée', [
             'user_id' => $user->id,
+            'username' => $username,
             'order_id' => $orderId,
+            'company_page_id' => $companyPage->id ?? null,
             'company_page_order_id' => $companyPage->order_id ?? null,
+            'is_published' => $companyPage->is_published ?? false,
             'has_contact_info' => $contactInfo ? 'yes' : 'no',
             'whatsapp' => $contactInfo?->whatsapp_url ?? 'N/A',
             'linkedin' => $contactInfo?->linkedin_url ?? 'N/A',

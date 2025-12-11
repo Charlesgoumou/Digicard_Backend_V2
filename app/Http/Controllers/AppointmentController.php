@@ -49,14 +49,28 @@ class AppointmentController extends Controller
 
         // Vérifier que la commande appartient bien à l'utilisateur si order_id est fourni
         if ($orderId) {
-            $order = \App\Models\Order::where('id', $orderId)
-                ->where('user_id', $user->id)
-                ->first();
+            // Pour les employés, vérifier via OrderEmployee
+            if ($user->role === 'employee') {
+                $orderEmployee = \App\Models\OrderEmployee::where('employee_id', $user->id)
+                    ->where('order_id', $orderId)
+                    ->first();
 
-            if (!$order) {
-                return response()->json([
-                    'message' => 'Commande non trouvée ou non autorisée.',
-                ], 404);
+                if (!$orderEmployee) {
+                    return response()->json([
+                        'message' => 'Commande non trouvée ou non autorisée.',
+                    ], 404);
+                }
+            } else {
+                // Pour les autres utilisateurs (individual, business_admin), vérifier directement
+                $order = \App\Models\Order::where('id', $orderId)
+                    ->where('user_id', $user->id)
+                    ->first();
+
+                if (!$order) {
+                    return response()->json([
+                        'message' => 'Commande non trouvée ou non autorisée.',
+                    ], 404);
+                }
             }
         }
 
@@ -242,14 +256,28 @@ class AppointmentController extends Controller
 
         // Vérifier que la commande appartient bien à l'utilisateur si order_id est fourni
         if ($orderId) {
-            $order = \App\Models\Order::where('id', $orderId)
-                ->where('user_id', $user->id)
-                ->first();
+            // Pour les employés, vérifier via OrderEmployee
+            if ($user->role === 'employee') {
+                $orderEmployee = \App\Models\OrderEmployee::where('employee_id', $user->id)
+                    ->where('order_id', $orderId)
+                    ->first();
 
-            if (!$order) {
-                return response()->json([
-                    'message' => 'Commande non trouvée ou non autorisée.',
-                ], 404);
+                if (!$orderEmployee) {
+                    return response()->json([
+                        'message' => 'Commande non trouvée ou non autorisée.',
+                    ], 404);
+                }
+            } else {
+                // Pour les autres utilisateurs (individual, business_admin), vérifier directement
+                $order = \App\Models\Order::where('id', $orderId)
+                    ->where('user_id', $user->id)
+                    ->first();
+
+                if (!$order) {
+                    return response()->json([
+                        'message' => 'Commande non trouvée ou non autorisée.',
+                    ], 404);
+                }
             }
 
             // Récupérer la configuration spécifique à cette commande
@@ -554,6 +582,11 @@ class AppointmentController extends Controller
 
             // Recharger le rendez-vous avec la relation user pour l'email
             $appointment->load('user');
+            
+            // S'assurer que le user est bien défini sur le rendez-vous
+            if (!$appointment->user) {
+                $appointment->user = $user;
+            }
 
             // Préparer la réponse immédiatement
             $responseData = [
@@ -568,29 +601,45 @@ class AppointmentController extends Controller
                 ],
             ];
 
-            // Envoyer l'email de notification en file d'attente (non-bloquant)
-            // Le Mailable implémente ShouldQueue donc il sera traité en arrière-plan
+            // Envoyer l'email de notification IMMÉDIATEMENT (synchrone)
+            // Le Mailable AppointmentBooked n'implémente pas ShouldQueue pour garantir l'envoi
             try {
-                Mail::to($user->email)->queue(new AppointmentBooked($appointment));
-                Log::info('Email de notification de rendez-vous mis en file d\'attente', [
+                Log::info('📧 Tentative d\'envoi de l\'email de notification de rendez-vous (SYNCHRONE)', [
+                    'appointment_id' => $appointment->id,
+                    'owner_email' => $user->email,
+                    'visitor_email' => $appointment->visitor_email,
+                    'mail_driver' => config('mail.default'),
+                    'mail_host' => config('mail.mailers.smtp.host'),
+                    'mail_from' => config('mail.from.address'),
+                ]);
+                
+                // Envoi synchrone direct - pas de queue
+                Mail::to($user->email)->send(new AppointmentBooked($appointment));
+                
+                Log::info('✅ Email de notification de rendez-vous envoyé avec succès (SYNCHRONE)', [
                     'appointment_id' => $appointment->id,
                     'owner_email' => $user->email,
                     'visitor_email' => $appointment->visitor_email,
                 ]);
             } catch (\Exception $mailException) {
-                // Si la queue échoue, envoyer de manière synchrone
-                Log::warning('Queue non disponible, envoi synchrone de l\'email', [
+                Log::error('❌ Erreur critique lors de l\'envoi de l\'email de rendez-vous', [
                     'appointment_id' => $appointment->id,
+                    'owner_email' => $user->email,
+                    'visitor_email' => $appointment->visitor_email,
                     'error' => $mailException->getMessage(),
+                    'error_code' => $mailException->getCode(),
+                    'trace' => $mailException->getTraceAsString(),
+                    'mail_config' => [
+                        'driver' => config('mail.default'),
+                        'host' => config('mail.mailers.smtp.host'),
+                        'port' => config('mail.mailers.smtp.port'),
+                        'from_address' => config('mail.from.address'),
+                    ],
                 ]);
-                try {
-                    Mail::to($user->email)->send(new AppointmentBooked($appointment));
-                } catch (\Exception $syncMailException) {
-                    Log::error('Erreur lors de l\'envoi synchrone de l\'email', [
-                        'appointment_id' => $appointment->id,
-                        'error' => $syncMailException->getMessage(),
-                    ]);
-                }
+                
+                // Ne pas faire échouer la requête si l'email échoue
+                // L'utilisateur a quand même son rendez-vous enregistré
+                // Mais on log l'erreur pour investigation
             }
 
             return response()->json($responseData, 201);
@@ -656,14 +705,28 @@ class AppointmentController extends Controller
 
         // Vérifier que la commande appartient bien à l'utilisateur si order_id est fourni
         if ($orderId) {
-            $order = \App\Models\Order::where('id', $orderId)
-                ->where('user_id', $user->id)
-                ->first();
+            // Pour les employés, vérifier via OrderEmployee
+            if ($user->role === 'employee') {
+                $orderEmployee = \App\Models\OrderEmployee::where('employee_id', $user->id)
+                    ->where('order_id', $orderId)
+                    ->first();
 
-            if (!$order) {
-                return response()->json([
-                    'message' => 'Commande non trouvée ou non autorisée.',
-                ], 404);
+                if (!$orderEmployee) {
+                    return response()->json([
+                        'message' => 'Commande non trouvée ou non autorisée.',
+                    ], 404);
+                }
+            } else {
+                // Pour les autres utilisateurs (individual, business_admin), vérifier directement
+                $order = \App\Models\Order::where('id', $orderId)
+                    ->where('user_id', $user->id)
+                    ->first();
+
+                if (!$order) {
+                    return response()->json([
+                        'message' => 'Commande non trouvée ou non autorisée.',
+                    ], 404);
+                }
             }
         }
 
@@ -692,6 +755,8 @@ class AppointmentController extends Controller
                 'status' => $appointment->status,
                 'duration' => $appointment->getDurationInMinutes(),
                 'order_id' => $appointment->order_id,
+                'is_downloaded' => $appointment->is_downloaded,
+                'downloaded_at' => $appointment->downloaded_at ? $appointment->downloaded_at->toIso8601String() : null,
             ];
         });
 
@@ -753,6 +818,202 @@ class AppointmentController extends Controller
                 'id' => $appointment->id,
                 'status' => $appointment->status,
             ],
+        ]);
+    }
+
+    /**
+     * Télécharge un rendez-vous au format ICS pour l'importer dans un agenda.
+     * Route protégée par auth:sanctum.
+     * 
+     * @param Request $request
+     * @param int $id
+     * @return \Symfony\Component\HttpFoundation\Response
+     */
+    public function downloadIcs(Request $request, $id)
+    {
+        $user = $request->user();
+
+        $appointment = Appointment::where('id', $id)
+            ->where('user_id', $user->id)
+            ->where('status', Appointment::STATUS_CONFIRMED)
+            ->first();
+
+        if (!$appointment) {
+            return response()->json([
+                'message' => 'Rendez-vous non trouvé ou non autorisé.',
+            ], 404);
+        }
+
+        // Charger la relation user
+        $appointment->load('user');
+
+        // Générer le contenu ICS
+        $icsContent = $appointment->generateIcsContent();
+
+        // Marquer comme téléchargé
+        $appointment->is_downloaded = true;
+        $appointment->downloaded_at = now();
+        $appointment->save();
+
+        // Nom du fichier
+        $fileName = 'rdv-' . $appointment->visitor_name . '-' . $appointment->start_time->format('Y-m-d') . '.ics';
+        $fileName = preg_replace('/[^a-zA-Z0-9\-_\.]/', '-', $fileName);
+
+        return response($icsContent, 200)
+            ->header('Content-Type', 'text/calendar; charset=UTF-8')
+            ->header('Content-Disposition', 'attachment; filename="' . $fileName . '"');
+    }
+
+    /**
+     * Télécharge tous les rendez-vous non téléchargés au format ICS.
+     * Route protégée par auth:sanctum.
+     * 
+     * @param Request $request
+     * @return \Symfony\Component\HttpFoundation\Response
+     */
+    public function downloadAllIcs(Request $request)
+    {
+        $user = $request->user();
+        $orderId = $request->query('order_id');
+
+        $query = Appointment::where('user_id', $user->id)
+            ->where('status', Appointment::STATUS_CONFIRMED)
+            ->where('is_downloaded', false)
+            ->with('user')
+            ->orderBy('start_time', 'asc');
+
+        if ($orderId) {
+            $query->where('order_id', $orderId);
+        }
+
+        $appointments = $query->get();
+
+        if ($appointments->isEmpty()) {
+            return response()->json([
+                'message' => 'Aucun nouveau rendez-vous à télécharger.',
+            ], 404);
+        }
+
+        // Générer le contenu ICS combiné
+        $icsContent = "BEGIN:VCALENDAR\r\n";
+        $icsContent .= "VERSION:2.0\r\n";
+        $icsContent .= "PRODID:-//DigiCard//Appointment System//FR\r\n";
+        $icsContent .= "CALSCALE:GREGORIAN\r\n";
+        $icsContent .= "METHOD:PUBLISH\r\n";
+        $icsContent .= "X-WR-CALNAME:Mes Rendez-vous DigiCard\r\n";
+
+        foreach ($appointments as $appointment) {
+            $icsContent .= $this->generateEventContent($appointment);
+            
+            // Marquer comme téléchargé
+            $appointment->is_downloaded = true;
+            $appointment->downloaded_at = now();
+            $appointment->save();
+        }
+
+        $icsContent .= "END:VCALENDAR\r\n";
+
+        // Nom du fichier
+        $fileName = 'mes-rendez-vous-digicard-' . now()->format('Y-m-d') . '.ics';
+
+        return response($icsContent, 200)
+            ->header('Content-Type', 'text/calendar; charset=UTF-8')
+            ->header('Content-Disposition', 'attachment; filename="' . $fileName . '"');
+    }
+
+    /**
+     * Génère le contenu VEVENT pour un rendez-vous (sans l'enveloppe VCALENDAR).
+     * 
+     * @param Appointment $appointment
+     * @return string
+     */
+    private function generateEventContent(Appointment $appointment): string
+    {
+        $owner = $appointment->user;
+        
+        // Formater les dates au format iCalendar (UTC)
+        $dtStart = $appointment->start_time->setTimezone('UTC')->format('Ymd\THis\Z');
+        $dtEnd = $appointment->end_time->setTimezone('UTC')->format('Ymd\THis\Z');
+        $dtStamp = now()->setTimezone('UTC')->format('Ymd\THis\Z');
+        $created = $appointment->created_at->setTimezone('UTC')->format('Ymd\THis\Z');
+        
+        // Identifiant unique pour l'événement
+        $uid = 'digicard-appointment-' . $appointment->id . '@arccenciel.com';
+        
+        // Description de l'événement
+        $description = "Rendez-vous avec {$appointment->visitor_name}";
+        if ($appointment->message) {
+            $description .= "\\n\\nMotif : {$appointment->message}";
+        }
+        $description .= "\\n\\nContact visiteur :";
+        $description .= "\\nEmail : {$appointment->visitor_email}";
+        if ($appointment->visitor_phone) {
+            $description .= "\\nTéléphone : {$appointment->visitor_phone}";
+        }
+        $description .= "\\n\\nRéservé via DigiCard";
+        
+        // Titre de l'événement
+        $summary = "RDV: {$appointment->visitor_name}";
+        
+        // Email organisateur
+        $organizerEmail = config('mail.from.address', 'noreply@arccenciel.com');
+        $organizerName = 'DigiCard System';
+        
+        // Email du propriétaire (attendee)
+        $attendeeEmail = $owner ? $owner->email : '';
+        $attendeeName = $owner ? $owner->name : '';
+
+        // Construction de l'événement
+        $event = "BEGIN:VEVENT\r\n";
+        $event .= "UID:{$uid}\r\n";
+        $event .= "DTSTAMP:{$dtStamp}\r\n";
+        $event .= "DTSTART:{$dtStart}\r\n";
+        $event .= "DTEND:{$dtEnd}\r\n";
+        $event .= "CREATED:{$created}\r\n";
+        $event .= "SUMMARY:{$summary}\r\n";
+        $event .= "DESCRIPTION:{$description}\r\n";
+        if ($attendeeEmail) {
+            $event .= "ORGANIZER;CN={$organizerName}:mailto:{$organizerEmail}\r\n";
+            $event .= "ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;CN={$attendeeName}:mailto:{$attendeeEmail}\r\n";
+        }
+        $event .= "STATUS:CONFIRMED\r\n";
+        $event .= "SEQUENCE:0\r\n";
+        $event .= "TRANSP:OPAQUE\r\n";
+        // Rappel 30 minutes avant
+        $event .= "BEGIN:VALARM\r\n";
+        $event .= "TRIGGER:-PT30M\r\n";
+        $event .= "ACTION:DISPLAY\r\n";
+        $event .= "DESCRIPTION:Rappel: {$summary}\r\n";
+        $event .= "END:VALARM\r\n";
+        $event .= "END:VEVENT\r\n";
+
+        return $event;
+    }
+
+    /**
+     * Compte les rendez-vous non téléchargés.
+     * Route protégée par auth:sanctum.
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function countNotDownloaded(Request $request)
+    {
+        $user = $request->user();
+        $orderId = $request->query('order_id');
+
+        $query = Appointment::where('user_id', $user->id)
+            ->where('status', Appointment::STATUS_CONFIRMED)
+            ->where('is_downloaded', false);
+
+        if ($orderId) {
+            $query->where('order_id', $orderId);
+        }
+
+        $count = $query->count();
+
+        return response()->json([
+            'count' => $count,
         ]);
     }
 }

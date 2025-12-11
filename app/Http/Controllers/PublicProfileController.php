@@ -590,7 +590,14 @@ class PublicProfileController extends Controller
         $appointmentSetting = null;
         $appointmentOrderId = null;
         
-        if ($order) {
+        // Pour les employés, utiliser orderEmployee->order_id
+        if ($orderEmployee && $orderEmployee->order_id) {
+            $appointmentOrderId = $orderEmployee->order_id;
+            // Chercher UNIQUEMENT la configuration spécifique à cette commande pour l'employé
+            $appointmentSetting = AppointmentSetting::where('user_id', $user->id)
+                ->where('order_id', $orderEmployee->order_id)
+                ->first();
+        } elseif ($order) {
             $appointmentOrderId = $order->id;
             // Chercher UNIQUEMENT la configuration spécifique à cette commande
             $appointmentSetting = AppointmentSetting::where('user_id', $user->id)

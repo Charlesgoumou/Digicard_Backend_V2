@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nettoyage des Cookies</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #fff;
+        }
+        .container {
+            background: #2d2d2d;
+            padding: 30px;
+            border-radius: 8px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .info {
+            background: #3d3d3d;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .success {
+            color: #4CAF50;
+        }
+        .error {
+            color: #f44336;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧹 Nettoyage des Cookies</h1>
+        <p>Cette page permet de nettoyer tous les cookies pour résoudre l'erreur 431 (Request Header Fields Too Large).</p>
+        
+        <div class="info">
+            <strong>Cookies actuels :</strong>
+            <div id="cookieList"></div>
+        </div>
+        
+        <button onclick="clearAllCookies()">Supprimer TOUS les cookies</button>
+        <button onclick="location.reload()">Recharger la page</button>
+        <button onclick="window.location.href='/'">Retour à l'accueil</button>
+        
+        <div id="result"></div>
+    </div>
+
+    <script>
+        function listCookies() {
+            const cookies = document.cookie.split(';').filter(c => c.trim());
+            const cookieList = document.getElementById('cookieList');
+            
+            if (cookies.length === 0) {
+                cookieList.innerHTML = '<p class="success">Aucun cookie trouvé ✓</p>';
+            } else {
+                cookieList.innerHTML = `<p><strong>${cookies.length} cookie(s) trouvé(s) :</strong></p><ul>`;
+                cookies.forEach(cookie => {
+                    const [name] = cookie.trim().split('=');
+                    cookieList.innerHTML += `<li>${name}</li>`;
+                });
+                cookieList.innerHTML += '</ul>';
+            }
+        }
+
+        function clearAllCookies() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<p>Nettoyage en cours...</p>';
+            
+            try {
+                const cookies = document.cookie.split(';');
+                const hostname = window.location.hostname;
+                const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+                
+                let deletedCount = 0;
+                
+                cookies.forEach(cookie => {
+                    const [name] = cookie.trim().split('=');
+                    if (name) {
+                        const cookieName = name.trim();
+                        
+                        // Supprimer avec tous les chemins et domaines possibles
+                        const paths = ['/', ''];
+                        const domains = isLocalhost 
+                            ? [hostname, 'localhost', '127.0.0.1', '']
+                            : [hostname, '.arccenciel.com', '.digicard.arccenciel.com', 'arccenciel.com', 'digicard.arccenciel.com', ''];
+                        
+                        paths.forEach(path => {
+                            domains.forEach(domain => {
+                                let cookieString = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=${path};`;
+                                if (domain) {
+                                    cookieString += ` domain=${domain};`;
+                                }
+                                document.cookie = cookieString;
+                                deletedCount++;
+                            });
+                        });
+                    }
+                });
+                
+                // Attendre un peu puis vérifier
+                setTimeout(() => {
+                    const remainingCookies = document.cookie.split(';').filter(c => c.trim());
+                    if (remainingCookies.length === 0) {
+                        resultDiv.innerHTML = `<p class="success">✓ Tous les cookies ont été supprimés avec succès !</p><p>Vous pouvez maintenant retourner à l'accueil.</p>`;
+                    } else {
+                        resultDiv.innerHTML = `<p class="error">⚠ ${remainingCookies.length} cookie(s) n'ont pas pu être supprimés. Essayez de fermer et rouvrir le navigateur.</p>`;
+                    }
+                    listCookies();
+                }, 500);
+                
+            } catch (error) {
+                resultDiv.innerHTML = `<p class="error">Erreur lors du nettoyage : ${error.message}</p>`;
+            }
+        }
+
+        // Lister les cookies au chargement
+        listCookies();
+    </script>
+</body>
+</html>
+

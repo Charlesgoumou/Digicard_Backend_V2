@@ -160,6 +160,12 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::get('/appointments', [AppointmentController::class, 'index'])->name('appointments.index');
     // Annuler un rendez-vous
     Route::put('/appointments/{id}/cancel', [AppointmentController::class, 'cancel'])->name('appointments.cancel');
+    // Compter les rendez-vous non téléchargés
+    Route::get('/appointments/not-downloaded/count', [AppointmentController::class, 'countNotDownloaded'])->name('appointments.not-downloaded.count');
+    // Télécharger tous les rendez-vous non téléchargés au format ICS (AVANT la route avec paramètre)
+    Route::get('/appointments/download-all', [AppointmentController::class, 'downloadAllIcs'])->name('appointments.download-all');
+    // Télécharger un rendez-vous au format ICS
+    Route::get('/appointments/{id}/download', [AppointmentController::class, 'downloadIcs'])->name('appointments.download');
 
     // --- Routes Contacts Partagés (Protégées) ---
     // Liste des contacts partagés reçus

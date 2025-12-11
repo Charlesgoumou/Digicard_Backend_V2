@@ -171,7 +171,15 @@
         body { font-family: 'Inter', sans-serif; background-color: #111827; color: #d1d5db; }
         .btn { transition: all 0.2s ease-in-out; }
         .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3); }
-        .social-icon { transition: all 0.2s ease-in-out; }
+        .social-icon { 
+            transition: all 0.2s ease-in-out; 
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.25rem;
+            vertical-align: middle;
+            line-height: 0;
+        }
         .social-icon:hover { transform: scale(1.15); }
         .social-icon.whatsapp:hover { color: #25D366; }
         .social-icon.linkedin:hover { color: #0A66C2; }
@@ -180,38 +188,199 @@
         .social-icon.youtube:hover { color: #FF0000; }
         .social-icon.deezer:hover { color: #EF5466; }
         .social-icon.spotify:hover { color: #1DB954; }
-.social-icon.calendar:hover { color: #0ea5e9; }
-          .social-icon.exchange:hover { color: #10b981; }
-          /* Garantir que les icônes centrales restent toujours au centre visuel */
+        .social-icon.calendar:hover { color: #0ea5e9; }
+        .social-icon.exchange:hover { color: #10b981; }
+        /* Garantir que les icônes sont bien organisées et centrées */
         .social-icons-container {
             display: flex;
             justify-content: center;
             align-items: center;
-            gap: 0;
+            gap: 1rem;
+            flex-wrap: nowrap;
+            width: 100%;
+            overflow: visible;
+            padding: 0;
+            margin: -0.5rem auto 0 auto;
         }
         .social-icons-group {
             display: flex;
             align-items: center;
-            gap: 1.25rem;
+            gap: 1rem;
+            overflow: visible;
+            flex-wrap: nowrap;
+            justify-content: center;
+            line-height: 1;
+        }
+        /* Ajustement dynamique selon le nombre d'icônes */
+        .icons-count-high .social-icons-group {
+            gap: 0.75rem;
+        }
+        .icons-count-very-high .social-icons-group {
+            gap: 0.5rem;
         }
         .social-icons-group.left {
             justify-content: flex-end;
-            min-width: 60px;
+            align-items: center;
         }
         .social-icons-group.right {
             justify-content: flex-start;
-            min-width: 60px;
+            align-items: center;
+        }
+        /* Si aucune icône sociale, masquer le groupe vide */
+        .social-icons-group.left:empty,
+        .social-icons-group.right:empty {
+            display: none;
+        }
+        
+        /* Responsive pour tablette */
+        @media (max-width: 768px) {
+            .social-icons-container {
+                padding: 0;
+                margin-top: -0.375rem;
+            }
         }
         .social-icons-center {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            justify-content: center;
             flex-shrink: 0;
-            margin: 0 1.25rem;
+            gap: 0.75rem;
+            overflow: visible;
+            line-height: 1;
+        }
+        .icons-count-high .social-icons-center {
+            gap: 0.5rem;
+        }
+        .icons-count-very-high .social-icons-center {
+            gap: 0.4rem;
         }
         .social-icon.calendar,
         .social-icon.exchange {
             flex-shrink: 0;
+        }
+        /* Taille des icônes selon le nombre total */
+        .social-icon svg {
+            width: 1.75rem;
+            height: 1.75rem;
+            display: block;
+            vertical-align: middle;
+        }
+        .icons-count-high .social-icon svg {
+            width: 1.5rem;
+            height: 1.5rem;
+        }
+        .icons-count-very-high .social-icon svg {
+            width: 1.25rem;
+            height: 1.25rem;
+        }
+        
+        /* Responsive pour mobile */
+        @media (max-width: 640px) {
+            .social-icons-container {
+                padding: 0 0.5rem;
+                gap: 0.6rem;
+                justify-content: center;
+                margin-top: -0.25rem;
+                flex-wrap: nowrap;
+            }
+            .social-icons-group {
+                gap: 0.6rem;
+                flex-wrap: nowrap;
+            }
+            .social-icons-group.left,
+            .social-icons-group.right {
+                justify-content: center;
+            }
+            .icons-count-high .social-icons-group {
+                gap: 0.4rem;
+            }
+            .icons-count-very-high .social-icons-group {
+                gap: 0.3rem;
+            }
+            .social-icons-center {
+                margin: 0 0.3rem;
+            }
+            .icons-count-high .social-icons-center {
+                margin: 0 0.2rem;
+            }
+            .icons-count-very-high .social-icons-center {
+                margin: 0 0.15rem;
+            }
+            /* Réduire légèrement les icônes sur mobile */
+            .social-icon svg {
+                width: 1.4rem;
+                height: 1.4rem;
+            }
+            .icons-count-high .social-icon svg {
+                width: 1.2rem;
+                height: 1.2rem;
+            }
+            .icons-count-very-high .social-icon svg {
+                width: 1rem;
+                height: 1rem;
+            }
+        }
+        
+        @media (max-width: 380px) {
+            .social-icons-container {
+                padding: 0 0.25rem;
+                gap: 0.35rem;
+                margin-top: -0.25rem;
+                flex-wrap: nowrap;
+            }
+            .social-icons-group {
+                gap: 0.35rem;
+                flex-wrap: nowrap;
+            }
+            .icons-count-high .social-icons-group {
+                gap: 0.25rem;
+            }
+            .icons-count-very-high .social-icons-group {
+                gap: 0.2rem;
+            }
+            .social-icons-center {
+                margin: 0 0.2rem;
+            }
+            .icons-count-high .social-icons-center {
+                margin: 0 0.15rem;
+            }
+            .icons-count-very-high .social-icons-center {
+                margin: 0 0.1rem;
+            }
+            /* Réduire encore plus les icônes sur très petits écrans */
+            .social-icon svg {
+                width: 1.1rem;
+                height: 1.1rem;
+            }
+            .icons-count-high .social-icon svg {
+                width: 1rem;
+                height: 1rem;
+            }
+            .icons-count-very-high .social-icon svg {
+                width: 0.9rem;
+                height: 0.9rem;
+            }
+        }
+        
+        /* Forcer toutes les icônes sur une seule ligne centrée */
+        @media (max-width: 480px) {
+            .social-icons-container {
+                flex-wrap: nowrap;
+                gap: 0.4rem;
+                padding: 0 0.5rem;
+                margin-top: -0.25rem;
+            }
+            .icons-count-very-high .social-icons-container {
+                gap: 0.25rem;
+                padding: 0 0.25rem;
+            }
+            .social-icons-group {
+                flex-wrap: nowrap;
+            }
+            .icons-count-very-high .social-icon svg {
+                width: 0.9rem;
+                height: 0.9rem;
+            }
         }
         .modal-content {
             transition: transform 0.3s ease-in-out;
@@ -399,14 +568,30 @@
             if ($deezer) $allIcons[] = ['type' => 'deezer', 'url' => $deezer, 'title' => 'Deezer'];
             if ($spotify) $allIcons[] = ['type' => 'spotify', 'url' => $spotify, 'title' => 'Spotify'];
             
-            // Répartir équitablement de chaque côté du calendrier
+            // Répartir équitablement de chaque côté de l'icône d'échange
             $midPoint = (int) ceil(count($allIcons) / 2);
             $leftIcons = array_slice($allIcons, 0, $midPoint);
             $rightIcons = array_slice($allIcons, $midPoint);
+            
+            // Si rendez-vous est activé, l'ajouter au début du groupe de droite
+            // pour qu'il soit juste à droite de l'icône d'échange
+            
+            // Compter le nombre total d'icônes (sociales + centrales)
+            $totalIconsCount = count($allIcons);
+            if ($appointmentEnabled) $totalIconsCount++;
+            if ($shareContactEnabled) $totalIconsCount++;
+            
+            // Déterminer la classe CSS selon le nombre d'icônes
+            $iconsCountClass = '';
+            if ($totalIconsCount >= 9) {
+                $iconsCountClass = 'icons-count-very-high'; // 9+ icônes
+            } elseif ($totalIconsCount >= 7) {
+                $iconsCountClass = 'icons-count-high'; // 7-8 icônes
+            }
         @endphp
         @if($hasSocialIcons || $appointmentEnabled || $shareContactEnabled)
-            <hr class="border-gray-600 mb-6">
-            <div class="social-icons-container">
+            <hr class="border-gray-600 mb-4">
+            <div class="social-icons-container {{ $iconsCountClass }}">
                 {{-- Groupe GAUCHE des icônes --}}
                 <div class="social-icons-group left">
                     @foreach($leftIcons as $icon)
@@ -414,39 +599,39 @@
                     @endforeach
                 </div>
                 
-                {{-- Groupe CENTRAL : Échange + Calendrier --}}
+                {{-- Icône CENTRALE : Échange (toujours au centre) --}}
+                @if($shareContactEnabled)
                 <div class="social-icons-center">
-                    {{-- Bouton Échanger Contact --}}
-                    @if($shareContactEnabled)
                     <button
                         onclick="openShareContactModal()"
                         class="social-icon exchange text-gray-400 relative cursor-pointer"
                         title="Échanger mon contact"
                     >
-                        <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                        <svg fill="currentColor" viewBox="0 0 24 24">
                             <path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3L5 6.99h3V14h2V6.99h3L9 3z"/>
                         </svg>
                         <span class="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></span>
                     </button>
-                    @endif
-                    
-                    {{-- Bouton Prendre Rendez-vous (icône calendrier) --}}
+                </div>
+                @endif
+                
+                {{-- Groupe DROITE des icônes (Rendez-vous en premier si activé) --}}
+                <div class="social-icons-group right">
+                    {{-- Bouton Prendre Rendez-vous (juste à droite de l'échange) --}}
                     @if($appointmentEnabled)
                     <button
                         onclick="openBookingModal()"
                         class="social-icon calendar text-gray-400 relative cursor-pointer"
                         title="Prendre rendez-vous"
                     >
-                        <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                        <svg fill="currentColor" viewBox="0 0 24 24">
                             <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2zM9 14H7v-2h2v2zm4 0h-2v-2h2v2zm4 0h-2v-2h2v2zm-8 4H7v-2h2v2zm4 0h-2v-2h2v2zm4 0h-2v-2h2v2z"/>
                         </svg>
                         <span class="absolute -top-1 -right-1 w-3 h-3 bg-sky-500 rounded-full animate-pulse"></span>
                     </button>
                     @endif
-                </div>
-                
-                {{-- Groupe DROITE des icônes --}}
-                <div class="social-icons-group right">
+                    
+                    {{-- Icônes sociales du groupe de droite --}}
                     @foreach($rightIcons as $icon)
                         @include('profile.partials.social-icon', ['icon' => $icon])
                     @endforeach
@@ -981,7 +1166,7 @@ document.addEventListener('click', function(e) {
 <script>
 // ========== SHARE CONTACT MODAL ==========
 const shareContactUserId = {{ $user->id }};
-const shareContactOrderId = @if(isset($order) && $order){{ $order->id }}@else null @endif;
+const shareContactOrderId = @if(isset($orderEmployee) && $orderEmployee && $orderEmployee->order_id){{ $orderEmployee->order_id }}@elseif(isset($order) && $order){{ $order->id }}@else null @endif;
 
 function openShareContactModal() {
     resetShareContactModal();

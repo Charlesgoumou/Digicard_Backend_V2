@@ -14,7 +14,7 @@
 @endphp
 
 <a href="{{ $icon['url'] }}" target="_blank" rel="noopener noreferrer" class="social-icon {{ $icon['type'] }} text-gray-400" title="{{ $icon['title'] }}">
-    <svg class="w-7 h-7" fill="currentColor" viewBox="{{ $viewBox }}">
+    <svg fill="currentColor" viewBox="{{ $viewBox }}">
         @if($icon['type'] === 'twitter')
             {!! $twitterSvg !!}
         @else
