@@ -45,6 +45,8 @@ class User extends Authenticatable implements MustVerifyEmail
         'youtube_url',
         'deezer_url',
         'spotify_url',
+        'tiktok_url',
+        'threads_url',
         // --- Nouveaux champs de personnalisation avancée ---
         'profile_border_color',
         'save_contact_button_color',
