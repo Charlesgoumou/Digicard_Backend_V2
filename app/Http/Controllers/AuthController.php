@@ -170,15 +170,30 @@ class AuthController extends Controller
                 ]);
             }
 
-            // ✅ TOUJOURS envoyer un code 2FA à chaque connexion
-            $this->sendVerificationCode($employeeUser);
-            
-            return response()->json([
-                'message' => 'Code de vérification 2FA envoyé par email.',
-                'two_factor_required' => true,
-                'email' => $employeeUser->email,
-                'account_type' => 'employee'
-            ]);
+            // ✅ Vérifier si la 2FA est activée pour cet utilisateur (par défaut true si null)
+            $twoFactorEnabled = $employeeUser->two_factor_enabled ?? true;
+            if ($twoFactorEnabled) {
+                // ✅ Envoyer un code 2FA à chaque connexion si la 2FA est activée
+                $this->sendVerificationCode($employeeUser);
+                
+                return response()->json([
+                    'message' => 'Code de vérification 2FA envoyé par email.',
+                    'two_factor_required' => true,
+                    'email' => $employeeUser->email,
+                    'account_type' => 'employee'
+                ]);
+            } else {
+                // ✅ Si la 2FA est désactivée, connecter directement l'utilisateur
+                Auth::login($employeeUser);
+                $token = $employeeUser->createToken('auth-token')->plainTextToken;
+                
+                return response()->json([
+                    'message' => 'Connexion réussie.',
+                    'token' => $token,
+                    'user' => $employeeUser,
+                    'two_factor_required' => false
+                ]);
+            }
         }
 
         // ✅ Filtrer uniquement les comptes non-employés pour le choix de compte
@@ -262,15 +277,64 @@ class AuthController extends Controller
             ]);
         }
 
-        // ✅ TOUJOURS envoyer un code 2FA à chaque connexion
-        $this->sendVerificationCode($user);
-        
-        return response()->json([
-            'message' => 'Code de vérification 2FA envoyé par email.',
-            'two_factor_required' => true,
-            'email' => $user->email,
-            'account_type' => $request->account_type
-        ]);
+        // ✅ Vérifier si la 2FA est activée pour cet utilisateur (par défaut true si null)
+        $twoFactorEnabled = $user->two_factor_enabled ?? true;
+        if ($twoFactorEnabled) {
+            // ✅ Envoyer un code 2FA à chaque connexion si la 2FA est activée
+            $this->sendVerificationCode($user);
+            
+            return response()->json([
+                'message' => 'Code de vérification 2FA envoyé par email.',
+                'two_factor_required' => true,
+                'email' => $user->email,
+                'account_type' => $request->account_type
+            ]);
+        } else {
+            // ✅ Si la 2FA est désactivée et qu'un account_type est fourni, connecter directement
+            if ($request->account_type) {
+                // Un compte spécifique a été sélectionné, connecter directement
+                Auth::login($user);
+                $token = $user->createToken('auth-token')->plainTextToken;
+                
+                return response()->json([
+                    'message' => 'Connexion réussie.',
+                    'token' => $token,
+                    'user' => $user,
+                    'two_factor_required' => false
+                ]);
+            }
+            
+            // ✅ Si aucun account_type n'est fourni, vérifier s'il y a plusieurs comptes
+            $allUsersWithEmail = User::where('email', $request->email)
+                ->whereIn('role', ['individual', 'business_admin'])
+                ->get();
+            
+            // Si plusieurs comptes, retourner la liste pour sélection
+            if ($allUsersWithEmail->count() > 1) {
+                return response()->json([
+                    'multiple_accounts' => true,
+                    'message' => 'Vous avez plusieurs comptes. Veuillez choisir le type de compte.',
+                    'available_accounts' => $allUsersWithEmail->map(function($u) {
+                        return [
+                            'type' => $u->role === 'business_admin' ? 'business' : 'individual',
+                            'name' => $u->name,
+                            'company_name' => $u->company_name,
+                        ];
+                    })->values()
+                ], 200);
+            }
+            
+            // Si un seul compte, connecter directement
+            Auth::login($user);
+            $token = $user->createToken('auth-token')->plainTextToken;
+            
+            return response()->json([
+                'message' => 'Connexion réussie.',
+                'token' => $token,
+                'user' => $user,
+                'two_factor_required' => false
+            ]);
+        }
     }
 
     /**

@@ -296,4 +296,43 @@ class UserController extends Controller
             'message' => 'Utilisateur supprimé définitivement'
         ]);
     }
+
+    /**
+     * Active ou désactive la vérification 2FA pour un utilisateur
+     *
+     * @param User $user
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function toggleTwoFactor(User $user)
+    {
+        // Empêcher de modifier la 2FA d'un super admin
+        if ($user->is_admin) {
+            return response()->json([
+                'message' => 'Impossible de modifier la 2FA d\'un super administrateur'
+            ], 403);
+        }
+
+        // Basculer le statut de la 2FA
+        $user->two_factor_enabled = !$user->two_factor_enabled;
+        $user->save();
+
+        // Logger l'action
+        Log::info('User 2FA toggled', [
+            'admin_id' => auth()->id(),
+            'admin_email' => auth()->user()->email,
+            'target_user_id' => $user->id,
+            'target_user_email' => $user->email,
+            'two_factor_enabled' => $user->two_factor_enabled,
+            'timestamp' => now(),
+        ]);
+
+        $message = $user->two_factor_enabled
+            ? 'Vérification 2FA activée avec succès'
+            : 'Vérification 2FA désactivée avec succès';
+
+        return response()->json([
+            'message' => $message,
+            'user' => $user
+        ]);
+    }
 }

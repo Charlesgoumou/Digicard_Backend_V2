@@ -30,6 +30,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'password_reset_required', // Pour forcer le changement de mot de passe
         'is_admin', // Super Admin
         'is_suspended', // Compte suspendu
+        'two_factor_enabled', // Activation/désactivation de la 2FA
         // --- Champs du Profil ajoutés ---
         'username',
         'title',
