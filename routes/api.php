@@ -21,6 +21,7 @@ use App\Http\Controllers\StorageController;
 use App\Http\Controllers\SocialController;
 use App\Http\Controllers\AppointmentController;
 use App\Http\Controllers\SharedContactController;
+use App\Http\Controllers\MarketplaceController;
 
 /*
 |--------------------------------------------------------------------------
@@ -102,6 +103,10 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::put('/account', [AccountController::class, 'update'])->name('account.update');     // Mettre à jour nom, email, téléphone, mot de passe
     Route::post('/account/verify-email-change', [AccountController::class, 'verifyEmailChange'])->name('account.verify-email-change'); // Vérifier le code de changement d'email
     Route::post('/account/resend-email-change-code', [AccountController::class, 'resendEmailChangeCode'])->name('account.resend-email-change-code'); // Renvoyer le code de changement d'email
+    Route::post('/account/toggle-two-factor', [AccountController::class, 'toggleTwoFactor'])->name('account.toggle-two-factor'); // Activer/désactiver la 2FA
+    Route::get('/account/linked-accounts', [AccountController::class, 'getLinkedAccounts'])->name('account.linked-accounts'); // Récupérer tous les comptes liés
+    Route::post('/account/create-linked-account', [AccountController::class, 'createLinkedAccount'])->name('account.create-linked-account'); // Créer un nouveau compte lié
+    Route::post('/account/switch-to-linked-account', [AccountController::class, 'switchToLinkedAccount'])->name('account.switch-to-linked-account'); // Basculer vers un compte lié sans mot de passe
 
     // Gestion du Profil (Paramétrage)
     Route::get('/profile', [ProfileController::class, 'show'])->name('profile.show');       // Lire les données du profil actuel
@@ -176,6 +181,36 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::get('/shared-contacts/{contact}/download', [SharedContactController::class, 'downloadVCard'])->name('shared-contacts.download');
     // Supprimer un contact
     Route::delete('/shared-contacts/{contact}', [SharedContactController::class, 'destroy'])->name('shared-contacts.destroy');
+
+    // --- Routes Marketplace (Protégées) ---
+    // Liste de toutes les offres disponibles
+    Route::get('/marketplace/offers', [MarketplaceController::class, 'index'])->name('marketplace.offers.index');
+    // Détails d'une offre avec ses avis
+    Route::get('/marketplace/offers/{id}', [MarketplaceController::class, 'show'])->name('marketplace.offers.show');
+    // Générer la description d'une offre avec l'IA à partir d'une image
+    Route::post('/marketplace/generate-description', [MarketplaceController::class, 'generateDescriptionFromImage'])->name('marketplace.generate-description');
+    // Créer une nouvelle offre
+    Route::post('/marketplace/offers', [MarketplaceController::class, 'store'])->name('marketplace.offers.store');
+    // Ajouter/Retirer des favoris
+    Route::post('/marketplace/offers/{id}/toggle-favorite', [MarketplaceController::class, 'toggleFavorite'])->name('marketplace.offers.toggle-favorite');
+    // Ajouter un avis à une offre
+    Route::post('/marketplace/offers/{id}/reviews', [MarketplaceController::class, 'addReview'])->name('marketplace.offers.reviews');
+    // Ajouter au panier
+    Route::post('/marketplace/offers/{id}/add-to-cart', [MarketplaceController::class, 'addToCart'])->name('marketplace.offers.add-to-cart');
+    // Envoyer un message à l'annonceur
+    Route::post('/marketplace/send-message', [MarketplaceController::class, 'sendMessage'])->name('marketplace.send-message');
+    // Mettre à jour une offre
+    Route::put('/marketplace/offers/{id}', [MarketplaceController::class, 'update'])->name('marketplace.offers.update');
+    // Supprimer une offre
+    Route::delete('/marketplace/offers/{id}', [MarketplaceController::class, 'destroy'])->name('marketplace.offers.destroy');
+    // Récupérer les statistiques d'une offre
+    Route::get('/marketplace/offers/{id}/stats', [MarketplaceController::class, 'getStats'])->name('marketplace.offers.stats');
+    // Récupérer tous les messages d'une offre (pour le vendeur)
+    Route::get('/marketplace/offers/{id}/messages', [MarketplaceController::class, 'getOfferMessages'])->name('marketplace.offers.messages');
+    // Répondre à un message
+    Route::post('/marketplace/messages/{messageId}/reply', [MarketplaceController::class, 'replyToMessage'])->name('marketplace.messages.reply');
+    // Récupérer tous les messages de l'utilisateur
+    Route::get('/marketplace/messages', [MarketplaceController::class, 'getUserMessages'])->name('marketplace.messages.user');
 });
 
 // Routes publiques pour afficher les pages
@@ -183,6 +218,8 @@ Route::get('/company/{username}', [CompanyPageController::class, 'show'])->name(
 Route::get('/portfolio/{username}', [UserPortfolioController::class, 'show'])->name('user-portfolio.show');
 
 // --- Routes Rendez-vous (Publiques) ---
+// Récupérer toutes les dates disponibles avec des créneaux
+Route::get('/user/{user}/available-dates', [AppointmentController::class, 'getAvailableDates'])->name('appointments.available-dates');
 // Récupérer les créneaux disponibles pour un utilisateur à une date donnée
 Route::get('/user/{user}/slots', [AppointmentController::class, 'getPublicSlots'])->name('appointments.slots');
 // Réserver un rendez-vous chez un utilisateur

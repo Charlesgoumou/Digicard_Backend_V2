@@ -281,20 +281,37 @@ class OrderController extends Controller
         // Envoyer un email à l'utilisateur si la commande est validée
         if ($newStatus === 'validated') {
             try {
-                Mail::to($order->user->email)->send(new OrderValidated($order, $order->user));
+                // ✅ S'assurer que la relation user est chargée
+                if (!$order->relationLoaded('user')) {
+                    $order->load('user');
+                }
 
-                Log::info('Order validation email sent', [
-                    'order_id' => $order->id,
-                    'order_number' => $order->order_number,
-                    'user_email' => $order->user->email,
-                ]);
+                // Vérifier que l'utilisateur existe et a un email
+                if ($order->user && $order->user->email) {
+                    Mail::to($order->user->email)->send(new OrderValidated($order, $order->user));
+
+                    Log::info('Order validation email sent', [
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                        'user_email' => $order->user->email,
+                        'user_id' => $order->user->id,
+                    ]);
+                } else {
+                    Log::warning('Cannot send order validation email: user or email missing', [
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                        'has_user' => !!$order->user,
+                        'user_email' => $order->user->email ?? 'N/A',
+                    ]);
+                }
             } catch (\Exception $e) {
                 // Logger l'erreur mais ne pas faire échouer la validation
                 Log::error('Failed to send order validation email', [
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
-                    'user_email' => $order->user->email,
+                    'user_email' => $order->user->email ?? 'N/A',
                     'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
                 ]);
             }
         }

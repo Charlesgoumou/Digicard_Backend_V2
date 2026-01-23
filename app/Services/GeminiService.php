@@ -189,7 +189,20 @@ class GeminiService
         $profileLabels = [
             'student' => ['projects' => 'Mes Projets Académiques', 'timeline' => 'Ma Formation & Stages'],
             'teacher' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
-            'freelance' => ['projects' => 'Mon Portfolio / Projets Clients', 'timeline' => 'Mon Parcours & Clients']
+            'freelance' => ['projects' => 'Mon Portfolio / Projets Clients', 'timeline' => 'Mon Parcours & Clients'],
+            'pharmacist' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
+            'doctor' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
+            'lawyer' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
+            'notary' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
+            'bailiff' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
+            'architect' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
+            'engineer' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
+            'consultant' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
+            'accountant' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
+            'financial_analyst' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
+            'photographer' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
+            'graphic_designer' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
+            'developer' => ['projects' => 'Mes Réalisations & Projets', 'timeline' => 'Mon Parcours Professionnel'],
         ];
         
         $labels = $profileLabels[$profileType] ?? $profileLabels['student'];
@@ -208,7 +221,7 @@ class GeminiService
 Génère un objet JSON valide uniquement, sans balises markdown ou texte supplémentaire:
 
 {
-  "bio": "Reformule et enrichis la biographie en HTML pour un profil professionnel engageant.",
+  "bio": "Reformule et enrichis la biographie en HTML pour un profil professionnel engageant. IMPORTANT: La biographie doit être écrite à la PREMIÈRE PERSONNE DU SINGULIER (je, mon, ma, mes, j'ai, je suis, etc.). Ne jamais utiliser la troisième personne (il, elle, son, sa, ses, il a, elle est, etc.).",
   "skills_title": "Mes Compétences",
   "projects_title": "{$labels['projects']}",
   "timeline_title": "{$labels['timeline']}",

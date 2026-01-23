@@ -141,11 +141,13 @@ class AuthController extends Controller
         $request->validate([
             'email' => 'required|email',
             'password' => 'required',
-            'account_type' => 'nullable|in:individual,business',
+            'account_type' => 'nullable|in:individual,business,employee',
         ]);
 
         // ✅ Vérifier combien de comptes existent avec cet email
-        $users = User::where('email', $request->email)->get();
+        $users = User::where('email', $request->email)
+            ->where('is_profile_complete', true) // Seulement les comptes complets
+            ->get();
 
         if ($users->isEmpty()) {
             throw ValidationException::withMessages([
@@ -153,63 +155,11 @@ class AuthController extends Controller
             ]);
         }
 
-        // ✅ Si c'est un employé, on le traite séparément (pas de choix de compte)
-        $employeeUser = $users->firstWhere('role', 'employee');
-        if ($employeeUser && !$request->account_type) {
-            // Vérifier le mot de passe
-            if (!Hash::check($request->password, $employeeUser->password)) {
-                throw ValidationException::withMessages([
-                    'email' => ['Les informations de connexion ne correspondent pas.'],
-                ]);
-            }
-
-            // ✅ Vérifier si l'utilisateur est suspendu
-            if ($employeeUser->is_suspended) {
-                throw ValidationException::withMessages([
-                    'email' => ['Votre compte a été suspendu. Veuillez contacter l\'administrateur.'],
-                ]);
-            }
-
-            // ✅ Vérifier si la 2FA est activée pour cet utilisateur (par défaut true si null)
-            $twoFactorEnabled = $employeeUser->two_factor_enabled ?? true;
-            if ($twoFactorEnabled) {
-                // ✅ Envoyer un code 2FA à chaque connexion si la 2FA est activée
-                $this->sendVerificationCode($employeeUser);
-                
-                return response()->json([
-                    'message' => 'Code de vérification 2FA envoyé par email.',
-                    'two_factor_required' => true,
-                    'email' => $employeeUser->email,
-                    'account_type' => 'employee'
-                ]);
-            } else {
-                // ✅ Si la 2FA est désactivée, connecter directement l'utilisateur
-                Auth::login($employeeUser);
-                $token = $employeeUser->createToken('auth-token')->plainTextToken;
-                
-                return response()->json([
-                    'message' => 'Connexion réussie.',
-                    'token' => $token,
-                    'user' => $employeeUser,
-                    'two_factor_required' => false
-                ]);
-            }
-        }
-
-        // ✅ Filtrer uniquement les comptes non-employés pour le choix de compte
-        $nonEmployeeUsers = $users->whereIn('role', ['individual', 'business_admin'])->values();
-
-        if ($nonEmployeeUsers->isEmpty()) {
-            throw ValidationException::withMessages([
-                'email' => ['Les informations de connexion ne correspondent pas.'],
-            ]);
-        }
-
-        // ✅ Si plusieurs comptes non-employés existent et qu'aucun type n'est spécifié
-        if ($nonEmployeeUsers->count() > 1 && !$request->account_type) {
+        // ✅ Si plusieurs comptes existent et qu'aucun type n'est spécifié, afficher la sélection
+        if ($users->count() > 1 && !$request->account_type) {
             // Vérifier d'abord le mot de passe avec n'importe quel compte
             $passwordValid = false;
-            foreach ($nonEmployeeUsers as $user) {
+            foreach ($users as $user) {
                 if (Hash::check($request->password, $user->password)) {
                     $passwordValid = true;
                     break;
@@ -222,16 +172,28 @@ class AuthController extends Controller
                 ]);
             }
 
-            // Retourner la liste des types de comptes disponibles
+            // Retourner la liste de tous les types de comptes disponibles (y compris employé)
             return response()->json([
                 'multiple_accounts' => true,
                 'message' => 'Vous avez plusieurs comptes. Veuillez choisir le type de compte.',
-                'available_accounts' => $nonEmployeeUsers->map(function($u) {
+                'available_accounts' => $users->map(function($u) {
+                    $accountType = null;
+                    if ($u->role === 'business_admin') {
+                        $accountType = 'business';
+                    } elseif ($u->role === 'individual') {
+                        $accountType = 'individual';
+                    } elseif ($u->role === 'employee') {
+                        $accountType = 'employee';
+                    }
+                    
                     return [
-                        'type' => $u->role === 'business_admin' ? 'business' : 'individual',
+                        'type' => $accountType,
+                        'role' => $u->role,
                         'name' => $u->name,
                         'company_name' => $u->company_name,
                     ];
+                })->filter(function($acc) {
+                    return $acc['type'] !== null; // Filtrer les rôles non reconnus
                 })->values()
             ], 200);
         }
@@ -239,9 +201,15 @@ class AuthController extends Controller
         // ✅ Déterminer le rôle recherché
         $targetRole = null;
         if ($request->account_type) {
-            $targetRole = ($request->account_type === 'business') ? 'business_admin' : 'individual';
-        } elseif ($nonEmployeeUsers->count() === 1) {
-            $targetRole = $nonEmployeeUsers->first()->role;
+            if ($request->account_type === 'business') {
+                $targetRole = 'business_admin';
+            } elseif ($request->account_type === 'individual') {
+                $targetRole = 'individual';
+            } elseif ($request->account_type === 'employee') {
+                $targetRole = 'employee';
+            }
+        } elseif ($users->count() === 1) {
+            $targetRole = $users->first()->role;
         }
 
         // ✅ Vérifier que le rôle cible est défini
@@ -254,12 +222,14 @@ class AuthController extends Controller
         // ✅ Trouver l'utilisateur spécifique avec (email, role)
         $user = User::where('email', $request->email)
             ->where('role', $targetRole)
+            ->where('is_profile_complete', true)
             ->first();
 
         // ✅ Vérifier que l'utilisateur existe
         if (!$user) {
+            $roleLabel = $targetRole === 'business_admin' ? 'entreprise' : ($targetRole === 'individual' ? 'personnel' : 'employé');
             throw ValidationException::withMessages([
-                'email' => ['Aucun compte ' . ($targetRole === 'business_admin' ? 'entreprise' : 'personnel') . ' trouvé avec cet email.'],
+                'email' => ['Aucun compte ' . $roleLabel . ' trouvé avec cet email.'],
             ]);
         }
 
@@ -283,48 +253,16 @@ class AuthController extends Controller
             // ✅ Envoyer un code 2FA à chaque connexion si la 2FA est activée
             $this->sendVerificationCode($user);
             
+            $accountType = $targetRole === 'business_admin' ? 'business' : ($targetRole === 'individual' ? 'individual' : 'employee');
+            
             return response()->json([
                 'message' => 'Code de vérification 2FA envoyé par email.',
                 'two_factor_required' => true,
                 'email' => $user->email,
-                'account_type' => $request->account_type
+                'account_type' => $accountType
             ]);
         } else {
-            // ✅ Si la 2FA est désactivée et qu'un account_type est fourni, connecter directement
-            if ($request->account_type) {
-                // Un compte spécifique a été sélectionné, connecter directement
-                Auth::login($user);
-                $token = $user->createToken('auth-token')->plainTextToken;
-                
-                return response()->json([
-                    'message' => 'Connexion réussie.',
-                    'token' => $token,
-                    'user' => $user,
-                    'two_factor_required' => false
-                ]);
-            }
-            
-            // ✅ Si aucun account_type n'est fourni, vérifier s'il y a plusieurs comptes
-            $allUsersWithEmail = User::where('email', $request->email)
-                ->whereIn('role', ['individual', 'business_admin'])
-                ->get();
-            
-            // Si plusieurs comptes, retourner la liste pour sélection
-            if ($allUsersWithEmail->count() > 1) {
-                return response()->json([
-                    'multiple_accounts' => true,
-                    'message' => 'Vous avez plusieurs comptes. Veuillez choisir le type de compte.',
-                    'available_accounts' => $allUsersWithEmail->map(function($u) {
-                        return [
-                            'type' => $u->role === 'business_admin' ? 'business' : 'individual',
-                            'name' => $u->name,
-                            'company_name' => $u->company_name,
-                        ];
-                    })->values()
-                ], 200);
-            }
-            
-            // Si un seul compte, connecter directement
+            // ✅ Si la 2FA est désactivée, connecter directement l'utilisateur
             Auth::login($user);
             $token = $user->createToken('auth-token')->plainTextToken;
             
@@ -640,6 +578,7 @@ class AuthController extends Controller
                 'is_profile_complete' => $user->is_profile_complete ?? false,
                 'account_type' => $user->account_type, // ✅ MODIFICATION: Inclure account_type pour permettre le verrouillage dans FinalizeRegistrationView
                 'google_id' => $user->google_id, // ✅ MODIFICATION: Inclure google_id pour détecter les inscriptions classiques vs Google
+                'company_name' => $user->company_name, // ✅ MODIFICATION: Inclure company_name pour les business_admin
             ]
         ], 200);
     }

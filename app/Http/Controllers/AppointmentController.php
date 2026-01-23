@@ -307,6 +307,462 @@ class AppointmentController extends Controller
     }
 
     /**
+     * Récupérer toutes les dates disponibles avec des créneaux (route publique).
+     * 
+     * Cette méthode retourne toutes les dates qui ont au moins un créneau disponible
+     * dans les prochains jours (par défaut 60 jours).
+     *
+     * @param Request $request
+     * @param User $user Le propriétaire de la carte
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getAvailableDates(Request $request, User $user)
+    {
+        $validated = $request->validate([
+            'order_id' => 'nullable|integer',
+            'days_ahead' => 'nullable|integer|min:1|max:90', // Maximum 90 jours
+        ]);
+
+        $orderId = isset($validated['order_id']) ? (int) $validated['order_id'] : ($request->query('order_id') ? (int) $request->query('order_id') : null);
+        $daysAhead = isset($validated['days_ahead']) ? (int) $validated['days_ahead'] : 60; // Par défaut 60 jours, s'assurer que c'est un entier
+        
+        Log::info('[AppointmentController@getAvailableDates] Début', [
+            'user_id' => $user->id,
+            'order_id' => $orderId,
+            'order_id_type' => gettype($orderId),
+            'days_ahead' => $daysAhead,
+            'all_query_params' => $request->query(),
+            'validated' => $validated,
+        ]);
+        
+        // Récupérer la configuration des rendez-vous spécifique à la commande
+        $settings = null;
+        if ($orderId) {
+            $settings = AppointmentSetting::where('user_id', $user->id)
+                ->where('order_id', $orderId)
+                ->first();
+            
+            Log::info('[AppointmentController@getAvailableDates] Recherche de settings avec order_id', [
+                'user_id' => $user->id,
+                'order_id' => $orderId,
+                'settings_found' => $settings ? 'yes' : 'no',
+                'is_enabled' => $settings ? $settings->is_enabled : null,
+            ]);
+        } else {
+            Log::warning('[AppointmentController@getAvailableDates] order_id non fourni', [
+                'user_id' => $user->id,
+            ]);
+        }
+
+        // Si les rendez-vous ne sont pas activés ou si la configuration n'existe pas
+        if (!$settings || !$settings->is_enabled) {
+            Log::warning('[AppointmentController@getAvailableDates] Settings non trouvés ou désactivés', [
+                'user_id' => $user->id,
+                'order_id' => $orderId,
+                'settings_exists' => $settings ? 'yes' : 'no',
+                'is_enabled' => $settings ? $settings->is_enabled : null,
+            ]);
+            return response()->json([
+                'available_dates' => [],
+                'message' => 'Les rendez-vous ne sont pas activés pour cette commande.',
+            ]);
+        }
+
+        $today = Carbon::today();
+        $endDate = $today->copy()->addDays($daysAhead);
+        $availableDates = [];
+        
+        // Récupérer tous les rendez-vous CONFIRMÉS dans la période en une seule requête (optimisation)
+        $existingAppointments = Appointment::where('user_id', $user->id)
+            ->where('status', Appointment::STATUS_CONFIRMED)
+            ->whereBetween('start_time', [$today->copy()->startOfDay(), $endDate->copy()->endOfDay()])
+            ->get()
+            ->groupBy(function ($appointment) {
+                return $appointment->start_time->format('Y-m-d');
+            });
+        
+        // OPTIMISATION: Calculer directement toutes les dates disponibles depuis les règles
+        // au lieu de parcourir chaque jour individuellement
+        $availability = $settings->weekly_availability ?? [];
+        $dateRules = $availability['date_rules'] ?? [];
+        
+        $startTime = microtime(true);
+        
+        Log::info('[AppointmentController@getAvailableDates] Structure détectée', [
+            'user_id' => $user->id,
+            'order_id' => $orderId,
+            'has_date_rules' => !empty($dateRules),
+            'date_rules_count' => count($dateRules),
+            'has_old_structure' => !empty($availability) && empty($dateRules),
+            'availability_keys' => array_keys($availability),
+        ]);
+        
+        // Si c'est la nouvelle structure (date_rules), calculer directement les dates
+        if (!empty($dateRules)) {
+            // Construire un index des dates avec leurs créneaux directement depuis les règles
+            // Cela évite d'appeler getSlotsForDate() pour chaque date
+            $datesWithSlots = [];
+            
+            foreach ($dateRules as $ruleIndex => $rule) {
+                $type = $rule['type'] ?? 'specific';
+                $slots = $rule['slots'] ?? [];
+                
+                Log::info('[AppointmentController@getAvailableDates] Traitement de la règle', [
+                    'user_id' => $user->id,
+                    'order_id' => $orderId,
+                    'rule_index' => $ruleIndex,
+                    'rule_type' => $type,
+                    'rule_data' => $rule,
+                    'slots_count' => count($slots),
+                ]);
+                
+                if (empty($slots)) {
+                    Log::warning('[AppointmentController@getAvailableDates] Règle ignorée (pas de créneaux)', [
+                        'user_id' => $user->id,
+                        'order_id' => $orderId,
+                        'rule_index' => $ruleIndex,
+                        'rule_type' => $type,
+                    ]);
+                    continue; // Pas de créneaux configurés pour cette règle
+                }
+                
+                if ($type === 'specific') {
+                    // Dates spécifiques : ajouter directement les dates avec leurs créneaux
+                    $dates = $rule['dates'] ?? [];
+                    foreach ($dates as $dateString) {
+                        try {
+                            $date = Carbon::parse($dateString);
+                            // Vérifier que la date est dans la période et dans le futur
+                            if ($date->gte($today) && $date->lte($endDate)) {
+                                $dateKey = $date->format('Y-m-d');
+                                // Ajouter les créneaux pour cette date (peut être fusionné avec d'autres règles)
+                                if (!isset($datesWithSlots[$dateKey])) {
+                                    $datesWithSlots[$dateKey] = [
+                                        'date' => $date,
+                                        'slots' => []
+                                    ];
+                                }
+                                // Fusionner les créneaux (éviter les doublons)
+                                foreach ($slots as $slot) {
+                                    $slotKey = $slot['start'] . '_' . $slot['duration'];
+                                    if (!isset($datesWithSlots[$dateKey]['slots'][$slotKey])) {
+                                        $datesWithSlots[$dateKey]['slots'][$slotKey] = $slot;
+                                    }
+                                }
+                            }
+                        } catch (\Exception $e) {
+                            // Ignorer les dates invalides
+                            continue;
+                        }
+                    }
+                } elseif ($type === 'recurring_month') {
+                    // Récurrence mensuelle : calculer tous les jours correspondants
+                    // Si month/year sont spécifiés, calculer seulement pour ce mois
+                    // Sinon, calculer toutes les dates futures qui correspondent au jour de la semaine
+                    $ruleDayOfWeek = $rule['day_of_week'] ?? null;
+                    $ruleMonth = $rule['month'] ?? null;
+                    $ruleYear = $rule['year'] ?? null;
+                    
+                    if ($ruleDayOfWeek) {
+                        try {
+                            if ($ruleMonth && $ruleYear) {
+                                // Mois et année spécifiés : calculer UNIQUEMENT les dates de ce mois spécifique
+                                $firstDayOfMonth = Carbon::create($ruleYear, $ruleMonth, 1);
+                                $lastDayOfMonth = $firstDayOfMonth->copy()->endOfMonth();
+                                
+                                // Vérifier que le mois n'est pas dans le passé
+                                if ($lastDayOfMonth->lt($today)) {
+                                    // Le mois est dans le passé, ignorer cette règle
+                                    continue;
+                                }
+                                
+                                // Parcourir tous les jours du mois pour trouver ceux qui correspondent au jour de la semaine
+                                // Commencer au premier jour du mois ou aujourd'hui, selon le plus récent
+                                $startDate = $firstDayOfMonth->copy();
+                                if ($today->gt($firstDayOfMonth)) {
+                                    $startDate = $today->copy();
+                                }
+                                $currentDate = $startDate->copy();
+                                
+                                $datesFoundForThisRule = [];
+                                
+                                Log::info('[AppointmentController@getAvailableDates] Calcul des dates pour recurring_month', [
+                                    'user_id' => $user->id,
+                                    'order_id' => $orderId,
+                                    'rule_day_of_week' => $ruleDayOfWeek,
+                                    'rule_month' => $ruleMonth,
+                                    'rule_year' => $ruleYear,
+                                    'today' => $today->format('Y-m-d'),
+                                    'first_day_of_month' => $firstDayOfMonth->format('Y-m-d'),
+                                    'last_day_of_month' => $lastDayOfMonth->format('Y-m-d'),
+                                    'start_date' => $startDate->format('Y-m-d'),
+                                    'end_date' => $endDate->format('Y-m-d'),
+                                ]);
+                                
+                                // Parcourir tous les jours du mois à partir de la date de début
+                                while ($currentDate->lte($lastDayOfMonth) && $currentDate->lte($endDate)) {
+                                    if ($currentDate->dayOfWeekIso == $ruleDayOfWeek) {
+                                        $dateKey = $currentDate->format('Y-m-d');
+                                        $datesFoundForThisRule[] = $dateKey;
+                                        
+                                        // Ajouter les créneaux pour cette date
+                                        if (!isset($datesWithSlots[$dateKey])) {
+                                            $datesWithSlots[$dateKey] = [
+                                                'date' => $currentDate->copy(),
+                                                'slots' => []
+                                            ];
+                                        }
+                                        // Fusionner les créneaux (éviter les doublons)
+                                        foreach ($slots as $slot) {
+                                            $slotKey = $slot['start'] . '_' . $slot['duration'];
+                                            if (!isset($datesWithSlots[$dateKey]['slots'][$slotKey])) {
+                                                $datesWithSlots[$dateKey]['slots'][$slotKey] = $slot;
+                                            }
+                                        }
+                                    }
+                                    $currentDate->addDay();
+                                }
+                                
+                                Log::info('[AppointmentController@getAvailableDates] Règle recurring_month traitée', [
+                                    'user_id' => $user->id,
+                                    'order_id' => $orderId,
+                                    'rule_day_of_week' => $ruleDayOfWeek,
+                                    'rule_month' => $ruleMonth,
+                                    'rule_year' => $ruleYear,
+                                    'first_day_of_month' => $firstDayOfMonth->format('Y-m-d'),
+                                    'last_day_of_month' => $lastDayOfMonth->format('Y-m-d'),
+                                    'start_date' => $startDate->format('Y-m-d'),
+                                    'dates_found' => $datesFoundForThisRule,
+                                    'dates_count' => count($datesFoundForThisRule),
+                                ]);
+                            } else {
+                                // Pas de mois/année spécifiés : calculer toutes les dates futures qui correspondent au jour de la semaine
+                                // Trouver le prochain jour de la semaine à partir d'aujourd'hui
+                                $currentDate = $today->copy();
+                                
+                                // Avancer jusqu'au prochain jour de la semaine correspondant
+                                while ($currentDate->dayOfWeekIso != $ruleDayOfWeek && $currentDate->lte($endDate)) {
+                                    $currentDate->addDay();
+                                }
+                                
+                                // Maintenant, calculer toutes les dates qui correspondent à ce jour de la semaine
+                                while ($currentDate->lte($endDate)) {
+                                    $dateKey = $currentDate->format('Y-m-d');
+                                    
+                                    // Ajouter les créneaux pour cette date
+                                    if (!isset($datesWithSlots[$dateKey])) {
+                                        $datesWithSlots[$dateKey] = [
+                                            'date' => $currentDate->copy(),
+                                            'slots' => []
+                                        ];
+                                    }
+                                    // Fusionner les créneaux (éviter les doublons)
+                                    foreach ($slots as $slot) {
+                                        $slotKey = $slot['start'] . '_' . $slot['duration'];
+                                        if (!isset($datesWithSlots[$dateKey]['slots'][$slotKey])) {
+                                            $datesWithSlots[$dateKey]['slots'][$slotKey] = $slot;
+                                        }
+                                    }
+                                    
+                                    // Passer à la semaine suivante (ajouter 7 jours)
+                                    $currentDate->addWeek();
+                                }
+                            }
+                        } catch (\Exception $e) {
+                            // Ignorer les erreurs
+                            Log::warning('[AppointmentController@getAvailableDates] Erreur lors du calcul des récurrences mensuelles', [
+                                'error' => $e->getMessage(),
+                                'rule' => $rule,
+                            ]);
+                            continue;
+                        }
+                    }
+                }
+            }
+            
+            Log::info('[AppointmentController@getAvailableDates] Dates calculées depuis les règles', [
+                'user_id' => $user->id,
+                'order_id' => $orderId,
+                'total_dates_calculated' => count($datesWithSlots),
+                'dates_keys' => array_keys($datesWithSlots),
+                'first_10_dates' => array_slice(array_keys($datesWithSlots), 0, 10),
+            ]);
+            
+            // Maintenant, vérifier pour chaque date s'il reste au moins un créneau disponible
+            foreach ($datesWithSlots as $dateKey => $dateData) {
+                $checkDate = $dateData['date'];
+                $configuredSlots = array_values($dateData['slots']); // Convertir en array indexé
+                
+                if (empty($configuredSlots)) {
+                    continue; // Pas de créneaux configurés pour ce jour
+                }
+                
+                // Récupérer les rendez-vous de ce jour (depuis le groupe)
+                $dayAppointments = $existingAppointments->get($dateKey, collect());
+                
+                // Vérifier s'il reste au moins un créneau disponible
+                $hasAvailableSlot = false;
+                
+                foreach ($configuredSlots as $slot) {
+                    $slotStart = Carbon::parse($checkDate->format('Y-m-d') . ' ' . $slot['start']);
+                    $slotEnd = $slotStart->copy()->addMinutes($slot['duration']);
+                    
+                    // Si c'est aujourd'hui, vérifier que le créneau n'est pas déjà passé
+                    if ($checkDate->isToday() && $slotStart->isBefore(Carbon::now())) {
+                        continue;
+                    }
+                    
+                    // Vérifier s'il y a un conflit avec un rendez-vous existant
+                    $hasConflict = $this->hasConflict($slotStart, $slotEnd, $dayAppointments);
+                    
+                    if (!$hasConflict) {
+                        $hasAvailableSlot = true;
+                        break; // Au moins un créneau disponible, on peut ajouter la date
+                    }
+                }
+                
+                // Si au moins un créneau est disponible, ajouter la date
+                if ($hasAvailableSlot) {
+                    $availableDates[] = [
+                        'date' => $dateKey,
+                        'formatted_date' => $checkDate->locale('fr')->isoFormat('dddd D MMMM YYYY'),
+                        'day_name' => $checkDate->locale('fr')->isoFormat('dddd'),
+                    ];
+                } else {
+                    Log::info('[AppointmentController@getAvailableDates] Date exclue (pas de créneau disponible)', [
+                        'user_id' => $user->id,
+                        'order_id' => $orderId,
+                        'date' => $dateKey,
+                        'configured_slots_count' => count($configuredSlots),
+                        'existing_appointments_count' => $dayAppointments->count(),
+                    ]);
+                }
+            }
+        } else {
+            // OPTIMISATION : Ancienne structure (jours de la semaine)
+            // Au lieu de parcourir tous les jours, calculer directement les jours de la semaine activés
+            $enabledDays = [];
+            $daySlotsMap = []; // Map des jours avec leurs créneaux
+            
+            // Identifier les jours de la semaine activés (1=Lundi, 7=Dimanche)
+            for ($dayOfWeek = 1; $dayOfWeek <= 7; $dayOfWeek++) {
+                $dayKey = (string) $dayOfWeek;
+                if (isset($availability[$dayKey]) && ($availability[$dayKey]['enabled'] ?? false)) {
+                    $enabledDays[] = $dayOfWeek;
+                    $daySlotsMap[$dayOfWeek] = $availability[$dayKey]['slots'] ?? [];
+                }
+            }
+            
+            Log::info('[AppointmentController@getAvailableDates] Jours activés détectés', [
+                'user_id' => $user->id,
+                'order_id' => $orderId,
+                'enabled_days' => $enabledDays,
+                'days_with_slots' => array_map(function($day) use ($daySlotsMap) {
+                    return ['day' => $day, 'slots_count' => count($daySlotsMap[$day] ?? [])];
+                }, $enabledDays),
+            ]);
+            
+            if (empty($enabledDays)) {
+                // Aucun jour activé, retourner vide
+                Log::warning('[AppointmentController@getAvailableDates] Aucun jour activé dans l\'ancienne structure', [
+                    'user_id' => $user->id,
+                    'order_id' => $orderId,
+                    'availability_structure' => $availability,
+                ]);
+            } else {
+                // Calculer toutes les dates correspondant aux jours activés dans la période
+                $currentDate = $today->copy();
+                $datesChecked = 0;
+                $datesWithSlots = 0;
+                $datesWithConflicts = 0;
+                $maxChecks = $daysAhead; // Limite de sécurité
+                
+                while ($currentDate->lte($endDate) && $datesChecked < $maxChecks) {
+                    $dayOfWeek = $currentDate->dayOfWeekIso; // 1=Lundi, 7=Dimanche
+                    
+                    // Vérifier si ce jour de la semaine est activé
+                    if (in_array($dayOfWeek, $enabledDays)) {
+                        $dateKey = $currentDate->format('Y-m-d');
+                        $configuredSlots = $daySlotsMap[$dayOfWeek];
+                        
+                        if (!empty($configuredSlots)) {
+                            $datesWithSlots++;
+                            
+                            // Récupérer les rendez-vous de ce jour (depuis le groupe)
+                            $dayAppointments = $existingAppointments->get($dateKey, collect());
+                            
+                            // Vérifier s'il reste au moins un créneau disponible
+                            $hasAvailableSlot = false;
+                            
+                            foreach ($configuredSlots as $slot) {
+                                $slotStart = Carbon::parse($currentDate->format('Y-m-d') . ' ' . $slot['start']);
+                                $slotEnd = $slotStart->copy()->addMinutes($slot['duration']);
+                                
+                                // Si c'est aujourd'hui, vérifier que le créneau n'est pas déjà passé
+                                if ($currentDate->isToday() && $slotStart->isBefore(Carbon::now())) {
+                                    continue;
+                                }
+                                
+                                // Vérifier s'il y a un conflit avec un rendez-vous existant
+                                $hasConflict = $this->hasConflict($slotStart, $slotEnd, $dayAppointments);
+                                
+                                if (!$hasConflict) {
+                                    $hasAvailableSlot = true;
+                                    break; // Au moins un créneau disponible, on peut ajouter la date
+                                } else {
+                                    $datesWithConflicts++;
+                                }
+                            }
+                            
+                            // Si au moins un créneau est disponible, ajouter la date
+                            if ($hasAvailableSlot) {
+                                $availableDates[] = [
+                                    'date' => $dateKey,
+                                    'formatted_date' => $currentDate->locale('fr')->isoFormat('dddd D MMMM YYYY'),
+                                    'day_name' => $currentDate->locale('fr')->isoFormat('dddd'),
+                                ];
+                            }
+                        }
+                    }
+                    
+                    $currentDate->addDay();
+                    $datesChecked++;
+                }
+                
+                Log::info('[AppointmentController@getAvailableDates] Traitement ancienne structure terminé', [
+                    'user_id' => $user->id,
+                    'order_id' => $orderId,
+                    'dates_checked' => $datesChecked,
+                    'dates_with_slots' => $datesWithSlots,
+                    'dates_with_conflicts' => $datesWithConflicts,
+                    'available_dates_found' => count($availableDates),
+                ]);
+            }
+        }
+        
+        // Trier les dates par ordre chronologique
+        usort($availableDates, function($a, $b) {
+            return strcmp($a['date'], $b['date']);
+        });
+        
+        $endTime = microtime(true);
+        $executionTime = round(($endTime - $startTime) * 1000, 2); // en millisecondes
+        
+        Log::info('[AppointmentController@getAvailableDates] Résultat', [
+            'user_id' => $user->id,
+            'order_id' => $orderId,
+            'available_dates_count' => count($availableDates),
+            'execution_time_ms' => $executionTime,
+            'first_5_dates' => array_slice($availableDates, 0, 5),
+        ]);
+        
+        return response()->json([
+            'available_dates' => $availableDates,
+            'count' => count($availableDates),
+        ]);
+    }
+
+    /**
      * Récupérer les créneaux disponibles pour une date donnée (route publique).
      * 
      * Cette méthode :
@@ -731,17 +1187,24 @@ class AppointmentController extends Controller
         }
 
         // Récupérer les rendez-vous de l'utilisateur
+        // IMPORTANT: Afficher uniquement les rendez-vous confirmés et à venir (ou aujourd'hui)
+        $today = Carbon::today();
+        
         $query = Appointment::where('user_id', $user->id)
-            ->orderBy('start_time', 'desc');
+            ->where('status', Appointment::STATUS_CONFIRMED)
+            ->where('start_time', '>=', $today->startOfDay())
+            ->orderBy('start_time', 'asc'); // Ordre croissant pour afficher les plus proches en premier
 
         // Filtrer par order_id si fourni
-        // Inclure aussi les rendez-vous avec order_id=NULL (créés avant l'implémentation)
-        if ($orderId) {
+        // Si order_id est fourni, inclure les rendez-vous de cette commande ET ceux sans order_id (créés avant l'implémentation)
+        // Si order_id n'est pas fourni, retourner TOUS les rendez-vous confirmés de l'utilisateur
+        if ($orderId !== null) {
             $query->where(function($q) use ($orderId) {
                 $q->where('order_id', $orderId)
                   ->orWhereNull('order_id');
             });
         }
+        // Si order_id est null, ne pas filtrer par order_id (retourner tous les rendez-vous)
 
         $appointments = $query->get()->map(function ($appointment) {
             return [

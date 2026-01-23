@@ -443,78 +443,95 @@ class CompanyPageController extends Controller
         }
 
         // Récupérer order_id depuis la requête si fourni
-        $orderId = $request->query('order');
+        $orderParam = $request->query('order');
+        $orderId = null;
+        $order = null;
+
+        // Si un order est fourni, chercher la commande par ID ou par order_number
+        if ($orderParam) {
+            // Essayer d'abord par ID numérique
+            if (is_numeric($orderParam)) {
+                $order = \App\Models\Order::where('id', (int) $orderParam)
+                    ->where('user_id', $user->id)
+                    ->first();
+            }
+            
+            // Si pas trouvé par ID, essayer par order_number
+            if (!$order) {
+                $order = \App\Models\Order::where('order_number', $orderParam)
+                    ->where('user_id', $user->id)
+                    ->first();
+            }
+            
+            // Si la commande est trouvée, utiliser son ID
+            if ($order) {
+                $orderId = $order->id;
+            }
+        }
 
         $companyPage = null;
         $contactInfo = null;
 
-        // Si un order_id est fourni, utiliser la page entreprise de cette commande spécifique
-        if ($orderId) {
-            // Vérifier que la commande appartient bien à cet utilisateur
-            $order = \App\Models\Order::where('id', $orderId)
+        // Si un order_id est trouvé, utiliser la page entreprise de cette commande spécifique
+        if ($orderId && $order) {
+            // Récupérer la page entreprise de cette commande spécifique (publiée d'abord)
+            $companyPage = CompanyPage::where('order_id', $orderId)
                 ->where('user_id', $user->id)
+                ->where('is_published', true)
                 ->first();
 
-            if ($order) {
-                // Récupérer la page entreprise de cette commande spécifique (publiée d'abord)
+            // Si pas de page publiée pour cette commande, essayer une page non publiée
+            if (!$companyPage) {
                 $companyPage = CompanyPage::where('order_id', $orderId)
                     ->where('user_id', $user->id)
+                    ->first();
+            }
+
+            // Si toujours pas de page pour cette commande, fallback sur une page sans order_id (publiée d'abord)
+            if (!$companyPage) {
+                $companyPage = CompanyPage::where('user_id', $user->id)
+                    ->whereNull('order_id')
                     ->where('is_published', true)
                     ->first();
+            }
+            
+            // Si toujours pas de page publiée sans order_id, essayer une page non publiée
+            if (!$companyPage) {
+                $companyPage = CompanyPage::where('user_id', $user->id)
+                    ->whereNull('order_id')
+                    ->first();
+            }
 
-                // Si pas de page publiée pour cette commande, essayer une page non publiée
-                if (!$companyPage) {
-                    $companyPage = CompanyPage::where('order_id', $orderId)
-                        ->where('user_id', $user->id)
-                        ->first();
-                }
-
-                // Si toujours pas de page pour cette commande, fallback sur une page sans order_id (publiée d'abord)
-                if (!$companyPage) {
-                    $companyPage = CompanyPage::where('user_id', $user->id)
-                        ->whereNull('order_id')
-                        ->where('is_published', true)
-                        ->first();
-                }
+            // Récupérer les informations de contact depuis OrderEmployee de cette commande spécifique
+            // Pour un business_admin, chercher dans OrderEmployee si il est inclus dans la commande
+            // Sinon, utiliser les données de Order directement
+            if ($companyPage) {
+                // D'abord essayer OrderEmployee si le business_admin est inclus dans cette commande
+                $contactInfo = \App\Models\OrderEmployee::where('order_id', $orderId)
+                    ->where('employee_id', $user->id)
+                    ->where('is_configured', true)
+                    ->first();
                 
-                // Si toujours pas de page publiée sans order_id, essayer une page non publiée
-                if (!$companyPage) {
-                    $companyPage = CompanyPage::where('user_id', $user->id)
-                        ->whereNull('order_id')
-                        ->first();
-                }
-
-                // Récupérer les informations de contact depuis OrderEmployee de cette commande spécifique
-                // Pour un business_admin, chercher dans OrderEmployee si il est inclus dans la commande
-                // Sinon, utiliser les données de Order directement
-                if ($companyPage) {
-                    // D'abord essayer OrderEmployee si le business_admin est inclus dans cette commande
-                    $contactInfo = \App\Models\OrderEmployee::where('order_id', $orderId)
-                        ->where('employee_id', $user->id)
-                        ->where('is_configured', true)
-                        ->first();
-                    
-                    // Si pas trouvé dans OrderEmployee, utiliser les données de Order directement
-                    if (!$contactInfo && $order) {
-                        // Créer un objet avec les données de Order pour compatibilité avec formatPageData
-                        $contactInfo = (object)[
-                            'profile_name' => $order->profile_name ?? $user->name,
-                            'address_neighborhood' => $order->address_neighborhood ?? null,
-                            'address_commune' => $order->address_commune ?? null,
-                            'address_city' => $order->address_city ?? null,
-                            'address_country' => $order->address_country ?? null,
-                            'phone_numbers' => $order->phone_numbers ?? null,
-                            'emails' => $order->emails ?? null,
-                            'website_url' => $order->website_url ?? null,
-                            'whatsapp_url' => $order->whatsapp_url ?? null,
-                            'linkedin_url' => $order->linkedin_url ?? null,
-                            'facebook_url' => $order->facebook_url ?? null,
-                            'twitter_url' => $order->twitter_url ?? null,
-                            'youtube_url' => $order->youtube_url ?? null,
-                            'deezer_url' => $order->deezer_url ?? null,
-                            'spotify_url' => $order->spotify_url ?? null,
-                        ];
-                    }
+                // Si pas trouvé dans OrderEmployee, utiliser les données de Order directement
+                if (!$contactInfo && $order) {
+                    // Créer un objet avec les données de Order pour compatibilité avec formatPageData
+                    $contactInfo = (object)[
+                        'profile_name' => $order->profile_name ?? $user->name,
+                        'address_neighborhood' => $order->address_neighborhood ?? null,
+                        'address_commune' => $order->address_commune ?? null,
+                        'address_city' => $order->address_city ?? null,
+                        'address_country' => $order->address_country ?? null,
+                        'phone_numbers' => $order->phone_numbers ?? null,
+                        'emails' => $order->emails ?? null,
+                        'website_url' => $order->website_url ?? null,
+                        'whatsapp_url' => $order->whatsapp_url ?? null,
+                        'linkedin_url' => $order->linkedin_url ?? null,
+                        'facebook_url' => $order->facebook_url ?? null,
+                        'twitter_url' => $order->twitter_url ?? null,
+                        'youtube_url' => $order->youtube_url ?? null,
+                        'deezer_url' => $order->deezer_url ?? null,
+                        'spotify_url' => $order->spotify_url ?? null,
+                    ];
                 }
             }
         }
@@ -552,6 +569,15 @@ class CompanyPageController extends Controller
                     ->where('is_configured', true)
                     ->first();
             }
+            
+            // Si la companyPage a un order_id mais qu'on ne l'a pas encore, l'utiliser
+            if (!$orderId && $companyPage && $companyPage->order_id) {
+                $orderId = $companyPage->order_id;
+                // Récupérer la commande correspondante
+                $order = \App\Models\Order::where('id', $orderId)
+                    ->where('user_id', $user->id)
+                    ->first();
+            }
         }
 
         // Log pour debug
@@ -559,7 +585,10 @@ class CompanyPageController extends Controller
         Log::info('Company Page Show - Page trouvée', [
             'user_id' => $user->id,
             'username' => $username,
+            'order_param' => $request->query('order'),
             'order_id' => $orderId,
+            'order_found' => $order ? 'yes' : 'no',
+            'order_number' => $order ? $order->order_number : null,
             'company_page_id' => $companyPage->id ?? null,
             'company_page_order_id' => $companyPage->order_id ?? null,
             'is_published' => $companyPage->is_published ?? false,
@@ -571,12 +600,20 @@ class CompanyPageController extends Controller
 
         // Retourner les données pour le frontend
         // IMPORTANT: Passer orderId pour récupérer la configuration de rendez-vous spécifique à la commande
+        $pageData = $this->formatPageData($companyPage, $contactInfo, $user, $orderId);
+        
+        Log::info('Company Page Show - pageData formaté', [
+            'order_id_in_pageData' => $pageData['order_id'] ?? null,
+            'user_id_in_pageData' => $pageData['user_id'] ?? null,
+            'appointment_setting_enabled' => $pageData['appointment_setting']['is_enabled'] ?? null,
+        ]);
+        
         return response()->json([
             'user' => [
                 'username' => $user->username,
                 'company_name' => $user->company_name,
             ],
-            'pageData' => $this->formatPageData($companyPage, $contactInfo, $user, $orderId),
+            'pageData' => $pageData,
         ]);
     }
 

@@ -671,17 +671,38 @@
             <!-- Étape 1: Choix de la date -->
             <div id="bookingStep1" class="space-y-4">
                 <div>
-                    <label class="block text-sm font-medium text-slate-300 mb-2">📅 Choisissez une date</label>
-                    <input type="date" id="bookingDate" class="w-full bg-slate-700/50 border border-slate-600 rounded-xl py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500" />
+                    <label class="block text-sm font-medium text-slate-300 mb-3">📅 Choisissez une date</label>
+                    
+                    <!-- Chargement des dates disponibles -->
+                    <div id="loadingAvailableDates" class="w-full bg-slate-700/50 border border-slate-600 rounded-xl py-8 flex flex-col items-center justify-center gap-3">
+                        <div class="relative">
+                            <div class="w-12 h-12 rounded-full border-4 border-slate-700"></div>
+                            <div class="absolute top-0 left-0 w-12 h-12 rounded-full border-4 border-sky-500 border-t-transparent animate-spin"></div>
+                        </div>
+                        <span class="text-sm text-slate-400">Chargement des dates disponibles...</span>
+                    </div>
+                    
+                    <!-- Grille de dates visuelle -->
+                    <div id="datesGridContainer" class="hidden space-y-6"></div>
+                    
+                    <!-- Message si aucune date disponible -->
+                    <div id="noDatesAvailable" class="hidden w-full bg-slate-700/50 border border-slate-600 rounded-xl py-12 flex flex-col items-center justify-center gap-3">
+                        <div class="w-16 h-16 rounded-full bg-slate-700/50 flex items-center justify-center">
+                            <svg class="w-8 h-8 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                        </div>
+                        <p class="text-slate-400 text-sm text-center px-4">Aucune date disponible pour le moment</p>
+                    </div>
                 </div>
                 <div id="loadingSlots" class="hidden flex items-center justify-center py-8">
                     <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-sky-500"></div>
                 </div>
-                <div id="noDateSelected" class="text-center py-8">
+                <div id="noDateSelected" class="hidden text-center py-8">
                     <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-700/50 flex items-center justify-center">
                         <svg class="w-8 h-8 text-slate-500" fill="currentColor" viewBox="0 0 24 24"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10z"/></svg>
                     </div>
-                    <p class="text-slate-400">Sélectionnez une date pour voir les créneaux disponibles</p>
+                    <p class="text-slate-400">Sélectionnez une date ci-dessus pour voir les créneaux disponibles</p>
                 </div>
             </div>
 
@@ -787,17 +808,217 @@ const orderId = @if(isset($appointmentOrderId) && $appointmentOrderId){{ $appoin
 const ownerName = "{{ $displayName }}";
 const apiBaseUrl = "{{ config('app.url') }}";
 
+console.log('[PublicProfile Blade] Variables de rendez-vous:', {
+    userId: userId,
+    orderId: orderId,
+    appointmentOrderId: @json($appointmentOrderId ?? null),
+    appointmentSetting_enabled: @json($appointmentSetting->is_enabled ?? null),
+    has_order: @json(isset($order) && $order),
+    order_id_from_order: @json($order->id ?? null),
+    has_orderEmployee: @json(isset($orderEmployee) && $orderEmployee),
+    order_id_from_orderEmployee: @json($orderEmployee->order_id ?? null)
+});
+
 let currentBookingStep = 1;
 let selectedDate = '';
 let selectedSlot = null;
 let availableSlots = [];
+let availableDates = [];
+
+// Charger les dates disponibles au chargement du modal
+async function loadAvailableDates() {
+    const loadingDiv = document.getElementById('loadingAvailableDates');
+    const datesGridContainer = document.getElementById('datesGridContainer');
+    const noDatesDiv = document.getElementById('noDatesAvailable');
+    
+    loadingDiv.classList.remove('hidden');
+    datesGridContainer.classList.add('hidden');
+    noDatesDiv.classList.add('hidden');
+    
+    try {
+        const params = new URLSearchParams({ days_ahead: 60 });
+        if (orderId) {
+            params.append('order_id', orderId);
+        }
+        
+        console.log('[BookingModal] Chargement des dates disponibles:', { userId, orderId, params: params.toString() });
+        
+        const response = await fetch(`${apiBaseUrl}/api/user/${userId}/available-dates?${params.toString()}`);
+        const data = await response.json();
+        
+        console.log('[BookingModal] Dates disponibles reçues:', data);
+        
+        availableDates = data.available_dates || [];
+        
+        if (availableDates.length > 0) {
+            // Grouper les dates par mois
+            const groupedByMonth = {};
+            availableDates.forEach(dateInfo => {
+                const dateObj = new Date(dateInfo.date);
+                const monthKey = dateObj.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+                const capitalizedMonth = monthKey.charAt(0).toUpperCase() + monthKey.slice(1);
+                
+                if (!groupedByMonth[capitalizedMonth]) {
+                    groupedByMonth[capitalizedMonth] = [];
+                }
+                groupedByMonth[capitalizedMonth].push(dateInfo);
+            });
+            
+            // Trier les dates dans chaque mois
+            Object.keys(groupedByMonth).forEach(month => {
+                groupedByMonth[month].sort((a, b) => {
+                    return new Date(a.date) - new Date(b.date);
+                });
+            });
+            
+            // Créer la grille de dates
+            datesGridContainer.innerHTML = '';
+            
+            Object.keys(groupedByMonth).forEach(monthKey => {
+                // En-tête du mois
+                const monthHeader = document.createElement('div');
+                monthHeader.className = 'flex items-center gap-2 px-2 mb-3';
+                monthHeader.innerHTML = `
+                    <div class="h-px flex-1 bg-gradient-to-r from-transparent via-slate-600 to-transparent"></div>
+                    <h3 class="text-sm font-semibold text-sky-400 px-3 py-1 bg-slate-800/50 rounded-lg">${monthKey}</h3>
+                    <div class="h-px flex-1 bg-gradient-to-r from-transparent via-slate-600 to-transparent"></div>
+                `;
+                datesGridContainer.appendChild(monthHeader);
+                
+                // Grille de dates
+                const datesGrid = document.createElement('div');
+                datesGrid.className = 'grid grid-cols-2 sm:grid-cols-3 gap-2 mb-6';
+                
+                groupedByMonth[monthKey].forEach(dateInfo => {
+                    const dateObj = new Date(dateInfo.date);
+                    const dayName = dateObj.toLocaleDateString('fr-FR', { weekday: 'short' });
+                    const dayNumber = dateObj.getDate();
+                    const monthName = dateObj.toLocaleDateString('fr-FR', { month: 'short' });
+                    
+                    const dateButton = document.createElement('button');
+                    dateButton.className = 'group relative p-3 rounded-xl border-2 transition-all duration-200 text-left overflow-hidden bg-slate-700/30 border-slate-600 hover:border-sky-400/50 hover:bg-slate-700/50';
+                    dateButton.style.transform = 'scale(1)';
+                    dateButton.dataset.date = dateInfo.date;
+                    dateButton.innerHTML = `
+                        <div class="absolute inset-0 bg-gradient-to-br from-white/0 via-white/0 to-white/0 group-hover:from-white/5 group-hover:via-white/10 group-hover:to-white/5 transition-all duration-300"></div>
+                        <div class="relative z-10">
+                            <div class="flex items-center gap-1.5 mb-1">
+                                <span class="text-xs font-medium text-slate-400 uppercase tracking-wide">${dayName}</span>
+                            </div>
+                            <div class="flex items-baseline gap-1">
+                                <span class="text-2xl font-bold text-white group-hover:text-sky-300 transition-colors">${dayNumber}</span>
+                            </div>
+                            <div class="text-xs text-slate-400 mt-0.5">${monthName}</div>
+                        </div>
+                    `;
+                    
+                    dateButton.addEventListener('click', function() {
+                        // Retirer la sélection précédente
+                        document.querySelectorAll('#datesGridContainer button').forEach(btn => {
+                            btn.classList.remove('bg-gradient-to-br', 'from-sky-500/20', 'to-indigo-500/20', 'border-sky-500', 'shadow-lg', 'shadow-sky-500/20');
+                            btn.classList.add('bg-slate-700/30', 'border-slate-600');
+                            btn.style.transform = 'scale(1)';
+                            
+                            // Retirer l'icône de vérification (chercher dans la structure HTML)
+                            const relativeDiv = btn.querySelector('.relative.z-10');
+                            if (relativeDiv) {
+                                const dayNameDiv = relativeDiv.querySelector('div:first-child');
+                                if (dayNameDiv) {
+                                    const svgIcon = dayNameDiv.querySelector('svg');
+                                    if (svgIcon && svgIcon.getAttribute('viewBox') === '0 0 20 20') {
+                                        svgIcon.remove();
+                                    }
+                                }
+                            }
+                            
+                            // Retirer l'indicateur de sélection
+                            const indicators = btn.querySelectorAll('.absolute');
+                            indicators.forEach(ind => {
+                                if (ind.classList.contains('top-2') && ind.classList.contains('right-2') && ind.classList.contains('rounded-full')) {
+                                    ind.remove();
+                                }
+                            });
+                            
+                            // Réinitialiser le numéro du jour
+                            const dayNumberSpan = btn.querySelector('[class*="text-2xl"]');
+                            if (dayNumberSpan) {
+                                dayNumberSpan.classList.remove('text-sky-400');
+                                dayNumberSpan.classList.add('text-white');
+                            }
+                        });
+                        
+                        // Ajouter la sélection à la date cliquée
+                        this.classList.remove('bg-slate-700/30', 'border-slate-600');
+                        this.classList.add('bg-gradient-to-br', 'from-sky-500/20', 'to-indigo-500/20', 'border-sky-500', 'shadow-lg', 'shadow-sky-500/20');
+                        this.style.transform = 'scale(1.05)';
+                        
+                        // Ajouter l'icône de vérification
+                        const relativeDiv = this.querySelector('.relative.z-10');
+                        if (relativeDiv) {
+                            const dayNameDiv = relativeDiv.querySelector('div:first-child');
+                            if (dayNameDiv) {
+                                // Vérifier si l'icône existe déjà
+                                const existingSvg = dayNameDiv.querySelector('svg[viewBox="0 0 20 20"]');
+                                if (!existingSvg) {
+                                    const checkIcon = document.createElement('svg');
+                                    checkIcon.className = 'w-3 h-3 text-sky-400';
+                                    checkIcon.setAttribute('fill', 'currentColor');
+                                    checkIcon.setAttribute('viewBox', '0 0 20 20');
+                                    checkIcon.innerHTML = '<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />';
+                                    dayNameDiv.appendChild(checkIcon);
+                                }
+                            }
+                        }
+                        
+                        // Ajouter l'indicateur de sélection
+                        const existingIndicator = this.querySelector('.absolute.top-2.right-2.rounded-full');
+                        if (!existingIndicator) {
+                            const indicator = document.createElement('div');
+                            indicator.className = 'absolute top-2 right-2 w-2 h-2 rounded-full bg-sky-400 shadow-lg shadow-sky-400/50';
+                            indicator.style.animation = 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite';
+                            this.appendChild(indicator);
+                        }
+                        
+                        // Mettre à jour le numéro du jour en couleur
+                        const dayNumberSpan = this.querySelector('[class*="text-2xl"]');
+                        if (dayNumberSpan) {
+                            dayNumberSpan.classList.remove('text-white');
+                            dayNumberSpan.classList.add('text-sky-400');
+                        }
+                        
+                        // Sélectionner la date et charger les créneaux
+                        selectedDate = dateInfo.date;
+                        document.getElementById('noDateSelected').classList.add('hidden');
+                        loadSlotsForDate(dateInfo.date);
+                    });
+                    
+                    datesGrid.appendChild(dateButton);
+                });
+                
+                datesGridContainer.appendChild(datesGrid);
+            });
+            
+            loadingDiv.classList.add('hidden');
+            datesGridContainer.classList.remove('hidden');
+        } else {
+            loadingDiv.classList.add('hidden');
+            noDatesDiv.classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('[BookingModal] Erreur lors du chargement des dates disponibles:', error);
+        loadingDiv.classList.add('hidden');
+        noDatesDiv.classList.add('hidden');
+        noDatesDiv.classList.remove('hidden');
+        availableDates = [];
+    }
+}
 
 function openBookingModal() {
     resetBookingModal();
     document.getElementById('bookingModal').classList.remove('hidden');
     document.getElementById('bookingModal').classList.add('flex');
-    const today = new Date().toISOString().split('T')[0];
-    document.getElementById('bookingDate').setAttribute('min', today);
+    // Charger les dates disponibles
+    loadAvailableDates();
 }
 
 function closeBookingModal() {
@@ -810,7 +1031,41 @@ function resetBookingModal() {
     selectedDate = '';
     selectedSlot = null;
     availableSlots = [];
-    document.getElementById('bookingDate').value = '';
+    
+    // Réinitialiser la sélection visuelle des dates
+    document.querySelectorAll('#datesGridContainer button').forEach(btn => {
+        btn.classList.remove('bg-gradient-to-br', 'from-sky-500/20', 'to-indigo-500/20', 'border-sky-500', 'shadow-lg', 'shadow-sky-500/20');
+        btn.classList.add('bg-slate-700/30', 'border-slate-600');
+        btn.style.transform = 'scale(1)';
+        
+        // Retirer l'icône de vérification (chercher dans la structure HTML)
+        const relativeDiv = btn.querySelector('.relative.z-10');
+        if (relativeDiv) {
+            const dayNameDiv = relativeDiv.querySelector('div:first-child');
+            if (dayNameDiv) {
+                const svgIcon = dayNameDiv.querySelector('svg');
+                if (svgIcon && svgIcon.getAttribute('viewBox') === '0 0 20 20') {
+                    svgIcon.remove();
+                }
+            }
+        }
+        
+        // Retirer l'indicateur de sélection
+        const indicators = btn.querySelectorAll('.absolute');
+        indicators.forEach(ind => {
+            if (ind.classList.contains('top-2') && ind.classList.contains('right-2') && ind.classList.contains('rounded-full')) {
+                ind.remove();
+            }
+        });
+        
+        // Réinitialiser le numéro du jour
+        const dayNumberSpan = btn.querySelector('[class*="text-2xl"]');
+        if (dayNumberSpan) {
+            dayNumberSpan.classList.remove('text-sky-400');
+            dayNumberSpan.classList.add('text-white');
+        }
+    });
+    
     document.getElementById('visitorName').value = '';
     document.getElementById('visitorEmail').value = '';
     document.getElementById('visitorPhone').value = '';
@@ -864,10 +1119,10 @@ function updateBookingFooter() {
     }
 }
 
-document.getElementById('bookingDate').addEventListener('change', async function() {
-    selectedDate = this.value;
+// Fonction pour charger les créneaux pour une date donnée
+async function loadSlotsForDate(date) {
     selectedSlot = null;
-    if (!selectedDate) {
+    if (!date) {
         document.getElementById('noDateSelected').classList.remove('hidden');
         updateBookingFooter();
         return;
@@ -875,24 +1130,26 @@ document.getElementById('bookingDate').addEventListener('change', async function
     document.getElementById('noDateSelected').classList.add('hidden');
     document.getElementById('loadingSlots').classList.remove('hidden');
     try {
-        let url = `${apiBaseUrl}/api/user/${userId}/slots?date=${selectedDate}`;
+        let url = `${apiBaseUrl}/api/user/${userId}/slots?date=${date}`;
         if (orderId) url += `&order_id=${orderId}`;
+        console.log('[BookingModal] Chargement des créneaux pour la date:', date);
         const response = await fetch(url);
         const data = await response.json();
+        console.log('[BookingModal] Créneaux reçus:', data);
         availableSlots = data.available_slots || [];
         document.getElementById('loadingSlots').classList.add('hidden');
         // Toujours passer à l'étape 2 pour afficher les créneaux ou le message "aucun créneau"
         showBookingStep(2);
         renderSlots();
     } catch (error) {
-        console.error('Error fetching slots:', error);
+        console.error('[BookingModal] Error fetching slots:', error);
         document.getElementById('loadingSlots').classList.add('hidden');
         availableSlots = [];
         // Passer à l'étape 2 pour afficher le message d'erreur
         showBookingStep(2);
         renderSlots();
     }
-});
+}
 
 function renderSlots() {
     const container = document.getElementById('slotsContainer');

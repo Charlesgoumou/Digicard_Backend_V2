@@ -77,7 +77,7 @@ class UserPortfolioController extends Controller
         }
 
         $validated = $request->validate([
-            'profile_type' => 'nullable|in:student,teacher,freelance',
+            'profile_type' => 'nullable|in:student,teacher,freelance,pharmacist,doctor,lawyer,notary,bailiff,architect,engineer,consultant,accountant,financial_analyst,photographer,graphic_designer,developer',
             'name' => 'nullable|string|max:255',
             'hero_headline' => 'nullable|string|max:255',
             'bio' => 'nullable|string',
@@ -305,6 +305,7 @@ class UserPortfolioController extends Controller
             'portfolio' => $portfolio,
             'appointmentSetting' => $appointmentSetting,
             'appointmentOrderId' => $appointmentOrderId,
+            'profileType' => $portfolio->profile_type ?? 'student', // Passer le type de profil à la vue
         ]);
     }
 }

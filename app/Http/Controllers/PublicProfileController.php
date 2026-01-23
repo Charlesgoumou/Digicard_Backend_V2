@@ -597,12 +597,34 @@ class PublicProfileController extends Controller
             $appointmentSetting = AppointmentSetting::where('user_id', $user->id)
                 ->where('order_id', $orderEmployee->order_id)
                 ->first();
+            
+            Log::info("PublicProfileController: Configuration rendez-vous pour orderEmployee", [
+                'user_id' => $user->id,
+                'order_id' => $orderEmployee->order_id,
+                'appointmentOrderId' => $appointmentOrderId,
+                'settings_found' => $appointmentSetting ? 'yes' : 'no',
+                'is_enabled' => $appointmentSetting ? $appointmentSetting->is_enabled : null,
+            ]);
         } elseif ($order) {
             $appointmentOrderId = $order->id;
             // Chercher UNIQUEMENT la configuration spécifique à cette commande
             $appointmentSetting = AppointmentSetting::where('user_id', $user->id)
                 ->where('order_id', $order->id)
                 ->first();
+            
+            Log::info("PublicProfileController: Configuration rendez-vous pour order", [
+                'user_id' => $user->id,
+                'order_id' => $order->id,
+                'appointmentOrderId' => $appointmentOrderId,
+                'settings_found' => $appointmentSetting ? 'yes' : 'no',
+                'is_enabled' => $appointmentSetting ? $appointmentSetting->is_enabled : null,
+            ]);
+        } else {
+            Log::warning("PublicProfileController: Aucun order ou orderEmployee pour déterminer appointmentOrderId", [
+                'user_id' => $user->id,
+                'has_order' => $order ? 'yes' : 'no',
+                'has_orderEmployee' => $orderEmployee ? 'yes' : 'no',
+            ]);
         }
 
         return view('profile.public', [

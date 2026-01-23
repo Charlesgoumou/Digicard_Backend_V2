@@ -6,6 +6,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use App\Mail\VerificationCodeMail;
 use App\Mail\PasswordChangedNotification;
@@ -30,6 +32,7 @@ class AccountController extends Controller
                 Rule::unique('users')->ignore($user->id)
             ],
             'phone' => 'nullable|string|regex:/^\+224[0-9]{9}$/',
+            'company_name' => 'sometimes|required|string|max:255',
             'current_password' => 'required_with:password',
             'password' => 'required_with:current_password|min:8|confirmed',
         ]);
@@ -236,5 +239,238 @@ class AccountController extends Controller
         return response()->json([
             'message' => 'Un nouveau code de vérification a été envoyé à votre nouvelle adresse email.',
         ]);
+    }
+
+    /**
+     * Active ou désactive la vérification 2FA pour l'utilisateur connecté
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function toggleTwoFactor(Request $request)
+    {
+        $user = $request->user();
+
+        // Empêcher de modifier la 2FA d'un super admin
+        if ($user->is_admin) {
+            return response()->json([
+                'message' => 'Impossible de modifier la 2FA d\'un super administrateur'
+            ], 403);
+        }
+
+        // Basculer le statut de la 2FA
+        $user->two_factor_enabled = !$user->two_factor_enabled;
+        $user->save();
+
+        // Logger l'action
+        Log::info('User 2FA toggled by user', [
+            'user_id' => $user->id,
+            'user_email' => $user->email,
+            'two_factor_enabled' => $user->two_factor_enabled,
+            'timestamp' => now(),
+        ]);
+
+        $message = $user->two_factor_enabled
+            ? 'Authentification à double facteur activée avec succès'
+            : 'Authentification à double facteur désactivée avec succès';
+
+        return response()->json([
+            'message' => $message,
+            'user' => $user->fresh(),
+            'two_factor_enabled' => $user->two_factor_enabled
+        ]);
+    }
+
+    /**
+     * Récupère tous les comptes associés à la même adresse email
+     */
+    public function getLinkedAccounts(Request $request)
+    {
+        $user = $request->user();
+        
+        // Récupérer tous les comptes avec le même email
+        $linkedAccounts = \App\Models\User::where('email', $user->email)
+            ->where('is_profile_complete', true) // Seulement les comptes complets
+            ->select('id', 'name', 'email', 'role', 'company_name', 'username', 'avatar_url', 'created_at')
+            ->orderBy('created_at', 'asc')
+            ->get()
+            ->map(function($account) {
+                return [
+                    'id' => $account->id,
+                    'name' => $account->name,
+                    'email' => $account->email,
+                    'role' => $account->role,
+                    'role_label' => $account->role === 'business_admin' ? 'Entreprise' : ($account->role === 'individual' ? 'Particulier' : 'Employé'),
+                    'company_name' => $account->company_name,
+                    'username' => $account->username,
+                    'avatar_url' => $account->avatar_url,
+                    'is_current' => $account->id === auth()->id(),
+                    'created_at' => $account->created_at,
+                ];
+            });
+
+        return response()->json([
+            'linked_accounts' => $linkedAccounts,
+            'current_account_id' => $user->id,
+        ]);
+    }
+
+    /**
+     * Crée un nouveau compte avec le même email
+     */
+    public function createLinkedAccount(Request $request)
+    {
+        $user = $request->user();
+        
+        $validated = $request->validate([
+            'account_type' => 'required|in:individual,business',
+            'name' => 'required|string|max:255',
+            'company_name' => 'required_if:account_type,business|nullable|string|max:255',
+            'password' => 'required|string|min:8|confirmed',
+        ]);
+
+        $role = ($validated['account_type'] === 'business') ? 'business_admin' : 'individual';
+        
+        // Vérifier qu'un compte avec ce rôle n'existe pas déjà avec cet email
+        $existingAccount = \App\Models\User::where('email', $user->email)
+            ->where('role', $role)
+            ->where('is_profile_complete', true)
+            ->first();
+
+        if ($existingAccount) {
+            return response()->json([
+                'message' => 'Vous avez déjà un compte ' . ($role === 'business_admin' ? 'entreprise' : 'particulier') . ' avec cet email.',
+                'errors' => ['account_type' => ['Ce type de compte existe déjà.']]
+            ], 422);
+        }
+
+        // Vérifier les restrictions selon le rôle actuel
+        if ($user->role === 'employee') {
+            // Les employés peuvent créer particulier et business_admin
+            if ($role === 'employee') {
+                return response()->json([
+                    'message' => 'Vous ne pouvez pas créer un autre compte employé.',
+                    'errors' => ['account_type' => ['Type de compte non autorisé.']]
+                ], 422);
+            }
+        } elseif ($user->role === 'business_admin') {
+            // Les business_admin peuvent créer particulier
+            if ($role === 'business_admin') {
+                return response()->json([
+                    'message' => 'Vous avez déjà un compte entreprise.',
+                    'errors' => ['account_type' => ['Type de compte non autorisé.']]
+                ], 422);
+            }
+        } elseif ($user->role === 'individual') {
+            // Les particuliers peuvent créer business_admin
+            if ($role === 'individual') {
+                return response()->json([
+                    'message' => 'Vous avez déjà un compte particulier.',
+                    'errors' => ['account_type' => ['Type de compte non autorisé.']]
+                ], 422);
+            }
+        }
+
+        // Générer un username unique
+        $baseUsername = Str::slug($validated['name']);
+        $username = $baseUsername;
+        $counter = 1;
+        while (\App\Models\User::where('username', $username)->exists()) {
+            $username = $baseUsername . $counter;
+            $counter++;
+        }
+
+        // Créer le nouveau compte
+        $newUser = \App\Models\User::create([
+            'name' => $validated['name'],
+            'email' => $user->email,
+            'password' => Hash::make($validated['password']),
+            'role' => $role,
+            'company_name' => $validated['company_name'] ?? null,
+            'username' => $username,
+            'is_profile_complete' => true,
+            'email_verified_at' => $user->email_verified_at, // Utiliser la même date de vérification
+        ]);
+
+        return response()->json([
+            'message' => 'Compte créé avec succès.',
+            'account' => [
+                'id' => $newUser->id,
+                'name' => $newUser->name,
+                'email' => $newUser->email,
+                'role' => $newUser->role,
+                'role_label' => $newUser->role === 'business_admin' ? 'Entreprise' : 'Particulier',
+                'company_name' => $newUser->company_name,
+                'username' => $newUser->username,
+            ]
+        ], 201);
+    }
+
+    /**
+     * Bascule vers un autre compte lié (même email) sans demander de mot de passe.
+     * L'utilisateur est déjà authentifié, donc on peut basculer directement.
+     */
+    public function switchToLinkedAccount(Request $request)
+    {
+        $currentUser = $request->user();
+
+        $validated = $request->validate([
+            'target_account_id' => 'required|integer|exists:users,id',
+        ]);
+
+        $targetAccountId = $validated['target_account_id'];
+
+        // Vérifier que le compte cible existe et a le même email
+        $targetAccount = \App\Models\User::where('id', $targetAccountId)
+            ->where('email', $currentUser->email)
+            ->where('is_profile_complete', true) // Seulement les comptes complets
+            ->first();
+
+        if (!$targetAccount) {
+            return response()->json([
+                'message' => 'Compte introuvable ou non autorisé.',
+                'errors' => ['target_account_id' => ['Ce compte n\'existe pas ou n\'est pas lié à votre email.']]
+            ], 404);
+        }
+
+        // Vérifier que ce n'est pas déjà le compte actuel
+        if ($targetAccount->id === $currentUser->id) {
+            return response()->json([
+                'message' => 'Vous êtes déjà connecté à ce compte.',
+                'errors' => ['target_account_id' => ['Ce compte est déjà actif.']]
+            ], 422);
+        }
+
+        // Vérifier si l'utilisateur est suspendu
+        if ($targetAccount->is_suspended) {
+            return response()->json([
+                'message' => 'Ce compte a été suspendu.',
+                'errors' => ['target_account_id' => ['Ce compte a été suspendu. Veuillez contacter l\'administrateur.']]
+            ], 403);
+        }
+
+        // Connecter l'utilisateur au compte cible via le guard web (pour les sessions)
+        Auth::guard('web')->login($targetAccount);
+
+        // Régénérer la session pour la sécurité
+        $request->session()->regenerate();
+        $request->session()->save();
+
+        // Retourner les données du nouveau compte
+        return response()->json([
+            'message' => 'Basculement vers le compte ' . ($targetAccount->role === 'business_admin' ? 'entreprise' : ($targetAccount->role === 'individual' ? 'particulier' : 'employé')) . ' réussi !',
+            'user' => [
+                'id' => $targetAccount->id,
+                'name' => $targetAccount->name,
+                'email' => $targetAccount->email,
+                'role' => $targetAccount->role,
+                'username' => $targetAccount->username,
+                'avatar_url' => $targetAccount->avatar_url,
+                'company_name' => $targetAccount->company_name,
+                'email_verified_at' => $targetAccount->email_verified_at,
+                'is_admin' => $targetAccount->is_admin ?? false,
+                'is_profile_complete' => $targetAccount->is_profile_complete ?? false,
+            ]
+        ], 200);
     }
 }
