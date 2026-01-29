@@ -458,15 +458,27 @@
                 Enregistrer le Contact
             </a>
 
-            <!-- Bouton Découvrir Mon Profil (pour les comptes particuliers avec portfolio configuré) -->
+            <!-- Bouton Découvrir Mon Profil / Menu du jour (pour les comptes particuliers avec portfolio configuré) -->
             @if($portfolioConfigured)
-            <a href="{{ config('app.url') }}/api/portfolio/{{ $user->username }}"
-               target="_blank"
-               rel="noopener noreferrer"
-               class="btn block w-full font-bold py-3 px-4 rounded-lg shadow-md text-white"
-               style="background-color: {{ $displayServicesButtonColor }};">
-                Découvrir mon Profil
-            </a>
+                @if(isset($portfolio) && $portfolio->profile_type === 'restaurant' && $portfolio->menu && (isset($portfolio->menu['dishes']) || isset($portfolio->menu['drinks'])))
+                {{-- Bouton Menu du jour pour profil Restaurant --}}
+                <a href="{{ config('app.url') }}/api/portfolio/{{ $user->username }}/menu"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   class="btn block w-full font-bold py-3 px-4 rounded-lg shadow-md text-white"
+                   style="background: linear-gradient(135deg, #f97316 0%, #dc2626 100%);">
+                    <i class="fas fa-utensils mr-2"></i>Menu du jour
+                </a>
+                @else
+                {{-- Bouton Découvrir mon Profil pour les autres profils --}}
+                <a href="{{ config('app.url') }}/api/portfolio/{{ $user->username }}"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   class="btn block w-full font-bold py-3 px-4 rounded-lg shadow-md text-white"
+                   style="background-color: {{ $displayServicesButtonColor }};">
+                    Découvrir mon Profil
+                </a>
+                @endif
             @endif
 
             <!-- Bouton Découvrir Nos Services (couleur personnalisable) -->
@@ -1549,7 +1561,7 @@ document.addEventListener('click', function(e) {
         closeShareContactModal();
     }
 });
-</script>
+    </script>
 
 </body>
 </html>

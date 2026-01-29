@@ -149,6 +149,18 @@
                                     <span class="text-sm font-medium">LinkedIn</span>
                                 </a>
                             @endif
+                            {{-- Bouton Menu du jour pour profil Restaurant --}}
+                            @if($portfolio->profile_type === 'restaurant' && $portfolio->menu && (isset($portfolio->menu['dishes']) || isset($portfolio->menu['drinks'])))
+                                <button
+                                    onclick="openMenuModal()"
+                                    class="group flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white rounded-xl transition-all hover:scale-105 shadow-lg shadow-orange-500/30 relative"
+                                    aria-label="Menu du jour"
+                                    title="Menu du jour"
+                                >
+                                    <i class="fas fa-utensils"></i>
+                                    <span class="text-sm font-medium">Menu du jour</span>
+                                </button>
+                            @endif
                             {{-- Bouton Prendre Rendez-vous --}}
                             @if(isset($appointmentSetting) && $appointmentSetting && $appointmentSetting->is_enabled)
                                 <button
@@ -296,8 +308,62 @@
         </section>
         @endif
 
+        <section id="formations" class="mb-16 fade-in-up" style="animation-delay: 0.3s">
+            <div class="bg-white/95 backdrop-blur-lg rounded-3xl shadow-xl p-8 md:p-10">
+                <div class="flex items-center gap-3 mb-8">
+                    <div class="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center shadow-lg">
+                        <i class="fas fa-graduation-cap text-white text-xl"></i>
+                    </div>
+                    <h2 class="text-3xl md:text-4xl font-black text-gray-900">
+                        {{ $portfolio->formations_title ?? 'Mes Formations' }}
+                    </h2>
+                </div>
+                @if($portfolio->formations && count($portfolio->formations) > 0)
+                <div class="space-y-4">
+                    @foreach($portfolio->formations as $index => $formation)
+                    <div
+                        class="timeline-item group bg-gradient-to-br from-white to-gray-50 border-2 border-gray-200 hover:border-emerald-400 rounded-2xl overflow-hidden cursor-pointer shadow-md hover:shadow-xl transition-all"
+                        data-formation-index="{{ $index }}"
+                        onclick="openFormationModal({{ $index }})"
+                    >
+                        <div class="p-6">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-4 flex-1">
+                                    <div class="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-full flex items-center justify-center shadow-md group-hover:scale-110 transition-transform flex-shrink-0">
+                                        <i class="fas fa-graduation-cap text-white text-lg"></i>
+                                    </div>
+                                    <div class="flex-1">
+                                        <h3 class="text-lg md:text-xl font-bold text-gray-900 group-hover:text-emerald-600 transition-colors">
+                                            {{ $formation['title'] ?? '' }}
+                                        </h3>
+                                        @if(isset($formation['organization']) && $formation['organization'])
+                                            <span class="block text-sm font-semibold text-emerald-600 mt-1">{{ $formation['organization'] }}</span>
+                                        @endif
+                                        @if(isset($formation['date']) && $formation['date'])
+                                            <time class="block text-xs font-medium text-gray-500 mt-1 bg-gray-100 px-2 py-1 rounded-md inline-block">{{ $formation['date'] }}</time>
+                                        @endif
+                                    </div>
+                                </div>
+                                <i class="fas fa-arrow-right text-gray-400 group-hover:text-emerald-600 group-hover:translate-x-1 transition-all"></i>
+                            </div>
+                        </div>
+                    </div>
+                    @endforeach
+                </div>
+                @else
+                <div class="text-center py-12">
+                    <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-emerald-100 flex items-center justify-center">
+                        <i class="fas fa-graduation-cap text-emerald-600 text-2xl"></i>
+                    </div>
+                    <p class="text-gray-600 text-lg font-medium">Aucune formation enregistrée pour le moment</p>
+                    <p class="text-gray-500 text-sm mt-2">Les formations seront affichées ici une fois ajoutées</p>
+                </div>
+                @endif
+            </div>
+        </section>
+
         @if($portfolio->timeline && count($portfolio->timeline) > 0)
-        <section id="timeline" class="mb-16 fade-in-up" style="animation-delay: 0.3s">
+        <section id="timeline" class="mb-16 fade-in-up" style="animation-delay: 0.4s">
             <div class="bg-white/95 backdrop-blur-lg rounded-3xl shadow-xl p-8 md:p-10">
                 <div class="flex items-center gap-3 mb-8">
                     @php
@@ -355,7 +421,7 @@
                         <i class="fas {{ $timelineIcon }} text-white text-xl"></i>
                     </div>
                     <h2 class="text-3xl md:text-4xl font-black text-gray-900">
-                        {{ $portfolio->timeline_title ?? 'Ma Formation & Stages' }}
+                        {{ $portfolio->timeline_title ?? 'Mon Parcours Professionnel' }}
                     </h2>
                 </div>
                 <div class="space-y-4">
@@ -378,7 +444,9 @@
                                         @if(isset($item['organization']) && $item['organization'])
                                             <span class="block text-sm font-semibold text-indigo-600 mt-1">{{ $item['organization'] }}</span>
                                         @endif
-                                        @if(isset($item['dates']) && $item['dates'])
+                                        @if(isset($item['date']) && $item['date'])
+                                            <time class="block text-xs font-medium text-gray-500 mt-1 bg-gray-100 px-2 py-1 rounded-md inline-block">{{ $item['date'] }}</time>
+                                        @elseif(isset($item['dates']) && $item['dates'])
                                             <time class="block text-xs font-medium text-gray-500 mt-1 bg-gray-100 px-2 py-1 rounded-md inline-block">{{ $item['dates'] }}</time>
                                         @endif
                                     </div>
@@ -394,6 +462,130 @@
         @endif
     </main>
 </div>
+
+<!-- Modal pour afficher le Menu du jour (Restaurant) -->
+@if($portfolio->profile_type === 'restaurant' && $portfolio->menu && (isset($portfolio->menu['dishes']) || isset($portfolio->menu['drinks'])))
+<div id="menuModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+    <div class="modal-content bg-white rounded-3xl shadow-2xl p-8 md:p-10 w-full max-w-5xl transform scale-100 border border-gray-200 max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-start mb-6">
+            <div class="flex-1">
+                <h2 class="text-3xl md:text-4xl font-black bg-gradient-to-r from-orange-600 to-red-600 bg-clip-text text-transparent flex items-center gap-3">
+                    <i class="fas fa-utensils"></i>
+                    Menu du jour
+                </h2>
+                <p class="text-gray-600 mt-2">{{ $portfolio->hero_headline ?? $portfolio->name }}</p>
+            </div>
+            <button onclick="closeMenuModal()" class="ml-4 w-10 h-10 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-800 transition-all">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        
+        <div class="space-y-8">
+            @php
+                $menu = is_array($portfolio->menu) ? $portfolio->menu : json_decode($portfolio->menu, true);
+                $dishes = $menu['dishes'] ?? [];
+                $drinks = $menu['drinks'] ?? [];
+            @endphp
+            
+            @if(count($dishes) > 0)
+            <div>
+                <h3 class="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-3">
+                    <span class="text-3xl">🍽️</span>
+                    <span>Nos Plats</span>
+                </h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    @foreach($dishes as $dish)
+                    <div class="bg-gradient-to-br from-white to-gray-50 border-2 rounded-2xl overflow-hidden shadow-md hover:shadow-xl transition-all {{ $dish['available'] ?? true ? 'border-gray-200 hover:border-orange-400' : 'border-red-300 opacity-60' }}">
+                        @if(isset($dish['image']) && $dish['image'])
+                        <div class="h-48 overflow-hidden">
+                            <img src="{{ $dish['image'] }}" alt="{{ $dish['name'] ?? '' }}" class="w-full h-full object-cover">
+                        </div>
+                        @else
+                        <div class="h-48 bg-gray-200 flex items-center justify-center">
+                            <span class="text-6xl">🍽️</span>
+                        </div>
+                        @endif
+                        <div class="p-6">
+                            <div class="flex items-start justify-between mb-2">
+                                <h4 class="text-xl font-bold text-gray-900">{{ $dish['name'] ?? '' }}</h4>
+                                <span class="px-3 py-1 rounded-full text-xs font-semibold {{ ($dish['available'] ?? true) ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-red-100 text-red-700 border border-red-300' }}">
+                                    {{ ($dish['available'] ?? true) ? 'Disponible' : 'Indisponible' }}
+                                </span>
+                            </div>
+                            @if(isset($dish['price']) && $dish['price'])
+                            <div class="text-2xl font-bold text-orange-600 mb-3">
+                                {{ number_format($dish['price'], 0, ',', ' ') }} FCFA
+                            </div>
+                            @endif
+                            @if(isset($dish['description']) && $dish['description'])
+                            <p class="text-gray-600 mb-4">{{ $dish['description'] }}</p>
+                            @endif
+                            @if(isset($dish['hasSides']) && $dish['hasSides'] && isset($dish['sides']) && count($dish['sides']) > 0)
+                            <div class="mt-4 pt-4 border-t border-gray-200">
+                                <p class="text-sm font-semibold text-gray-500 mb-2">Accompagnements :</p>
+                                <ul class="list-disc list-inside text-sm text-gray-600 space-y-1">
+                                    @foreach($dish['sides'] as $side)
+                                    <li>{{ $side }}</li>
+                                    @endforeach
+                                </ul>
+                            </div>
+                            @endif
+                        </div>
+                    </div>
+                    @endforeach
+                </div>
+            </div>
+            @endif
+            
+            @if(count($drinks) > 0)
+            <div>
+                <h3 class="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-3">
+                    <span class="text-3xl">🥤</span>
+                    <span>Nos Boissons</span>
+                </h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    @foreach($drinks as $drink)
+                    <div class="bg-gradient-to-br from-white to-gray-50 border-2 rounded-2xl overflow-hidden shadow-md hover:shadow-xl transition-all {{ $drink['available'] ?? true ? 'border-gray-200 hover:border-orange-400' : 'border-red-300 opacity-60' }}">
+                        @if(isset($drink['image']) && $drink['image'])
+                        <div class="h-48 overflow-hidden">
+                            <img src="{{ $drink['image'] }}" alt="{{ $drink['name'] ?? '' }}" class="w-full h-full object-cover">
+                        </div>
+                        @else
+                        <div class="h-48 bg-gray-200 flex items-center justify-center">
+                            <span class="text-6xl">🥤</span>
+                        </div>
+                        @endif
+                        <div class="p-6">
+                            <div class="flex items-start justify-between mb-2">
+                                <h4 class="text-xl font-bold text-gray-900">{{ $drink['name'] ?? '' }}</h4>
+                                <span class="px-3 py-1 rounded-full text-xs font-semibold {{ ($drink['available'] ?? true) ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-red-100 text-red-700 border border-red-300' }}">
+                                    {{ ($drink['available'] ?? true) ? 'Disponible' : 'Indisponible' }}
+                                </span>
+                            </div>
+                            @if(isset($drink['price']) && $drink['price'])
+                            <div class="text-2xl font-bold text-orange-600">
+                                {{ number_format($drink['price'], 0, ',', ' ') }} FCFA
+                            </div>
+                            @endif
+                        </div>
+                    </div>
+                    @endforeach
+                </div>
+            </div>
+            @endif
+            
+            @if(count($dishes) === 0 && count($drinks) === 0)
+            <div class="text-center py-12">
+                <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-orange-100 flex items-center justify-center">
+                    <i class="fas fa-utensils text-orange-600 text-2xl"></i>
+                </div>
+                <p class="text-gray-600 text-lg font-medium">Aucun plat ou boisson disponible pour le moment</p>
+            </div>
+            @endif
+        </div>
+    </div>
+</div>
+@endif
 
 <!-- Modal pour afficher les détails d'un projet -->
 <div id="projectModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
@@ -416,7 +608,23 @@
     </div>
 </div>
 
-<!-- Modal pour afficher les détails d'une formation/stage -->
+<!-- Modal pour afficher les détails d'une formation -->
+<div id="formationModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+    <div class="modal-content bg-white rounded-3xl shadow-2xl p-8 md:p-10 w-full max-w-3xl transform scale-100 border border-gray-200 max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-start mb-6">
+            <div class="flex-1">
+                <h2 class="text-3xl md:text-4xl font-black bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent" id="modalFormationTitle"></h2>
+                <div id="modalFormationMeta" class="mt-2 space-y-1"></div>
+            </div>
+            <button onclick="closeFormationModal()" class="ml-4 w-10 h-10 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-800 transition-all">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="prose prose-lg max-w-none text-gray-700 text-justify" id="modalFormationContent"></div>
+    </div>
+</div>
+
+<!-- Modal pour afficher les détails d'une expérience professionnelle -->
 <div id="timelineModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
     <div class="modal-content bg-white rounded-3xl shadow-2xl p-8 md:p-10 w-full max-w-3xl transform scale-100 border border-gray-200 max-h-[90vh] overflow-y-auto">
         <div class="flex justify-between items-start mb-6">
@@ -589,8 +797,21 @@
 <script>
 const projects = @json($portfolio->projects ?? []);
 const projectsData = Object.values(projects);
+const formations = @json($portfolio->formations ?? []);
+const formationsData = Object.values(formations);
 const timeline = @json($portfolio->timeline ?? []);
 const timelineData = Object.values(timeline);
+
+// Fonction pour ouvrir le modal du menu (Restaurant)
+function openMenuModal() {
+    document.getElementById('menuModal').classList.remove('hidden');
+    document.getElementById('menuModal').classList.add('flex');
+}
+
+function closeMenuModal() {
+    document.getElementById('menuModal').classList.add('hidden');
+    document.getElementById('menuModal').classList.remove('flex');
+}
 
 // Fonction pour ouvrir le modal d'un projet
 function openProjectModal(index) {
@@ -630,26 +851,66 @@ function closeProjectModal() {
     document.getElementById('projectModal').classList.remove('flex');
 }
 
-// Fonction pour ouvrir le modal d'une formation/stage
+// Fonction pour ouvrir le modal d'une formation
+function openFormationModal(index) {
+    const formation = formationsData[index];
+    if (!formation) return;
+
+    document.getElementById('modalFormationTitle').textContent = formation.title || '';
+
+    // Construire les métadonnées (organisation et date)
+    let meta = '';
+    if (formation.organization) {
+        meta += '<p class="text-lg font-semibold text-emerald-600">' + formation.organization + '</p>';
+    }
+    if (formation.date) {
+        meta += '<time class="block text-sm font-medium text-gray-500 mt-1 bg-gray-100 px-3 py-1 rounded-md inline-block">' + formation.date + '</time>';
+    }
+    document.getElementById('modalFormationMeta').innerHTML = meta;
+
+    // Construire le contenu
+    let content = '';
+    if (formation.description) {
+        content = formation.description;
+    } else {
+        content = '<p>Aucun détail disponible.</p>';
+    }
+    
+    document.getElementById('modalFormationContent').innerHTML = content;
+
+    document.getElementById('formationModal').classList.remove('hidden');
+    document.getElementById('formationModal').classList.add('flex');
+}
+
+function closeFormationModal() {
+    document.getElementById('formationModal').classList.add('hidden');
+    document.getElementById('formationModal').classList.remove('flex');
+}
+
+// Fonction pour ouvrir le modal d'une expérience professionnelle
 function openTimelineModal(index) {
     const item = timelineData[index];
     if (!item) return;
 
     document.getElementById('modalTimelineTitle').textContent = item.title || '';
 
-    // Construire les métadonnées (organisation et dates)
+    // Construire les métadonnées (organisation et date)
     let meta = '';
     if (item.organization) {
         meta += '<p class="text-lg font-semibold text-indigo-600">' + item.organization + '</p>';
     }
-    if (item.dates) {
+    if (item.date) {
+        meta += '<time class="block text-sm font-medium text-gray-500 mt-1 bg-gray-100 px-3 py-1 rounded-md inline-block">' + item.date + '</time>';
+    } else if (item.dates) {
         meta += '<time class="block text-sm font-medium text-gray-500 mt-1 bg-gray-100 px-3 py-1 rounded-md inline-block">' + item.dates + '</time>';
     }
     document.getElementById('modalTimelineMeta').innerHTML = meta;
 
     // Construire le contenu
     let content = '';
-    if (item.details) {
+    if (item.description) {
+        content = item.description;
+    } else if (item.details) {
         content = item.details;
     } else {
         content = '<p>Aucun détail disponible.</p>';
@@ -672,9 +933,17 @@ document.addEventListener('click', function(e) {
     if (e.target === projectModal) {
         closeProjectModal();
     }
+    const formationModal = document.getElementById('formationModal');
+    if (e.target === formationModal) {
+        closeFormationModal();
+    }
     const timelineModal = document.getElementById('timelineModal');
     if (e.target === timelineModal) {
         closeTimelineModal();
+    }
+    const menuModal = document.getElementById('menuModal');
+    if (menuModal && e.target === menuModal) {
+        closeMenuModal();
     }
     const bookingModal = document.getElementById('bookingModal');
     if (e.target === bookingModal) {

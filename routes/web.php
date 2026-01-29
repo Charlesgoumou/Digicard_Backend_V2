@@ -9,17 +9,6 @@ use App\Http\Controllers\StorageController;
 use App\Http\Controllers\SocialController;
 use App\Http\Controllers\OrderController;
 
-// --- ROUTE DE TEST ---
-// Route de test pour vérifier que Laravel fonctionne
-Route::get('/test-storage-route', function () {
-    return response()->json([
-        'message' => 'Route Laravel accessible',
-        'timestamp' => now(),
-        'storage_path' => storage_path('app/public'),
-        'storage_exists' => file_exists(storage_path('app/public')),
-    ]);
-});
-
 // --- ROUTE POUR SERVIR LES FICHIERS DEPUIS STORAGE ---
 // ✅ CORRECTION : Utiliser un contrôleur dédié pour plus de fiabilité
 // Cette route est placée AVANT la route fallback pour qu'elle soit prioritaire

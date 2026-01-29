@@ -499,6 +499,7 @@ class PublicProfileController extends Controller
 
         // Vérifier si l'utilisateur individual a un portfolio configuré
         $portfolioConfigured = false;
+        $portfolio = null;
 
         if ($user->role === 'business_admin') {
             // Pour un business_admin, vérifier sa propre page
@@ -582,6 +583,8 @@ class PublicProfileController extends Controller
             // Vérifier si l'utilisateur a un portfolio configuré
             $portfolio = UserPortfolio::where('user_id', $user->id)->first();
             $portfolioConfigured = !is_null($portfolio) && $portfolio->profile_type !== null;
+        } else {
+            $portfolio = null;
         }
 
         // Récupérer la configuration de rendez-vous spécifique à la commande
@@ -636,6 +639,7 @@ class PublicProfileController extends Controller
             'companyWebsiteUrl' => $companyWebsiteUrl,
             'websiteFeaturedInServicesButton' => $websiteFeaturedInServicesButton,
             'portfolioConfigured' => $portfolioConfigured,
+            'portfolio' => $portfolio ?? null,
             'appointmentSetting' => $appointmentSetting,
             'appointmentOrderId' => $appointmentOrderId,
         ]);

@@ -22,6 +22,8 @@ use App\Http\Controllers\SocialController;
 use App\Http\Controllers\AppointmentController;
 use App\Http\Controllers\SharedContactController;
 use App\Http\Controllers\MarketplaceController;
+use App\Http\Controllers\UserPreferencesController;
+use App\Http\Controllers\ImageSearchController;
 
 /*
 |--------------------------------------------------------------------------
@@ -112,6 +114,10 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::get('/profile', [ProfileController::class, 'show'])->name('profile.show');       // Lire les données du profil actuel
     Route::put('/profile', [ProfileController::class, 'update'])->name('profile.update');     // Mettre à jour les données textuelles du profil
     Route::post('/user/avatar', [ProfileController::class, 'updateAvatar'])->name('avatar.update'); // Mettre à jour la photo de profil
+    
+    // Gestion des Préférences Utilisateur
+    Route::get('/user/preferences', [UserPreferencesController::class, 'show'])->name('user.preferences.show');
+    Route::post('/user/preferences', [UserPreferencesController::class, 'update'])->name('user.preferences.update');
 
 
     // Gestion des Employés (pour les admins d'entreprise)
@@ -155,6 +161,10 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::put('/user-portfolio', [UserPortfolioController::class, 'update'])->name('user-portfolio.update');
     Route::post('/user-portfolio/photo', [UserPortfolioController::class, 'uploadPhoto'])->name('user-portfolio.photo');
     Route::post('/user-portfolio/generate-content', [UserPortfolioController::class, 'generateContent'])->name('user-portfolio.generate-content');
+    Route::post('/user-portfolio/extract-document', [UserPortfolioController::class, 'extractDocument'])->name('user-portfolio.extract-document');
+    
+    // Recherche d'images pour les plats et boissons
+    Route::get('/image-search', [ImageSearchController::class, 'searchImage'])->name('image.search');
 
     // --- Routes Rendez-vous (Protégées) ---
     // Récupérer la configuration des rendez-vous de l'utilisateur connecté
@@ -216,6 +226,7 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
 // Routes publiques pour afficher les pages
 Route::get('/company/{username}', [CompanyPageController::class, 'show'])->name('company-page.show');
 Route::get('/portfolio/{username}', [UserPortfolioController::class, 'show'])->name('user-portfolio.show');
+Route::get('/portfolio/{username}/menu', [UserPortfolioController::class, 'showMenu'])->name('user-portfolio.menu');
 
 // --- Routes Rendez-vous (Publiques) ---
 // Récupérer toutes les dates disponibles avec des créneaux

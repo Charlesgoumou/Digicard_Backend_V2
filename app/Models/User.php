@@ -69,6 +69,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'phone',
         'account_type',
         'is_profile_complete',
+        'preferences', // Préférences utilisateur (JSON)
     ];
 
     /**
@@ -99,6 +100,7 @@ class User extends Authenticatable implements MustVerifyEmail
             'emails' => 'array', // Convertit JSON en tableau PHP
             'email_change_code_expires_at' => 'datetime',
             'is_profile_complete' => 'boolean',
+            'preferences' => 'array', // Convertit JSON en tableau PHP
         ];
     }
 

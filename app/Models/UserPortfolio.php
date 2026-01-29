@@ -22,6 +22,9 @@ class UserPortfolio extends Model
         'projects_title',
         'timeline',
         'timeline_title',
+        'formations',
+        'formations_title',
+        'menu',
         'email',
         'phone',
         'linkedin_url',
@@ -35,6 +38,8 @@ class UserPortfolio extends Model
         'skills' => 'array',
         'projects' => 'array',
         'timeline' => 'array',
+        'formations' => 'array',
+        'menu' => 'array',
     ];
 
     /**
