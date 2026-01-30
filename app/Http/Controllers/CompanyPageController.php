@@ -906,9 +906,12 @@ class CompanyPageController extends Controller
             ]);
 
             // Extraire le texte selon le type de fichier
-            if ($extension === 'pdf') {
-                // Pour PDF, on va utiliser Gemini Vision API qui peut lire les PDFs
-                $extractedText = $this->extractTextFromPdfWithGemini($file);
+            if ($file->getMimeType() === 'application/pdf') {
+                // PDF : extraction rapide via pdftotext (Windows + Linux)
+                $extractedText = $this->extractTextFromPdfWithPoppler($file);
+                if (strlen($extractedText) < 50) {
+                    $extractedText = $this->extractTextFromPdfWithGemini($file);
+                }
             } else {
                 // Pour les images, utiliser Gemini Vision API
                 $extractedText = $this->extractTextFromImageWithGemini($file);
@@ -943,6 +946,44 @@ class CompanyPageController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Extrait le texte d'un PDF via pdftotext (Poppler) - Windows + Linux
+     */
+    private function extractTextFromPdfWithPoppler($file)
+    {
+        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        $binPath = config('poppler.bin_path');
+        if (empty($binPath)) {
+            $binPath = $isWindows
+                ? 'C:\\poppler\\Library\\bin\\pdftotext.exe'
+                : '/usr/bin/pdftotext';
+        }
+
+        $tempDir = sys_get_temp_dir();
+        $id = uniqid('pres_');
+        $tempPdf = $tempDir . DIRECTORY_SEPARATOR . $id . '.pdf';
+        $tempTxt = $tempDir . DIRECTORY_SEPARATOR . $id . '.txt';
+
+        try {
+            file_put_contents($tempPdf, file_get_contents($file->getRealPath()));
+            $cmd = sprintf('"%s" -layout -enc UTF-8 "%s" "%s"', $binPath, $tempPdf, $tempTxt);
+            $output = [];
+            $returnVar = 0;
+            exec($cmd . ' 2>&1', $output, $returnVar);
+
+            if ($returnVar === 0 && file_exists($tempTxt)) {
+                return trim(file_get_contents($tempTxt));
+            }
+        } catch (\Exception $e) {
+            Log::error('Poppler extraction error: ' . $e->getMessage());
+        } finally {
+            @unlink($tempPdf);
+            @unlink($tempTxt);
+        }
+
+        return '';
     }
 
     /**

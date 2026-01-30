@@ -299,20 +299,20 @@ class GeminiService
 - Description: {$bio}
 - Menu (plats et boissons): {$menu}
 
-RÈGLE ABSOLUE - PREMIÈRE PERSONNE DU SINGULIER:
-TOUT le contenu généré (bio, descriptions de plats) DOIT être écrit à la PREMIÈRE PERSONNE DU SINGULIER :
-- Utilise: je, mon, ma, mes, j'ai, je suis, je propose, etc.
-- N'utilise JAMAIS: il, elle, son, sa, ses, il a, elle est, etc.
-- Les descriptions doivent commencer par "Je propose...", "Mon restaurant...", "J'offre...", etc.
+RÈGLE ABSOLUE - PREMIÈRE PERSONNE DU PLURIEL:
+TOUT le contenu généré (bio, descriptions de plats) DOIT être écrit à la PREMIÈRE PERSONNE DU PLURIEL :
+- Utilise: nous, notre, nos, nous avons, nous proposons, nous offrons, etc.
+- N'utilise JAMAIS: je, mon, ma, mes, j'ai, je suis, je propose, etc.
+- Les descriptions doivent commencer par "Nous proposons...", "Notre restaurant...", "Nous offrons...", etc.
 
 Génère un objet JSON valide uniquement, sans balises markdown ou texte supplémentaire:
 
 {
-  "bio": "Reformule et enrichis la description du restaurant en HTML pour un profil engageant. ÉCRIS À LA PREMIÈRE PERSONNE DU SINGULIER (je, mon, ma, mes, j'ai, je suis, je propose, etc.). Exemple: 'Je propose une cuisine...' ou 'Mon restaurant se spécialise dans...'",
+  "bio": "Reformule et enrichis la description du restaurant en HTML pour un profil engageant. ÉCRIS À LA PREMIÈRE PERSONNE DU PLURIEL (nous, notre, nos, nous avons, nous proposons, nous offrons, etc.). Exemple: 'Nous proposons une cuisine...' ou 'Notre restaurant se spécialise dans...'",
   "hero_headline": "Reformule le nom du restaurant ou la spécialité culinaire de manière accrocheuse",
   "menu": {
-    "dishes": [Pour chaque plat du menu, reformule et enrichis la description si nécessaire. Garde tous les champs existants (name, price, description, image, available, hasSides, sides). Améliore les descriptions à la PREMIÈRE PERSONNE si elles sont vides ou trop courtes],
-    "drinks": [Pour chaque boisson du menu, reformule et enrichis la description si nécessaire. Garde tous les champs existants (name, price, image, available). Améliore les descriptions à la PREMIÈRE PERSONNE si elles sont vides ou trop courtes]
+    "dishes": [Pour chaque plat du menu, reformule et enrichis la description si nécessaire. Garde tous les champs existants (name, price, description, image, available, hasSides, sides). Améliore les descriptions à la PREMIÈRE PERSONNE DU PLURIEL si elles sont vides ou trop courtes],
+    "drinks": [Pour chaque boisson du menu, reformule et enrichis la description si nécessaire. Garde tous les champs existants (name, price, image, available). Améliore les descriptions à la PREMIÈRE PERSONNE DU PLURIEL si elles sont vides ou trop courtes]
   }
 }
 PROMPT;

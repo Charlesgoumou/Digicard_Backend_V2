@@ -21,10 +21,22 @@
     <style>
         body {
             font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #f97316 0%, #dc2626 100%);
+            background-color: #1e293b;
+            background-image: url('{{ asset("images/ArrierePlanRestaurrant.jpg") }}');
+            background-size: cover;
+            background-position: center;
             background-attachment: fixed;
             min-height: 100vh;
         }
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            background: linear-gradient(to bottom, rgba(30, 41, 59, 0.45) 0%, rgba(30, 41, 59, 0.35) 50%, rgba(30, 41, 59, 0.55) 100%);
+            pointer-events: none;
+            z-index: 0;
+        }
+        body > .min-h-screen { position: relative; z-index: 1; }
         @keyframes fadeInUp {
             from {
                 opacity: 0;
@@ -49,12 +61,8 @@
 </head>
 <body>
     <div class="min-h-screen font-inter">
-        <!-- Header avec design moderne -->
+        <!-- Header avec cadre bio (fond transparent pour laisser voir l'image de fond) -->
         <header class="relative overflow-hidden">
-            <!-- Gradient background -->
-            <div class="absolute inset-0 bg-gradient-to-br from-orange-600 via-red-600 to-pink-500 opacity-90"></div>
-            <div class="absolute inset-0 bg-[url('data:image/svg+xml,%3Csvg width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg"%3E%3Cg fill="none" fill-rule="evenodd"%3E%3Cg fill="%23ffffff" fill-opacity="0.05"%3E%3Cpath d="M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z"/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')] opacity-20"></div>
-            
             <div class="relative container mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-12 md:py-16">
                 <div class="bg-white/95 backdrop-blur-lg rounded-3xl shadow-2xl p-8 md:p-12 fade-in-up">
                     <div class="flex flex-col md:flex-row items-center md:items-start gap-8">
@@ -82,6 +90,12 @@
                                 <div class="text-gray-700 mt-4 prose prose-lg max-w-none text-justify">
                                     {!! $portfolio->bio !!}
                                 </div>
+                            @endif
+                            @if($portfolio->phone)
+                                <a href="tel:{{ preg_replace('/\s+/', '', $portfolio->phone) }}" class="mt-6 inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white font-semibold rounded-xl transition-all hover:scale-105 shadow-lg shadow-orange-500/30">
+                                    <i class="fas fa-phone-alt"></i>
+                                    <span>Appelez pour commander</span>
+                                </a>
                             @endif
                         </div>
                     </div>
@@ -129,7 +143,7 @@
                                 </div>
                                 @if(isset($dish['price']) && $dish['price'])
                                 <div class="text-3xl font-bold text-orange-600 mb-4">
-                                    {{ number_format($dish['price'], 0, ',', ' ') }} FCFA
+                                    {{ number_format($dish['price'], 0, ',', ' ') }} GNF
                                 </div>
                                 @endif
                                 @if(isset($dish['description']) && $dish['description'])
@@ -186,7 +200,7 @@
                                 </div>
                                 @if(isset($drink['price']) && $drink['price'])
                                 <div class="text-3xl font-bold text-orange-600">
-                                    {{ number_format($drink['price'], 0, ',', ' ') }} FCFA
+                                    {{ number_format($drink['price'], 0, ',', ' ') }} GNF
                                 </div>
                                 @endif
                             </div>

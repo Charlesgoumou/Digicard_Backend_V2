@@ -138,12 +138,12 @@
                         @endif
                         <div class="mt-8 flex flex-wrap justify-center md:justify-start gap-4">
                             @if($portfolio->email)
-                                <a href="mailto:{{ $portfolio->email }}" class="group flex items-center gap-2 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl transition-all hover:scale-105 shadow-sm" aria-label="Email">
+                                <a href="mailto:{{ $portfolio->email }}" class="group flex items-center gap-2 px-4 py-2 {{ $portfolio->profile_type === 'restaurant' ? 'bg-orange-50 hover:bg-orange-100 text-orange-600' : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-600' }} rounded-xl transition-all hover:scale-105 shadow-sm" aria-label="Email">
                                     <i class="fas fa-envelope"></i>
                                     <span class="text-sm font-medium">Email</span>
                                 </a>
                             @endif
-                            @if($portfolio->linkedin_url)
+                            @if($portfolio->profile_type !== 'restaurant' && $portfolio->linkedin_url)
                                 <a href="{{ $portfolio->linkedin_url }}" target="_blank" class="group flex items-center gap-2 px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl transition-all hover:scale-105 shadow-sm" aria-label="LinkedIn">
                                     <i class="fab fa-linkedin"></i>
                                     <span class="text-sm font-medium">LinkedIn</span>
@@ -161,8 +161,15 @@
                                     <span class="text-sm font-medium">Menu du jour</span>
                                 </button>
                             @endif
-                            {{-- Bouton Prendre Rendez-vous --}}
-                            @if(isset($appointmentSetting) && $appointmentSetting && $appointmentSetting->is_enabled)
+                            {{-- Bouton Appelez pour commander (Restaurant) ou Appeler (autres profils) --}}
+                            @if($portfolio->phone)
+                                <a href="tel:{{ preg_replace('/\s+/', '', $portfolio->phone) }}" class="group flex items-center gap-2 px-4 py-2 {{ $portfolio->profile_type === 'restaurant' ? 'bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white shadow-lg shadow-orange-500/30' : 'bg-green-50 hover:bg-green-100 text-green-600' }} rounded-xl transition-all hover:scale-105 shadow-sm" aria-label="{{ $portfolio->profile_type === 'restaurant' ? 'Appelez pour commander' : 'Téléphone' }}">
+                                    <i class="fas fa-phone-alt"></i>
+                                    <span class="text-sm font-medium">{{ $portfolio->profile_type === 'restaurant' ? 'Appelez pour commander' : 'Appeler' }}</span>
+                                </a>
+                            @endif
+                            {{-- Bouton Prendre Rendez-vous (non restaurant) --}}
+                            @if($portfolio->profile_type !== 'restaurant' && isset($appointmentSetting) && $appointmentSetting && $appointmentSetting->is_enabled)
                                 <button
                                     onclick="openBookingModal()"
                                     class="group flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-sky-500 to-indigo-500 hover:from-sky-600 hover:to-indigo-600 text-white rounded-xl transition-all hover:scale-105 shadow-lg shadow-sky-500/30 relative"
@@ -174,16 +181,10 @@
                                     <span class="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 rounded-full animate-pulse ring-2 ring-white"></span>
                                 </button>
                             @endif
-                            @if($portfolio->github_url)
+                            @if($portfolio->profile_type !== 'restaurant' && $portfolio->github_url)
                                 <a href="{{ $portfolio->github_url }}" target="_blank" class="group flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-xl transition-all hover:scale-105 shadow-sm" aria-label="GitHub">
                                     <i class="fab fa-github"></i>
                                     <span class="text-sm font-medium">GitHub</span>
-                                </a>
-                            @endif
-                            @if($portfolio->phone)
-                                <a href="tel:{{ $portfolio->phone }}" class="group flex items-center gap-2 px-4 py-2 bg-green-50 hover:bg-green-100 text-green-600 rounded-xl transition-all hover:scale-105 shadow-sm" aria-label="Téléphone">
-                                    <i class="fas fa-phone"></i>
-                                    <span class="text-sm font-medium">Appeler</span>
                                 </a>
                             @endif
                         </div>
@@ -514,7 +515,7 @@
                             </div>
                             @if(isset($dish['price']) && $dish['price'])
                             <div class="text-2xl font-bold text-orange-600 mb-3">
-                                {{ number_format($dish['price'], 0, ',', ' ') }} FCFA
+                                {{ number_format($dish['price'], 0, ',', ' ') }} GNF
                             </div>
                             @endif
                             @if(isset($dish['description']) && $dish['description'])
@@ -564,7 +565,7 @@
                             </div>
                             @if(isset($drink['price']) && $drink['price'])
                             <div class="text-2xl font-bold text-orange-600">
-                                {{ number_format($drink['price'], 0, ',', ' ') }} FCFA
+                                {{ number_format($drink['price'], 0, ',', ' ') }} GNF
                             </div>
                             @endif
                         </div>
