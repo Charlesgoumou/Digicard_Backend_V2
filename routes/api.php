@@ -24,6 +24,7 @@ use App\Http\Controllers\SharedContactController;
 use App\Http\Controllers\MarketplaceController;
 use App\Http\Controllers\UserPreferencesController;
 use App\Http\Controllers\ImageSearchController;
+use App\Http\Controllers\DashboardController as FrontendDashboardController;
 
 /*
 |--------------------------------------------------------------------------
@@ -118,6 +119,9 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     // Gestion des Préférences Utilisateur
     Route::get('/user/preferences', [UserPreferencesController::class, 'show'])->name('user.preferences.show');
     Route::post('/user/preferences', [UserPreferencesController::class, 'update'])->name('user.preferences.update');
+
+    // Cartes du dashboard (visibilité conditionnelle)
+    Route::get('/dashboard/cards', [FrontendDashboardController::class, 'getCards'])->name('dashboard.cards');
 
 
     // Gestion des Employés (pour les admins d'entreprise)

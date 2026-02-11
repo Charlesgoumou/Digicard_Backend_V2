@@ -51,6 +51,7 @@ class EmployeeController extends Controller
                 'company_name' => $admin->company_name,
                 'business_admin_id' => $admin->id,
                 'password_reset_required' => true, // Forcer le changement de mot de passe
+                'is_profile_complete' => true, // Permet la connexion avec le mot de passe temporaire
             ]);
 
             // --- Bloc d'envoi d'email sécurisé ---
@@ -832,6 +833,7 @@ if ($existingEmployee) {
                     'company_name' => $admin->company_name,
                     'business_admin_id' => $admin->id,
                     'password_reset_required' => true, // Forcer le changement de mot de passe
+                    'is_profile_complete' => true, // Permet la connexion avec le mot de passe temporaire
                 ]);
 
                                 // Envoyer l'email de bienvenue
