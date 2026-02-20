@@ -47,7 +47,7 @@ server {
         # Note: On ne peut pas utiliser "*" avec Access-Control-Allow-Credentials: true
         # On doit donc spécifier les origines autorisées explicitement
         set $cors_origin "";
-        if ($http_origin ~* "^https://(digicard|digicard-admin)\.arccenciel\.com$") {
+        if ($http_origin ~* "^https://(digicard|digicard-admin|card)\.arccenciel\.com$") {
             set $cors_origin $http_origin;
         }
         

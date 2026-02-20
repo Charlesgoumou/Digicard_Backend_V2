@@ -161,11 +161,15 @@ class SettingsController extends Controller
             ],
         ];
 
-        $existing = Setting::where('key', 'homepage_content')->value('value');
-        $content = $existing ? json_decode($existing, true) : [];
-        $merged = array_merge($defaults, is_array($content) ? $content : []);
-
-        return response()->json(['homepage' => $merged]);
+        try {
+            $existing = Setting::where('key', 'homepage_content')->value('value');
+            $content = $existing ? json_decode($existing, true) : [];
+            $merged = array_merge($defaults, is_array($content) ? $content : []);
+            return response()->json(['homepage' => $merged]);
+        } catch (\Throwable $e) {
+            Log::error('getPublicHomepage error: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            return response()->json(['homepage' => $defaults], 200);
+        }
     }
 
     /**
