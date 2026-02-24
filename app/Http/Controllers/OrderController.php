@@ -1081,6 +1081,8 @@ class OrderController extends Controller
             'youtube_url' => 'nullable|url:http,https',
             'deezer_url' => 'nullable|url:http,https',
             'spotify_url' => 'nullable|url:http,https',
+            'tiktok_url' => 'nullable|url:http,https',
+            'threads_url' => 'nullable|url:http,https',
             'card_design_type' => 'nullable|in:template,custom',
             'card_design_number' => 'nullable|integer|min:1|max:30',
             'card_design_custom_url' => 'nullable|string|max:500',

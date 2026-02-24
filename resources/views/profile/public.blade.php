@@ -188,6 +188,8 @@
         .social-icon.youtube:hover { color: #FF0000; }
         .social-icon.deezer:hover { color: #EF5466; }
         .social-icon.spotify:hover { color: #1DB954; }
+        .social-icon.tiktok:hover { color: #000000; }
+        .social-icon.threads:hover { color: #000000; }
         .social-icon.calendar:hover { color: #0ea5e9; }
         .social-icon.exchange:hover { color: #10b981; }
         /* Garantir que les icônes sont bien organisées et centrées */
@@ -537,6 +539,8 @@
                 $youtube = $orderEmployee->youtube_url ?? $user->youtube_url;
                 $deezer = $orderEmployee->deezer_url ?? $user->deezer_url;
                 $spotify = $orderEmployee->spotify_url ?? $user->spotify_url;
+                $tiktok = $orderEmployee->tiktok_url ?? $user->tiktok_url ?? null;
+                $threads = $orderEmployee->threads_url ?? $user->threads_url ?? null;
             } elseif ($order) {
                 $whatsapp = $order->whatsapp_url ?? $user->whatsapp_url;
                 $linkedin = $order->linkedin_url ?? $user->linkedin_url;
@@ -545,6 +549,8 @@
                 $youtube = $order->youtube_url ?? $user->youtube_url;
                 $deezer = $order->deezer_url ?? $user->deezer_url;
                 $spotify = $order->spotify_url ?? $user->spotify_url;
+                $tiktok = $order->tiktok_url ?? $user->tiktok_url ?? null;
+                $threads = $order->threads_url ?? $user->threads_url ?? null;
             } else {
                 $whatsapp = $user->whatsapp_url;
                 $linkedin = $user->linkedin_url;
@@ -553,6 +559,8 @@
                 $youtube = $user->youtube_url;
                 $deezer = $user->deezer_url;
                 $spotify = $user->spotify_url;
+                $tiktok = $user->tiktok_url ?? null;
+                $threads = $user->threads_url ?? null;
             }
             
             // Vérifier si les rendez-vous sont activés
@@ -567,7 +575,7 @@
             $shareContactEnabled = true;
             
             // Afficher la section seulement s'il y a au moins une icône, le calendrier ou l'échange
-            $hasSocialIcons = $whatsapp || $linkedin || $facebook || $twitter || $youtube || $deezer || $spotify;
+            $hasSocialIcons = $whatsapp || $linkedin || $facebook || $twitter || $youtube || $deezer || $spotify || $tiktok || $threads;
         @endphp
         @php
             // Construire les tableaux d'icônes pour répartition équilibrée
@@ -579,6 +587,8 @@
             if ($youtube) $allIcons[] = ['type' => 'youtube', 'url' => $youtube, 'title' => 'YouTube'];
             if ($deezer) $allIcons[] = ['type' => 'deezer', 'url' => $deezer, 'title' => 'Deezer'];
             if ($spotify) $allIcons[] = ['type' => 'spotify', 'url' => $spotify, 'title' => 'Spotify'];
+            if (!empty($tiktok)) $allIcons[] = ['type' => 'tiktok', 'url' => $tiktok, 'title' => 'TikTok'];
+            if (!empty($threads)) $allIcons[] = ['type' => 'threads', 'url' => $threads, 'title' => 'Threads'];
             
             // Répartir équitablement de chaque côté de l'icône d'échange
             $midPoint = (int) ceil(count($allIcons) / 2);

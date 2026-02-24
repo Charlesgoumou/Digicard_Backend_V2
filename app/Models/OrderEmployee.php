@@ -39,6 +39,8 @@ class OrderEmployee extends Model
         'youtube_url',
         'deezer_url',
         'spotify_url',
+        'tiktok_url',
+        'threads_url',
         // Champs de design
         'card_design_type',
         'card_design_number',

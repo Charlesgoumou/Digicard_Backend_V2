@@ -447,13 +447,37 @@ class PublicProfileController extends Controller
             }
         }
 
+        // Pour les employés et business_admin inclus : si aucune commande n'a été trouvée par token/orderId,
+        // charger la dernière carte configurée (order_employee) pour afficher les données "Paramétrez ma carte"
+        if (!$order && !$orderEmployee && !$orderIdOrTokenProvided && ($user->role === 'employee' || $user->role === 'business_admin')) {
+            $orderEmployee = \App\Models\OrderEmployee::where('employee_id', $user->id)
+                ->where('is_configured', true)
+                ->orderBy('updated_at', 'desc')
+                ->first();
+
+            if ($orderEmployee) {
+                $order = Order::find($orderEmployee->order_id);
+                Log::info("PublicProfileController: Dernière carte configurée chargée pour employee/business_admin (sans token/orderId)", [
+                    'user_id' => $user->id,
+                    'order_employee_id' => $orderEmployee->id,
+                    'order_id' => $order?->id,
+                    'profile_name' => $orderEmployee->profile_name,
+                    'profile_title' => $orderEmployee->profile_title,
+                    'employee_avatar_url' => $orderEmployee->employee_avatar_url ? 'set' : null,
+                ]);
+            }
+        }
+
         // Pour TOUTES les commandes (individual, business_admin, employee), rafraîchir depuis la base de données
         // pour s'assurer que toutes les colonnes sont chargées (notamment les JSON comme phone_numbers, emails)
         // IMPORTANT: Cela garantit que les données récentes sont toujours utilisées
-        if ($order && !$orderEmployee) {
-            // Forcer le rechargement complet depuis la base de données
+        if ($order) {
             $order->refresh();
-
+        }
+        if ($orderEmployee) {
+            $orderEmployee->refresh();
+        }
+        if ($order && !$orderEmployee) {
             Log::info("PublicProfileController: Données de commande (après refresh final)", [
                 'order_id' => $order->id,
                 'order_number' => $order->order_number,

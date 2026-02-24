@@ -35,6 +35,8 @@ class Order extends Model
         'youtube_url',
         'deezer_url',
         'spotify_url',
+        'tiktok_url',
+        'threads_url',
         'card_design_type',
         'card_design_number',
         'card_design_custom_url',
