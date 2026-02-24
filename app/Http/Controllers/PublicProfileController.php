@@ -466,6 +466,24 @@ class PublicProfileController extends Controller
                     'employee_avatar_url' => $orderEmployee->employee_avatar_url ? 'set' : null,
                 ]);
             }
+
+            // Si toujours pas de commande (business_admin propriétaire sans order_employee) :
+            // charger la dernière commande configurée dont il est propriétaire (user_id)
+            if (!$order && $user->role === 'business_admin') {
+                $order = Order::where('user_id', $user->id)
+                    ->where('is_configured', true)
+                    ->orderBy('updated_at', 'desc')
+                    ->first();
+                if ($order) {
+                    Log::info("PublicProfileController: Dernière commande configurée (propriétaire) chargée pour business_admin", [
+                        'user_id' => $user->id,
+                        'order_id' => $order->id,
+                        'profile_name' => $order->profile_name,
+                        'profile_title' => $order->profile_title,
+                        'order_avatar_url' => $order->order_avatar_url ? 'set' : null,
+                    ]);
+                }
+            }
         }
 
         // Pour TOUTES les commandes (individual, business_admin, employee), rafraîchir depuis la base de données
