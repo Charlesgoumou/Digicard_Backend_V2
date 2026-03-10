@@ -103,6 +103,9 @@ class AppointmentSetting extends Model
     /**
      * Récupère les créneaux depuis la nouvelle structure (date_rules).
      * 
+     * ✅ CORRECTION : Prend en compte TOUTES les règles qui correspondent à la date,
+     * pas seulement la première. Les créneaux de toutes les règles correspondantes sont fusionnés.
+     * 
      * @param \Carbon\Carbon $date
      * @param array $dateRules
      * @return array
@@ -116,8 +119,14 @@ class AppointmentSetting extends Model
         
         $matchingSlots = [];
         
-        foreach ($dateRules as $rule) {
+        foreach ($dateRules as $ruleIndex => $rule) {
             $type = $rule['type'] ?? 'specific';
+            $slots = $rule['slots'] ?? [];
+            
+            // Ignorer les règles sans créneaux
+            if (empty($slots)) {
+                continue;
+            }
             
             if ($type === 'specific') {
                 // Pour les dates spécifiques, vérifier d'abord si la date est dans la liste
@@ -125,20 +134,34 @@ class AppointmentSetting extends Model
                 // des dates qui ne correspondent pas exactement au jour configuré)
                 $dates = $rule['dates'] ?? [];
                 if (in_array($dateString, $dates)) {
-                    $matchingSlots = array_merge($matchingSlots, $rule['slots'] ?? []);
+                    // ✅ Fusionner les créneaux de cette règle avec ceux déjà trouvés
+                    $matchingSlots = array_merge($matchingSlots, $slots);
                 }
             } elseif ($type === 'recurring_month') {
-                // Pour les récurrences mensuelles, vérifier le jour de la semaine ET le mois/année
+                // Pour les récurrences mensuelles, vérifier le jour de la semaine
                 $ruleDayOfWeek = $rule['day_of_week'] ?? null;
                 $ruleMonth = $rule['month'] ?? null;
                 $ruleYear = $rule['year'] ?? null;
                 
-                if ($ruleDayOfWeek == $dayOfWeek && $ruleMonth == $month && $ruleYear == $year) {
-                    $matchingSlots = array_merge($matchingSlots, $rule['slots'] ?? []);
+                // ✅ CORRECTION : Si month/year ne sont pas spécifiés (null), 
+                // la règle est récurrente indéfiniment (tous les mois/années)
+                // On vérifie seulement le jour de la semaine
+                $dayMatches = ($ruleDayOfWeek == $dayOfWeek);
+                $monthYearMatches = true; // Par défaut, on accepte tous les mois/années
+                
+                // Si month/year sont spécifiés, vérifier qu'ils correspondent
+                if ($ruleMonth !== null && $ruleYear !== null) {
+                    $monthYearMatches = ($ruleMonth == $month && $ruleYear == $year);
+                }
+                
+                if ($dayMatches && $monthYearMatches) {
+                    // ✅ Fusionner les créneaux de cette règle avec ceux déjà trouvés
+                    $matchingSlots = array_merge($matchingSlots, $slots);
                 }
             }
         }
         
+        // ✅ Retourner tous les créneaux trouvés (de toutes les règles correspondantes)
         return $matchingSlots;
     }
     

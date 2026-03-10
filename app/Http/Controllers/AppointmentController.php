@@ -372,7 +372,48 @@ class AppointmentController extends Controller
         $endDate = $today->copy()->addDays($daysAhead);
         $availableDates = [];
         
-        // Récupérer tous les rendez-vous CONFIRMÉS dans la période en une seule requête (optimisation)
+        // OPTIMISATION: Calculer directement toutes les dates disponibles depuis les règles
+        // au lieu de parcourir chaque jour individuellement
+        $availability = $settings->weekly_availability ?? [];
+        $dateRules = $availability['date_rules'] ?? [];
+        
+        // ✅ CORRECTION : Étendre $endDate pour inclure tous les mois configurés dans les règles
+        // Cela permet d'afficher les créneaux même s'ils sont au-delà de la période par défaut (60 jours)
+        foreach ($dateRules as $rule) {
+            $type = $rule['type'] ?? 'specific';
+            
+            if ($type === 'specific') {
+                // Pour les dates spécifiques, vérifier si elles dépassent $endDate
+                $dates = $rule['dates'] ?? [];
+                foreach ($dates as $dateString) {
+                    try {
+                        $ruleDate = Carbon::parse($dateString);
+                        if ($ruleDate->gt($endDate)) {
+                            $endDate = $ruleDate->copy();
+                        }
+                    } catch (\Exception $e) {
+                        continue;
+                    }
+                }
+            } elseif ($type === 'recurring_month') {
+                // Pour les règles récurrentes avec mois/année spécifiés, étendre $endDate
+                $ruleMonth = $rule['month'] ?? null;
+                $ruleYear = $rule['year'] ?? null;
+                
+                if ($ruleMonth && $ruleYear) {
+                    try {
+                        $lastDayOfRuleMonth = Carbon::create($ruleYear, $ruleMonth, 1)->endOfMonth();
+                        if ($lastDayOfRuleMonth->gt($endDate) && $lastDayOfRuleMonth->gte($today)) {
+                            $endDate = $lastDayOfRuleMonth->copy();
+                        }
+                    } catch (\Exception $e) {
+                        continue;
+                    }
+                }
+            }
+        }
+        
+        // Récupérer tous les rendez-vous CONFIRMÉS dans la période étendue
         $existingAppointments = Appointment::where('user_id', $user->id)
             ->where('status', Appointment::STATUS_CONFIRMED)
             ->whereBetween('start_time', [$today->copy()->startOfDay(), $endDate->copy()->endOfDay()])
@@ -380,11 +421,6 @@ class AppointmentController extends Controller
             ->groupBy(function ($appointment) {
                 return $appointment->start_time->format('Y-m-d');
             });
-        
-        // OPTIMISATION: Calculer directement toutes les dates disponibles depuis les règles
-        // au lieu de parcourir chaque jour individuellement
-        $availability = $settings->weekly_availability ?? [];
-        $dateRules = $availability['date_rules'] ?? [];
         
         $startTime = microtime(true);
         
@@ -395,6 +431,9 @@ class AppointmentController extends Controller
             'date_rules_count' => count($dateRules),
             'has_old_structure' => !empty($availability) && empty($dateRules),
             'availability_keys' => array_keys($availability),
+            'initial_end_date' => $today->copy()->addDays($daysAhead)->format('Y-m-d'),
+            'extended_end_date' => $endDate->format('Y-m-d'),
+            'end_date_extended' => $endDate->gt($today->copy()->addDays($daysAhead)),
         ]);
         
         // Si c'est la nouvelle structure (date_rules), calculer directement les dates
@@ -499,9 +538,11 @@ class AppointmentController extends Controller
                                     'end_date' => $endDate->format('Y-m-d'),
                                 ]);
                                 
-                                // Parcourir tous les jours du mois à partir de la date de début
-                                while ($currentDate->lte($lastDayOfMonth) && $currentDate->lte($endDate)) {
-                                    if ($currentDate->dayOfWeekIso == $ruleDayOfWeek) {
+                                // ✅ CORRECTION : Parcourir tous les jours du mois configuré, même s'ils dépassent $endDate initial
+                                // Car $endDate a déjà été étendu pour inclure ce mois
+                                while ($currentDate->lte($lastDayOfMonth)) {
+                                    // Ne garder que les dates dans le futur (pas dans le passé)
+                                    if ($currentDate->gte($today) && $currentDate->dayOfWeekIso == $ruleDayOfWeek) {
                                         $dateKey = $currentDate->format('Y-m-d');
                                         $datesFoundForThisRule[] = $dateKey;
                                         
@@ -583,9 +624,13 @@ class AppointmentController extends Controller
             Log::info('[AppointmentController@getAvailableDates] Dates calculées depuis les règles', [
                 'user_id' => $user->id,
                 'order_id' => $orderId,
+                'total_rules_processed' => count($dateRules),
                 'total_dates_calculated' => count($datesWithSlots),
                 'dates_keys' => array_keys($datesWithSlots),
                 'first_10_dates' => array_slice(array_keys($datesWithSlots), 0, 10),
+                'dates_with_multiple_rules' => array_filter($datesWithSlots, function($dateData) {
+                    return count($dateData['slots']) > 0;
+                }),
             ]);
             
             // Maintenant, vérifier pour chaque date s'il reste au moins un créneau disponible
