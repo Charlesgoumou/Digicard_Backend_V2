@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Responsive - Admin Interface</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            padding: 2rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 1rem;
+            padding: 2rem;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            color: #1f2937;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .info {
+            background: #eff6ff;
+            border-left: 4px solid #3b82f6;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 0.5rem;
+        }
+
+        .test-section {
+            margin: 2rem 0;
+            padding: 1.5rem;
+            background: #f9fafb;
+            border-radius: 0.5rem;
+        }
+
+        .test-section h2 {
+            color: #374151;
+            margin-bottom: 1rem;
+            font-size: 1.25rem;
+        }
+
+        .viewport-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+
+        .info-card {
+            background: white;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            border: 2px solid #e5e7eb;
+            text-align: center;
+        }
+
+        .info-card strong {
+            display: block;
+            color: #6b7280;
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .info-card span {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #3b82f6;
+        }
+
+        .device-indicator {
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            text-align: center;
+            font-size: 1.125rem;
+        }
+
+        .device-desktop {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .device-tablet {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .device-mobile {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .device-small {
+            background: #fce7f3;
+            color: #9f1239;
+        }
+
+        .checklist {
+            list-style: none;
+        }
+
+        .checklist li {
+            padding: 0.5rem 0;
+            padding-left: 1.5rem;
+            position: relative;
+        }
+
+        .checklist li::before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #10b981;
+            font-weight: bold;
+        }
+
+        .test-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+
+        .test-card {
+            background: white;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            border: 1px solid #e5e7eb;
+            text-align: center;
+        }
+
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 1rem;
+            margin: 1rem 0;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            text-align: center;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background: #2563eb;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 2rem;
+            padding-top: 2rem;
+            border-top: 2px solid #e5e7eb;
+            color: #6b7280;
+        }
+
+        /* Responsive breakpoints indicators */
+        @media (max-width: 1024px) {
+            .device-desktop { display: none; }
+        }
+
+        @media (min-width: 769px) and (max-width: 1024px) {
+            .device-tablet-large { display: block !important; }
+        }
+
+        @media (max-width: 768px) {
+            .device-tablet-large { display: none; }
+            .container { padding: 1rem; }
+        }
+
+        @media (min-width: 481px) and (max-width: 768px) {
+            .device-tablet { display: block !important; }
+        }
+
+        @media (max-width: 480px) {
+            .device-tablet { display: none; }
+            .test-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .device-mobile { display: block !important; }
+            body { padding: 0.5rem; }
+            .container { padding: 0.75rem; }
+            h1 { font-size: 1.25rem; }
+        }
+
+        @media (max-width: 375px) {
+            .device-mobile { display: none; }
+            .device-small { display: block !important; }
+        }
+
+        .device-tablet-large,
+        .device-tablet,
+        .device-mobile,
+        .device-small {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Test Responsive - Interface Admin</h1>
+
+        <div class="info">
+            <strong>📱 Instructions :</strong>
+            Redimensionnez votre navigateur ou utilisez les DevTools (F12) pour tester différentes tailles d'écran.
+        </div>
+
+        <!-- Device Indicators -->
+        <div class="device-indicator device-desktop">
+            🖥️ DESKTOP - Écran large (> 1024px)
+        </div>
+        <div class="device-indicator device-tablet-large">
+            💻 TABLETTE LARGE - (769px - 1024px)
+        </div>
+        <div class="device-indicator device-tablet">
+            📱 TABLETTE - (481px - 768px)
+        </div>
+        <div class="device-indicator device-mobile">
+            📱 MOBILE - (376px - 480px)
+        </div>
+        <div class="device-indicator device-small">
+            📱 PETIT MOBILE - (< 375px)
+        </div>
+
+        <!-- Viewport Info -->
+        <div class="test-section">
+            <h2>📐 Informations Viewport</h2>
+            <div class="viewport-info">
+                <div class="info-card">
+                    <strong>Largeur</strong>
+                    <span id="width">-</span>
+                </div>
+                <div class="info-card">
+                    <strong>Hauteur</strong>
+                    <span id="height">-</span>
+                </div>
+                <div class="info-card">
+                    <strong>Ratio</strong>
+                    <span id="ratio">-</span>
+                </div>
+                <div class="info-card">
+                    <strong>Orientation</strong>
+                    <span id="orientation">-</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Test Grid -->
+        <div class="test-section">
+            <h2>🎨 Test de Grille Responsive</h2>
+            <div class="test-grid">
+                <div class="test-card">Card 1</div>
+                <div class="test-card">Card 2</div>
+                <div class="test-card">Card 3</div>
+                <div class="test-card">Card 4</div>
+            </div>
+        </div>
+
+        <!-- Features Checklist -->
+        <div class="test-section">
+            <h2>✅ Fonctionnalités Responsive Implémentées</h2>
+            <ul class="checklist">
+                <li>Menu hamburger sur mobile (< 768px)</li>
+                <li>Tables avec scroll horizontal</li>
+                <li>Première colonne sticky sur mobile</li>
+                <li>Grilles adaptatives (4 → 2 → 1 colonnes)</li>
+                <li>Modals plein écran sur mobile</li>
+                <li>Filtres empilés verticalement</li>
+                <li>Boutons pleine largeur sur mobile</li>
+                <li>Padding adaptatif selon l'écran</li>
+                <li>Tailles de police responsive</li>
+                <li>Sidebar avec overlay sur mobile</li>
+            </ul>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="test-section">
+            <h2>🚀 Accès Rapide</h2>
+            <a href="http://localhost:5173/admin" class="btn">
+                📊 Ouvrir le Dashboard Admin
+            </a>
+            <a href="http://localhost:5173/admin/settings" class="btn">
+                ⚙️ Ouvrir les Paramètres
+            </a>
+        </div>
+
+        <!-- Testing Tips -->
+        <div class="test-section">
+            <h2>💡 Conseils de Test</h2>
+            <p><strong>Chrome DevTools :</strong></p>
+            <ol style="margin-left: 1.5rem; line-height: 2;">
+                <li>Appuyer sur F12</li>
+                <li>Cliquer sur l'icône "Toggle device toolbar" (Ctrl+Shift+M)</li>
+                <li>Sélectionner un appareil dans la liste déroulante</li>
+                <li>Ou saisir une largeur personnalisée</li>
+            </ol>
+            <br>
+            <p><strong>Appareils recommandés à tester :</strong></p>
+            <ul style="margin-left: 1.5rem; line-height: 2;">
+                <li>iPhone SE (375px)</li>
+                <li>iPhone 12 Pro (390px)</li>
+                <li>iPhone 12 Pro Max (428px)</li>
+                <li>iPad (768px)</li>
+                <li>iPad Pro (1024px)</li>
+            </ul>
+        </div>
+
+        <div class="footer">
+            <p>✨ Interface Admin Responsive - 2025</p>
+            <p style="margin-top: 0.5rem; font-size: 0.875rem;">
+                Consultez <strong>RESPONSIVE_ADMIN_GUIDE.md</strong> pour plus de détails
+            </p>
+        </div>
+    </div>
+
+    <script>
+        function updateViewportInfo() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            const ratio = (width / height).toFixed(2);
+            const orientation = width > height ? 'Paysage' : 'Portrait';
+
+            document.getElementById('width').textContent = width + 'px';
+            document.getElementById('height').textContent = height + 'px';
+            document.getElementById('ratio').textContent = ratio;
+            document.getElementById('orientation').textContent = orientation;
+        }
+
+        // Update on load
+        updateViewportInfo();
+
+        // Update on resize
+        window.addEventListener('resize', updateViewportInfo);
+    </script>
+</body>
+</html>
+
