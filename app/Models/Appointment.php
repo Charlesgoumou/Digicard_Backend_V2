@@ -31,6 +31,7 @@ class Appointment extends Model
         'start_time',
         'end_time',
         'status',
+        'cancellation_token',
         'is_downloaded',
         'downloaded_at',
     ];

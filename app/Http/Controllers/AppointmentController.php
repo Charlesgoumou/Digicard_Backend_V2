@@ -3,6 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Mail\AppointmentBooked;
+use App\Mail\AppointmentCreatedForVisitor;
+use App\Mail\AppointmentCancelledForOwner;
+use App\Mail\AppointmentCancelledForVisitor;
 use App\Models\Appointment;
 use App\Models\AppointmentSetting;
 use App\Models\User;
@@ -1066,7 +1069,7 @@ class AppointmentController extends Controller
                     throw new \Exception('SLOT_TAKEN');
                 }
 
-                // Créer le rendez-vous
+                // Créer le rendez-vous avec un token d'annulation unique
                 $orderId = isset($validated['order_id']) ? (int) $validated['order_id'] : null;
                 return Appointment::create([
                     'user_id' => $user->id,
@@ -1078,6 +1081,7 @@ class AppointmentController extends Controller
                     'start_time' => $startTime,
                     'end_time' => $endTime,
                     'status' => Appointment::STATUS_CONFIRMED,
+                    'cancellation_token' => $this->generateCancellationToken(),
                 ]);
             });
 
@@ -1102,10 +1106,10 @@ class AppointmentController extends Controller
                 ],
             ];
 
-            // Envoyer l'email de notification IMMÉDIATEMENT (synchrone)
-            // Le Mailable AppointmentBooked n'implémente pas ShouldQueue pour garantir l'envoi
+            // ✅ Envoyer les emails de notification IMMÉDIATEMENT (synchrone) aux deux parties
+            // Le Mailable n'implémente pas ShouldQueue pour garantir l'envoi
             try {
-                Log::info('📧 Tentative d\'envoi de l\'email de notification de rendez-vous (SYNCHRONE)', [
+                Log::info('📧 Tentative d\'envoi des emails de notification de rendez-vous (SYNCHRONE)', [
                     'appointment_id' => $appointment->id,
                     'owner_email' => $user->email,
                     'visitor_email' => $appointment->visitor_email,
@@ -1115,15 +1119,19 @@ class AppointmentController extends Controller
                 ]);
                 
                 // Envoi synchrone direct - pas de queue
+                // Email au propriétaire
                 Mail::to($user->email)->send(new AppointmentBooked($appointment));
                 
-                Log::info('✅ Email de notification de rendez-vous envoyé avec succès (SYNCHRONE)', [
+                // ✅ Email au demandeur (visitor)
+                Mail::to($appointment->visitor_email)->send(new AppointmentCreatedForVisitor($appointment));
+                
+                Log::info('✅ Emails de notification de rendez-vous envoyés avec succès (SYNCHRONE)', [
                     'appointment_id' => $appointment->id,
                     'owner_email' => $user->email,
                     'visitor_email' => $appointment->visitor_email,
                 ]);
             } catch (\Exception $mailException) {
-                Log::error('❌ Erreur critique lors de l\'envoi de l\'email de rendez-vous', [
+                Log::error('❌ Erreur critique lors de l\'envoi des emails de rendez-vous', [
                     'appointment_id' => $appointment->id,
                     'owner_email' => $user->email,
                     'visitor_email' => $appointment->visitor_email,
@@ -1154,6 +1162,20 @@ class AppointmentController extends Controller
 
             throw $e;
         }
+    }
+
+    /**
+     * Génère un token d'annulation unique et sécurisé pour un rendez-vous.
+     * 
+     * @return string
+     */
+    private function generateCancellationToken(): string
+    {
+        do {
+            $token = bin2hex(random_bytes(32)); // 64 caractères hexadécimaux
+        } while (Appointment::where('cancellation_token', $token)->exists());
+        
+        return $token;
     }
 
     /**
@@ -1320,6 +1342,31 @@ class AppointmentController extends Controller
         $appointment->status = Appointment::STATUS_CANCELLED;
         $appointment->save();
 
+        // ✅ Envoyer les emails de notification d'annulation aux deux parties
+        try {
+            Log::info('📧 Envoi des emails d\'annulation de rendez-vous', [
+                'appointment_id' => $appointment->id,
+                'owner_email' => $user->email,
+                'visitor_email' => $appointment->visitor_email,
+            ]);
+            
+            // Email au propriétaire
+            Mail::to($user->email)->send(new AppointmentCancelledForOwner($appointment));
+            
+            // ✅ Email au demandeur (visitor)
+            Mail::to($appointment->visitor_email)->send(new AppointmentCancelledForVisitor($appointment));
+            
+            Log::info('✅ Emails d\'annulation envoyés avec succès', [
+                'appointment_id' => $appointment->id,
+            ]);
+        } catch (\Exception $mailException) {
+            Log::error('❌ Erreur lors de l\'envoi des emails d\'annulation', [
+                'appointment_id' => $appointment->id,
+                'error' => $mailException->getMessage(),
+            ]);
+            // Ne pas faire échouer la requête si l'email échoue
+        }
+
         return response()->json([
             'message' => 'Rendez-vous annulé avec succès. Le créneau est maintenant disponible.',
             'appointment' => [
@@ -1327,6 +1374,94 @@ class AppointmentController extends Controller
                 'status' => $appointment->status,
             ],
         ]);
+    }
+
+    /**
+     * Annule un rendez-vous par token (route publique pour le demandeur).
+     * 
+     * Permet au demandeur d'annuler son rendez-vous directement depuis l'email
+     * sans authentification, en utilisant un token sécurisé.
+     * 
+     * @param Request $request
+     * @param string $token
+     * @return \Illuminate\Http\JsonResponse|\Illuminate\View\View
+     */
+    public function cancelByToken(Request $request, string $token)
+    {
+        // Rechercher le rendez-vous par token
+        $appointment = Appointment::where('cancellation_token', $token)
+            ->where('status', Appointment::STATUS_CONFIRMED)
+            ->first();
+
+        if (!$appointment) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => 'Token invalide ou rendez-vous introuvable.',
+                ], 404);
+            }
+            
+            // Si c'est une requête web (depuis le lien dans l'email), afficher une page d'erreur simple
+            return response('<html><body><h1>Rendez-vous introuvable</h1><p>Le token d\'annulation est invalide ou le rendez-vous n\'existe plus.</p></body></html>', 404)
+                ->header('Content-Type', 'text/html');
+        }
+
+        // Vérifier que le rendez-vous peut être annulé (pas dans le passé)
+        if ($appointment->start_time->isPast()) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => 'Impossible d\'annuler un rendez-vous passé.',
+                ], 422);
+            }
+            
+            return response('<html><body><h1>Rendez-vous passé</h1><p>Impossible d\'annuler un rendez-vous qui a déjà eu lieu.</p></body></html>', 422)
+                ->header('Content-Type', 'text/html');
+        }
+
+        // Annuler le rendez-vous
+        $appointment->status = Appointment::STATUS_CANCELLED;
+        $appointment->save();
+
+        // Recharger la relation user pour l'email
+        $appointment->load('user');
+
+        // ✅ Envoyer les emails de notification d'annulation aux deux parties
+        try {
+            Log::info('📧 Envoi des emails d\'annulation de rendez-vous (par token)', [
+                'appointment_id' => $appointment->id,
+                'owner_email' => $appointment->user->email,
+                'visitor_email' => $appointment->visitor_email,
+            ]);
+            
+            // Email au propriétaire
+            Mail::to($appointment->user->email)->send(new AppointmentCancelledForOwner($appointment));
+            
+            // ✅ Email au demandeur (visitor)
+            Mail::to($appointment->visitor_email)->send(new AppointmentCancelledForVisitor($appointment));
+            
+            Log::info('✅ Emails d\'annulation envoyés avec succès (par token)', [
+                'appointment_id' => $appointment->id,
+            ]);
+        } catch (\Exception $mailException) {
+            Log::error('❌ Erreur lors de l\'envoi des emails d\'annulation (par token)', [
+                'appointment_id' => $appointment->id,
+                'error' => $mailException->getMessage(),
+            ]);
+            // Ne pas faire échouer la requête si l'email échoue
+        }
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'Rendez-vous annulé avec succès. Le créneau est maintenant disponible.',
+                'appointment' => [
+                    'id' => $appointment->id,
+                    'status' => $appointment->status,
+                ],
+            ]);
+        }
+
+        // Si c'est une requête web (depuis le lien dans l'email), afficher une page de confirmation
+        return response('<html><body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;"><h1 style="color: #10b981;">✅ Rendez-vous annulé</h1><p>Votre rendez-vous a été annulé avec succès.</p><p>Le créneau est maintenant disponible pour d\'autres réservations.</p><p style="color: #64748b; margin-top: 30px;">Vous et le propriétaire avez reçu une confirmation par email.</p></body></html>', 200)
+            ->header('Content-Type', 'text/html');
     }
 
     /**

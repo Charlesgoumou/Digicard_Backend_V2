@@ -10,3 +10,7 @@ Artisan::command('inspire', function () {
 
 // Nettoyer les contacts partagés expirés (24h après téléchargement) - Toutes les heures
 Schedule::command('contacts:cleanup')->hourly();
+
+// ✅ Planifier les rappels automatiques des rendez-vous (30 min et 10 min avant)
+// Exécuté toutes les minutes pour détecter les rendez-vous qui nécessitent un rappel
+Schedule::command('appointments:schedule-reminders')->everyMinute();

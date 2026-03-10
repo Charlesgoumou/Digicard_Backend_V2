@@ -239,6 +239,8 @@ Route::get('/user/{user}/available-dates', [AppointmentController::class, 'getAv
 Route::get('/user/{user}/slots', [AppointmentController::class, 'getPublicSlots'])->name('appointments.slots');
 // Réserver un rendez-vous chez un utilisateur
 Route::post('/user/{user}/appointments', [AppointmentController::class, 'store'])->name('appointments.store');
+// ✅ Annuler un rendez-vous par token (route publique pour le demandeur)
+Route::get('/appointments/cancel/{token}', [AppointmentController::class, 'cancelByToken'])->name('appointments.cancel-by-token');
 
 // --- Routes Échange de Contact (Publique) ---
 // Partager son contact avec un utilisateur (route publique sans auth ni CSRF)
