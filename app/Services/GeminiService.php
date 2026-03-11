@@ -766,6 +766,10 @@ PROMPT;
                 $generatedText = preg_replace('/```\s*$/', '', $generatedText);
                 $generatedText = trim($generatedText);
 
+                // Remplacer les caractères de contrôle (retours à la ligne, tabulations littérales, etc.)
+                // qui invalident le JSON (erreur "Control character error, possibly incorrectly encoded")
+                $generatedText = preg_replace('/[\x00-\x1F\x7F]/u', ' ', $generatedText);
+
                 Log::info('Texte généré par Gemini pour extraction: ' . $generatedText);
 
                 $extractedData = json_decode($generatedText, true);
@@ -890,6 +894,7 @@ PROMPT;
                 $generatedText = preg_replace('/```json\s*/', '', $generatedText);
                 $generatedText = preg_replace('/```\s*$/', '', $generatedText);
                 $generatedText = trim($generatedText);
+                $generatedText = preg_replace('/[\x00-\x1F\x7F]/u', ' ', $generatedText);
 
                 Log::info('Texte généré par Gemini pour extraction banquier: ' . $generatedText);
 
@@ -1105,6 +1110,7 @@ PROMPT;
                 }
                 
                 $generatedText = trim($generatedText);
+                $generatedText = preg_replace('/[\x00-\x1F\x7F]/u', ' ', $generatedText);
 
                 // Logger seulement la longueur pour éviter les logs trop longs
                 Log::info('Texte généré par Gemini pour extraction portfolio (' . $profileType . '), longueur: ' . strlen($generatedText));
@@ -1365,6 +1371,7 @@ PROMPT;
                 }
                 
                 $generatedText = trim($generatedText);
+                $generatedText = preg_replace('/[\x00-\x1F\x7F]/u', ' ', $generatedText);
 
                 Log::info('Texte généré par Gemini pour extraction menu restaurant, longueur: ' . strlen($generatedText));
 

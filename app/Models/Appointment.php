@@ -31,6 +31,7 @@ class Appointment extends Model
         'start_time',
         'end_time',
         'status',
+        'cancellation_token',
         'is_downloaded',
         'downloaded_at',
     ];
@@ -244,6 +245,12 @@ class Appointment extends Model
         // Rappel 30 minutes avant
         $ics .= "BEGIN:VALARM\r\n";
         $ics .= "TRIGGER:-PT30M\r\n";
+        $ics .= "ACTION:DISPLAY\r\n";
+        $ics .= "DESCRIPTION:Rappel: {$summary}\r\n";
+        $ics .= "END:VALARM\r\n";
+        // Rappel 10 minutes avant
+        $ics .= "BEGIN:VALARM\r\n";
+        $ics .= "TRIGGER:-PT10M\r\n";
         $ics .= "ACTION:DISPLAY\r\n";
         $ics .= "DESCRIPTION:Rappel: {$summary}\r\n";
         $ics .= "END:VALARM\r\n";

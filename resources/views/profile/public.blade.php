@@ -153,7 +153,69 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>{{ $displayName }} - Arcc En Ciel</title>
+    <title>{{ $displayName }}@if($displayTitle) - {{ $displayTitle }}@endif - DigiCard</title>
+
+    <!-- ✅ Métadonnées Open Graph pour le partage sur les réseaux sociaux -->
+    @php
+        // Construire l'URL complète du profil
+        $profileUrl = url('/profil/' . $user->username);
+        $queryParams = [];
+        if (isset($accessToken) && $accessToken) {
+            $queryParams['token'] = $accessToken;
+        }
+        if (isset($orderId) && $orderId) {
+            $queryParams['order'] = $orderId;
+        }
+        if (!empty($queryParams)) {
+            $profileUrl .= '?' . http_build_query($queryParams);
+        }
+        
+        // Construire l'URL complète de l'avatar (doit être absolue pour Open Graph)
+        $ogImageUrl = null;
+        if ($displayAvatar && $displayAvatar !== 'https://ui-avatars.com/api/?name=' . urlencode($displayName) . '&background=4b5563&color=ffffff&size=128') {
+            // Utiliser l'avatar de l'utilisateur s'il existe
+            if (str_starts_with($displayAvatar, 'http://') || str_starts_with($displayAvatar, 'https://')) {
+                $ogImageUrl = $displayAvatar;
+            } else {
+                // Si c'est un chemin relatif, le convertir en URL absolue
+                $ogImageUrl = url($displayAvatar);
+            }
+        } else {
+            // Fallback sur le logo DigiCard si pas d'avatar
+            $ogImageUrl = 'https://digicard.arccenciel.com/logo2-512.png';
+        }
+        
+        // Description pour le partage (utiliser le titre/poste)
+        $ogDescription = $displayTitle 
+            ? $displayName . ' - ' . $displayTitle . ' | DigiCard - Carte de visite numérique'
+            : $displayName . ' | DigiCard - Carte de visite numérique';
+        
+        // Titre pour le partage
+        $ogTitle = $displayTitle 
+            ? $displayName . ' - ' . $displayTitle
+            : $displayName;
+    @endphp
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="profile" />
+    <meta property="og:url" content="{{ $profileUrl }}" />
+    <meta property="og:title" content="{{ $ogTitle }}" />
+    <meta property="og:description" content="{{ $ogDescription }}" />
+    <meta property="og:image" content="{{ $ogImageUrl }}" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="{{ $ogTitle }}" />
+    <meta property="og:site_name" content="DigiCard" />
+    
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="{{ $ogTitle }}" />
+    <meta name="twitter:description" content="{{ $ogDescription }}" />
+    <meta name="twitter:image" content="{{ $ogImageUrl }}" />
+    <meta name="twitter:image:alt" content="{{ $ogTitle }}" />
+    
+    <!-- Meta description standard -->
+    <meta name="description" content="{{ $ogDescription }}" />
 
     <!-- ✅ Favicons DigiCard -->
     <link rel="icon" type="image/png" sizes="16x16" href="https://digicard.arccenciel.com/logo2-16.png" />
@@ -176,9 +238,12 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            padding: 0.25rem;
+            padding: 0.35rem;
             vertical-align: middle;
             line-height: 0;
+            flex-shrink: 0;
+            flex-grow: 0;
+            border-radius: 0.375rem;
         }
         .social-icon:hover { transform: scale(1.15); }
         .social-icon.whatsapp:hover { color: #25D366; }
@@ -195,38 +260,87 @@
         /* Garantir que les icônes sont bien organisées et centrées */
         .social-icons-container {
             display: flex;
+            flex-wrap: wrap;
             justify-content: center;
-            align-items: center;
+            align-items: flex-start;
             gap: 1rem;
-            flex-wrap: nowrap;
+            row-gap: 0.75rem;
             width: 100%;
+            max-width: 100%;
             overflow: visible;
-            padding: 0;
-            margin: -0.5rem auto 0 auto;
+            padding: 0.5rem 0;
+            margin: 0 auto;
+            box-sizing: border-box;
+        }
+        /* Forcer toutes les lignes à avoir la même largeur */
+        .social-icons-container > * {
+            flex: 0 0 auto;
+        }
+        /* Calculer la largeur exacte pour 6 icônes par ligne */
+        /* Chaque icône fait environ 2.5rem + 0.7rem padding = 3.2rem, avec 1rem de gap */
+        .social-icons-container {
+            --icon-total-width: 3.2rem;
+            --gap-size: 1rem;
+            width: calc(6 * var(--icon-total-width) + 5 * var(--gap-size));
+            max-width: 100%;
+            margin-left: auto;
+            margin-right: auto;
+            justify-content: center;
+        }
+        /* Pour 7-8 icônes (high) : ajuster pour 7 icônes par ligne */
+        .icons-count-high .social-icons-container {
+            --icon-total-width: 3rem;
+            --gap-size: 0.75rem;
+            width: calc(7 * var(--icon-total-width) + 6 * var(--gap-size));
+        }
+        /* Pour 9+ icônes (very-high) : ajuster pour 7 icônes par ligne */
+        .icons-count-very-high .social-icons-container {
+            --icon-total-width: 2.8rem;
+            --gap-size: 0.6rem;
+            width: calc(7 * var(--icon-total-width) + 6 * var(--gap-size));
         }
         .social-icons-group {
             display: flex;
             align-items: center;
             gap: 1rem;
+            row-gap: 0.75rem;
             overflow: visible;
-            flex-wrap: nowrap;
+            flex-wrap: wrap;
             justify-content: center;
             line-height: 1;
+            max-width: 100%;
+            flex: 0 0 auto;
         }
         /* Ajustement dynamique selon le nombre d'icônes */
+        .icons-count-high .social-icons-container {
+            gap: 0.75rem;
+            row-gap: 0.6rem;
+            --gap-size: 0.75rem;
+        }
         .icons-count-high .social-icons-group {
             gap: 0.75rem;
+            row-gap: 0.6rem;
+        }
+        .icons-count-very-high .social-icons-container {
+            gap: 0.6rem;
+            row-gap: 0.5rem;
+            --gap-size: 0.6rem;
         }
         .icons-count-very-high .social-icons-group {
-            gap: 0.5rem;
+            gap: 0.6rem;
+            row-gap: 0.5rem;
         }
         .social-icons-group.left {
-            justify-content: flex-end;
+            justify-content: center;
             align-items: center;
+            flex: 0 0 auto;
+            min-width: 0;
         }
         .social-icons-group.right {
-            justify-content: flex-start;
+            justify-content: center;
             align-items: center;
+            flex: 0 0 auto;
+            min-width: 0;
         }
         /* Si aucune icône sociale, masquer le groupe vide */
         .social-icons-group.left:empty,
@@ -237,8 +351,10 @@
         /* Responsive pour tablette */
         @media (max-width: 768px) {
             .social-icons-container {
-                padding: 0;
-                margin-top: -0.375rem;
+                padding: 0.5rem 0;
+                margin-top: 0;
+                flex-wrap: wrap;
+                row-gap: 0.6rem;
             }
         }
         .social-icons-center {
@@ -246,9 +362,11 @@
             align-items: center;
             justify-content: center;
             flex-shrink: 0;
+            flex: 0 0 auto;
             gap: 0.75rem;
             overflow: visible;
             line-height: 1;
+            margin: 0 0.25rem;
         }
         .icons-count-high .social-icons-center {
             gap: 0.5rem;
@@ -279,15 +397,17 @@
         /* Responsive pour mobile */
         @media (max-width: 640px) {
             .social-icons-container {
-                padding: 0 0.5rem;
+                padding: 0.5rem 0.5rem;
                 gap: 0.6rem;
+                row-gap: 0.5rem;
                 justify-content: center;
-                margin-top: -0.25rem;
-                flex-wrap: nowrap;
+                margin-top: 0;
+                flex-wrap: wrap;
             }
             .social-icons-group {
                 gap: 0.6rem;
-                flex-wrap: nowrap;
+                row-gap: 0.5rem;
+                flex-wrap: wrap;
             }
             .social-icons-group.left,
             .social-icons-group.right {
@@ -325,14 +445,16 @@
         
         @media (max-width: 380px) {
             .social-icons-container {
-                padding: 0 0.25rem;
-                gap: 0.35rem;
-                margin-top: -0.25rem;
-                flex-wrap: nowrap;
+                padding: 0.5rem 0.25rem;
+                gap: 0.5rem;
+                row-gap: 0.4rem;
+                margin-top: 0;
+                flex-wrap: wrap;
             }
             .social-icons-group {
-                gap: 0.35rem;
-                flex-wrap: nowrap;
+                gap: 0.5rem;
+                row-gap: 0.4rem;
+                flex-wrap: wrap;
             }
             .icons-count-high .social-icons-group {
                 gap: 0.25rem;
@@ -364,20 +486,24 @@
             }
         }
         
-        /* Forcer toutes les icônes sur une seule ligne centrée */
+        /* Permettre le retour à la ligne pour éviter le débordement */
         @media (max-width: 480px) {
             .social-icons-container {
-                flex-wrap: nowrap;
-                gap: 0.4rem;
-                padding: 0 0.5rem;
-                margin-top: -0.25rem;
+                flex-wrap: wrap;
+                gap: 0.5rem;
+                row-gap: 0.4rem;
+                padding: 0.5rem 0.5rem;
+                margin-top: 0;
             }
             .icons-count-very-high .social-icons-container {
-                gap: 0.25rem;
-                padding: 0 0.25rem;
+                gap: 0.4rem;
+                row-gap: 0.35rem;
+                padding: 0.5rem 0.25rem;
             }
             .social-icons-group {
-                flex-wrap: nowrap;
+                flex-wrap: wrap;
+                gap: 0.5rem;
+                row-gap: 0.4rem;
             }
             .icons-count-very-high .social-icon svg {
                 width: 0.9rem;

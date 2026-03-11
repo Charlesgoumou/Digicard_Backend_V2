@@ -8,27 +8,33 @@ use App\Models\MarketplaceFavorite;
 use App\Models\MarketplacePurchase;
 use App\Models\MarketplaceMessage;
 use App\Models\MarketplaceOfferImage;
+use App\Models\CompanyPage;
+use App\Models\User;
 use App\Services\GeminiService;
+use App\Services\PerplexityService;
 use App\Services\ImageCompressionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
 
 class MarketplaceController extends Controller
 {
     /**
      * Récupérer toutes les offres disponibles
+     * Avec recherche en temps réel, recommandation intelligente et tri personnalisé
      */
     public function index(Request $request)
     {
         $user = $request->user();
         $filter = $request->query('filter', 'all'); // all, purchases, sales, favorites
+        $search = $request->query('search', ''); // Recherche en temps réel
         
         // Charger les relations (gérer le cas où la table images n'existe pas encore)
-        $withRelations = ['seller:id,name', 'reviews'];
+        $withRelations = ['seller:id,name,title,avatar_url,website_url,whatsapp_url,linkedin_url,facebook_url,twitter_url,youtube_url', 'reviews'];
         try {
             // Vérifier si la table existe en essayant une requête simple
             DB::table('marketplace_offer_images')->limit(1)->get();
@@ -41,6 +47,17 @@ class MarketplaceController extends Controller
         $query = MarketplaceOffer::where('is_active', true)
             ->with($withRelations)
             ->withCount('reviews');
+        
+        // Recherche en temps réel (dès la première lettre)
+        if (!empty($search)) {
+            $searchTerms = explode(' ', trim($search));
+            $query->where(function($q) use ($searchTerms) {
+                foreach ($searchTerms as $term) {
+                    $q->where('title', 'like', "%{$term}%")
+                      ->orWhere('description', 'like', "%{$term}%");
+                }
+            });
+        }
         
         // Filtrer selon le type demandé
         if ($filter === 'sales' && $user) {
@@ -57,6 +74,18 @@ class MarketplaceController extends Controller
             $favoriteOfferIds = MarketplaceFavorite::where('user_id', $user->id)
                 ->pluck('offer_id');
             $query->whereIn('id', $favoriteOfferIds);
+        } elseif ($filter === 'all' && $user) {
+            // Système de recommandation intelligent pour l'onglet "all"
+            $userNeeds = $this->determineUserNeeds($user);
+            if (!empty($userNeeds['keywords'])) {
+                // Filtrer les offres selon les mots-clés identifiés
+                $query->where(function($q) use ($userNeeds) {
+                    foreach ($userNeeds['keywords'] as $keyword) {
+                        $q->orWhere('title', 'like', "%{$keyword}%")
+                          ->orWhere('description', 'like', "%{$keyword}%");
+                    }
+                });
+            }
         }
         
         $offers = $query->get()
@@ -77,6 +106,10 @@ class MarketplaceController extends Controller
                     ->where('buyer_id', $user->id)
                     ->where('status', '=', 'completed')
                     ->exists() : false;
+                
+                // Vérifier si le profil du vendeur est complet
+                $seller = $offer->seller;
+                $isProfileComplete = $this->isProfileComplete($seller);
                 
                 // Formater les images (si disponibles)
                 $images = [];
@@ -102,14 +135,31 @@ class MarketplaceController extends Controller
                     'images' => $images, // Toutes les images
                     'seller_id' => $offer->user_id,
                     'seller_name' => $offer->seller->name ?? 'Anonyme',
+                    'seller_title' => $offer->seller->title ?? null,
+                    'seller_avatar' => $offer->seller->avatar_url ?? null,
                     'average_rating' => $averageRating ? round($averageRating, 1) : null,
                     'reviews_count' => $offer->reviews_count,
                     'is_favorite' => $isFavorite,
                     'is_seller' => $isSeller,
                     'is_purchased' => $isPurchased,
+                    'is_profile_complete' => $isProfileComplete,
                     'created_at' => $offer->created_at,
                 ];
             });
+        
+        // Tri des résultats : priorité aux offres avec le plus d'avis et profil complet
+        $offers = $offers->sortByDesc(function ($offer) {
+            $score = 0;
+            // Priorité aux profils complets
+            if ($offer['is_profile_complete']) {
+                $score += 1000;
+            }
+            // Priorité aux offres avec le plus d'avis
+            $score += ($offer['reviews_count'] ?? 0) * 10;
+            // Priorité aux offres avec une meilleure note
+            $score += ($offer['average_rating'] ?? 0) * 5;
+            return $score;
+        })->values();
         
         return response()->json($offers);
     }
@@ -911,5 +961,111 @@ class MarketplaceController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Détermine les besoins de l'utilisateur basés sur son titre/poste et son site web ou document
+     * 
+     * @param User|null $user
+     * @return array
+     */
+    private function determineUserNeeds(?User $user): array
+    {
+        if (!$user) {
+            return ['keywords' => []];
+        }
+
+        // Utiliser le cache pour éviter les appels API répétés (cache de 24h)
+        $cacheKey = "user_needs_{$user->id}";
+        $cachedNeeds = Cache::get($cacheKey);
+        
+        if ($cachedNeeds !== null) {
+            return $cachedNeeds;
+        }
+
+        $needs = ['keywords' => []];
+        $userTitle = $user->title;
+        $websiteUrl = $user->website_url;
+
+        // Pour les business_admin, récupérer aussi les services et company_website_url
+        if ($user->role === 'business_admin') {
+            $companyPage = CompanyPage::where('user_id', $user->id)->first();
+            if ($companyPage) {
+                if (empty($websiteUrl) && !empty($companyPage->company_website_url)) {
+                    $websiteUrl = $companyPage->company_website_url;
+                }
+                
+                // Extraire les mots-clés des services
+                if (!empty($companyPage->services) && is_array($companyPage->services)) {
+                    foreach ($companyPage->services as $service) {
+                        $serviceTitle = $service['title'] ?? $service['name'] ?? '';
+                        if (!empty($serviceTitle)) {
+                            $needs['keywords'][] = strtolower($serviceTitle);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Si l'utilisateur a un site web, utiliser Perplexity AI pour explorer
+        if (!empty($websiteUrl)) {
+            try {
+                $perplexityService = new PerplexityService();
+                $websiteNeeds = $perplexityService->exploreWebsiteAndDetermineNeeds($websiteUrl, $userTitle);
+                
+                if ($websiteNeeds && !empty($websiteNeeds['keywords'])) {
+                    $needs['keywords'] = array_merge($needs['keywords'], $websiteNeeds['keywords']);
+                }
+            } catch (\Exception $e) {
+                Log::warning('Erreur lors de l\'exploration du site web avec Perplexity', [
+                    'user_id' => $user->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
+        // Ajouter le titre/poste comme mot-clé
+        if (!empty($userTitle)) {
+            $needs['keywords'][] = strtolower($userTitle);
+        }
+
+        // Nettoyer et dédupliquer les mots-clés
+        $needs['keywords'] = array_unique(array_filter($needs['keywords']));
+
+        // Mettre en cache pour 24h
+        Cache::put($cacheKey, $needs, now()->addHours(24));
+
+        return $needs;
+    }
+
+    /**
+     * Vérifie si le profil d'un utilisateur est complet
+     * Un profil complet doit avoir : photo, titre/poste, et au moins 3 réseaux sociaux
+     * 
+     * @param User|null $seller
+     * @return bool
+     */
+    private function isProfileComplete(?User $seller): bool
+    {
+        if (!$seller) {
+            return false;
+        }
+
+        $hasPhoto = !empty($seller->avatar_url);
+        $hasTitle = !empty($seller->title);
+        
+        // Compter les réseaux sociaux
+        $socialCount = 0;
+        if (!empty($seller->whatsapp_url)) $socialCount++;
+        if (!empty($seller->linkedin_url)) $socialCount++;
+        if (!empty($seller->facebook_url)) $socialCount++;
+        if (!empty($seller->twitter_url)) $socialCount++;
+        if (!empty($seller->youtube_url)) $socialCount++;
+        if (!empty($seller->tiktok_url)) $socialCount++;
+        if (!empty($seller->threads_url)) $socialCount++;
+        
+        $hasThreeSocials = $socialCount >= 3;
+
+        return $hasPhoto && $hasTitle && $hasThreeSocials;
     }
 }

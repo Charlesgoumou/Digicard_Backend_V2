@@ -803,7 +803,10 @@ class OrderController extends Controller
 
             // Notification super admin : carte paramétrée (employé ou business_admin inclus)
             try {
-                $profileUrl = route('profile.public.show', ['user' => $user->username]) . '?order=' . $order->id;
+                $username = $user->username ?? '';
+                $profileUrl = $username !== ''
+                    ? route('profile.public.show', ['user' => $username]) . '?order=' . $order->id
+                    : url('/');
                 \App\Models\AdminNotification::create([
                     'type' => 'order_configured',
                     'user_id' => $user->id,
@@ -815,7 +818,9 @@ class OrderController extends Controller
                         'order_number' => $order->order_number,
                     ],
                 ]);
-            } catch (\Throwable $t) {}
+            } catch (\Throwable $t) {
+                Log::warning('OrderController::markAsConfigured notification failed', ['order_id' => $order->id, 'error' => $t->getMessage()]);
+            }
 
             // Pour un business_admin qui s'est inclus, ne pas marquer toute la commande comme configurée
             // Seule son entrée OrderEmployee est configurée
@@ -838,8 +843,11 @@ class OrderController extends Controller
 
         // Notification super admin : commande paramétrée (inclure URL publique)
         try {
-            $profileUser = $user; // l'utilisateur courant qui paramètre
-            $profileUrl = route('profile.public.show', ['user' => $profileUser->username]) . '?order=' . $order->id;
+            $profileUser = $user;
+            $username = $profileUser->username ?? '';
+            $profileUrl = $username !== ''
+                ? route('profile.public.show', ['user' => $username]) . '?order=' . $order->id
+                : url('/');
             \App\Models\AdminNotification::create([
                 'type' => 'order_configured',
                 'user_id' => $profileUser->id,
@@ -850,7 +858,9 @@ class OrderController extends Controller
                     'order_number' => $order->order_number,
                 ],
             ]);
-        } catch (\Throwable $t) {}
+        } catch (\Throwable $t) {
+            Log::warning('OrderController::markAsConfigured notification failed', ['order_id' => $order->id, 'error' => $t->getMessage()]);
+        }
 
         return response()->json([
             'message' => 'Commande paramétrée avec succès.',
