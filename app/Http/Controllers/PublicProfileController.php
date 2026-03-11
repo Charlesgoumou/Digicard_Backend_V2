@@ -676,6 +676,8 @@ class PublicProfileController extends Controller
             'user' => $user,
             'order' => $order,
             'orderEmployee' => $orderEmployee,
+            'orderId' => $orderId,
+            'accessToken' => $accessToken,
             'companyPagePublished' => $companyPagePublished,
             'companyPageUsername' => $companyPageUsername,
             'companyWebsiteUrl' => $companyWebsiteUrl,

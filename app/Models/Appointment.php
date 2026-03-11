@@ -248,6 +248,12 @@ class Appointment extends Model
         $ics .= "ACTION:DISPLAY\r\n";
         $ics .= "DESCRIPTION:Rappel: {$summary}\r\n";
         $ics .= "END:VALARM\r\n";
+        // Rappel 10 minutes avant
+        $ics .= "BEGIN:VALARM\r\n";
+        $ics .= "TRIGGER:-PT10M\r\n";
+        $ics .= "ACTION:DISPLAY\r\n";
+        $ics .= "DESCRIPTION:Rappel: {$summary}\r\n";
+        $ics .= "END:VALARM\r\n";
         $ics .= "END:VEVENT\r\n";
         $ics .= "END:VCALENDAR\r\n";
 

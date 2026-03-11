@@ -153,7 +153,69 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>{{ $displayName }} - Arcc En Ciel</title>
+    <title>{{ $displayName }}@if($displayTitle) - {{ $displayTitle }}@endif - DigiCard</title>
+
+    <!-- ✅ Métadonnées Open Graph pour le partage sur les réseaux sociaux -->
+    @php
+        // Construire l'URL complète du profil
+        $profileUrl = url('/profil/' . $user->username);
+        $queryParams = [];
+        if (isset($accessToken) && $accessToken) {
+            $queryParams['token'] = $accessToken;
+        }
+        if (isset($orderId) && $orderId) {
+            $queryParams['order'] = $orderId;
+        }
+        if (!empty($queryParams)) {
+            $profileUrl .= '?' . http_build_query($queryParams);
+        }
+        
+        // Construire l'URL complète de l'avatar (doit être absolue pour Open Graph)
+        $ogImageUrl = null;
+        if ($displayAvatar && $displayAvatar !== 'https://ui-avatars.com/api/?name=' . urlencode($displayName) . '&background=4b5563&color=ffffff&size=128') {
+            // Utiliser l'avatar de l'utilisateur s'il existe
+            if (str_starts_with($displayAvatar, 'http://') || str_starts_with($displayAvatar, 'https://')) {
+                $ogImageUrl = $displayAvatar;
+            } else {
+                // Si c'est un chemin relatif, le convertir en URL absolue
+                $ogImageUrl = url($displayAvatar);
+            }
+        } else {
+            // Fallback sur le logo DigiCard si pas d'avatar
+            $ogImageUrl = 'https://digicard.arccenciel.com/logo2-512.png';
+        }
+        
+        // Description pour le partage (utiliser le titre/poste)
+        $ogDescription = $displayTitle 
+            ? $displayName . ' - ' . $displayTitle . ' | DigiCard - Carte de visite numérique'
+            : $displayName . ' | DigiCard - Carte de visite numérique';
+        
+        // Titre pour le partage
+        $ogTitle = $displayTitle 
+            ? $displayName . ' - ' . $displayTitle
+            : $displayName;
+    @endphp
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="profile" />
+    <meta property="og:url" content="{{ $profileUrl }}" />
+    <meta property="og:title" content="{{ $ogTitle }}" />
+    <meta property="og:description" content="{{ $ogDescription }}" />
+    <meta property="og:image" content="{{ $ogImageUrl }}" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="{{ $ogTitle }}" />
+    <meta property="og:site_name" content="DigiCard" />
+    
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="{{ $ogTitle }}" />
+    <meta name="twitter:description" content="{{ $ogDescription }}" />
+    <meta name="twitter:image" content="{{ $ogImageUrl }}" />
+    <meta name="twitter:image:alt" content="{{ $ogTitle }}" />
+    
+    <!-- Meta description standard -->
+    <meta name="description" content="{{ $ogDescription }}" />
 
     <!-- ✅ Favicons DigiCard -->
     <link rel="icon" type="image/png" sizes="16x16" href="https://digicard.arccenciel.com/logo2-16.png" />

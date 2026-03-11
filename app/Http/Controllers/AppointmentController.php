@@ -1628,6 +1628,12 @@ class AppointmentController extends Controller
         $event .= "ACTION:DISPLAY\r\n";
         $event .= "DESCRIPTION:Rappel: {$summary}\r\n";
         $event .= "END:VALARM\r\n";
+        // Rappel 10 minutes avant
+        $event .= "BEGIN:VALARM\r\n";
+        $event .= "TRIGGER:-PT10M\r\n";
+        $event .= "ACTION:DISPLAY\r\n";
+        $event .= "DESCRIPTION:Rappel: {$summary}\r\n";
+        $event .= "END:VALARM\r\n";
         $event .= "END:VEVENT\r\n";
 
         return $event;
