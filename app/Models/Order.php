@@ -95,25 +95,27 @@ class Order extends Model
 
     /**
      * Génère un token d'accès unique pour la commande
-     * Le token est composé de chiffres, lettres et caractères spéciaux
-     * Note: Les caractères spéciaux sont gérés par le contrôleur PublicProfileController
+     * ✅ CORRECTION : Utiliser uniquement des caractères URL-safe pour éviter les problèmes d'encodage
+     * Le token est composé de chiffres, lettres et quelques caractères spéciaux sécurisés (URL-safe)
      */
     public function generateAccessToken()
     {
-        // Générer un token aléatoire de 32 caractères
-        // Utiliser des caractères alphanumériques et quelques caractères spéciaux sécurisés
-        // Note: Le contrôleur PublicProfileController reconstruit le token si & est présent
-        $characters = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*';
+        // ✅ CORRECTION : Utiliser uniquement des caractères URL-safe
+        // Éviter : # (fragment), & (séparateur), % (encodage), ^ (peut causer des problèmes)
+        // Utiliser : lettres, chiffres, - (tiret), _ (underscore), . (point)
+        // Ces caractères ne nécessitent pas d'encodage URL et sont sécurisés
+        $characters = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_';
         $token = '';
         
-        for ($i = 0; $i < 32; $i++) {
+        // Générer un token de 64 caractères pour plus de sécurité et d'unicité
+        for ($i = 0; $i < 64; $i++) {
             $token .= $characters[random_int(0, strlen($characters) - 1)];
         }
         
         // Vérifier que le token est unique
         while (self::where('access_token', $token)->exists()) {
             $token = '';
-            for ($i = 0; $i < 32; $i++) {
+            for ($i = 0; $i < 64; $i++) {
                 $token .= $characters[random_int(0, strlen($characters) - 1)];
             }
         }
@@ -122,25 +124,35 @@ class Order extends Model
     }
 
     /**
-     * Boot method pour générer automatiquement le token lors de la validation
+     * Boot method pour générer automatiquement le token
+     * ✅ CORRECTION : Générer le token dès la création de la commande (pas seulement à la validation)
+     * Cela garantit que chaque commande a son URL unique dès le départ
      */
     protected static function boot()
     {
         parent::boot();
 
-        // Générer le token automatiquement quand la commande est validée
+        // ✅ NOUVEAU : Générer le token automatiquement lors de la création de la commande
+        // Cela garantit que chaque nouvelle commande a son URL unique dès le départ
+        static::creating(function ($order) {
+            // Ne générer le token que pour les nouvelles commandes (pas de token existant)
+            // Les anciennes commandes gardent leur token existant ou null (fallback sur ?order=id)
+            if (!$order->access_token) {
+                $order->access_token = $order->generateAccessToken();
+            }
+        });
+
+        // Générer le token automatiquement quand la commande est validée (si pas déjà généré)
         static::updating(function ($order) {
+            // ✅ CORRECTION : Ne générer le token que si la commande est validée ET n'a pas encore de token
+            // Cela permet aux anciennes commandes de garder leur comportement (pas de token = fallback sur ?order=id)
             if ($order->isDirty('status') && $order->status === 'validated' && !$order->access_token) {
                 $order->access_token = $order->generateAccessToken();
             }
         });
 
-        // Générer le token pour les commandes déjà validées lors de la récupération
-        static::retrieved(function ($order) {
-            if ($order->status === 'validated' && !$order->access_token) {
-                $order->access_token = $order->generateAccessToken();
-                $order->saveQuietly(); // Sauvegarder sans déclencher les événements
-            }
-        });
+        // ✅ SUPPRIMÉ : Ne plus générer le token lors de la récupération pour les anciennes commandes
+        // Les anciennes commandes sans token utiliseront le fallback ?order=id
+        // Seules les nouvelles commandes auront un token unique dès la création
     }
 }

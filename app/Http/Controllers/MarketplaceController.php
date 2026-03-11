@@ -76,16 +76,24 @@ class MarketplaceController extends Controller
             $query->whereIn('id', $favoriteOfferIds);
         } elseif ($filter === 'all' && $user) {
             // Système de recommandation intelligent pour l'onglet "all"
+            // ✅ CORRECTION : Les offres de l'utilisateur lui-même doivent toujours être visibles
+            // même si elles ne correspondent pas aux mots-clés identifiés
             $userNeeds = $this->determineUserNeeds($user);
             if (!empty($userNeeds['keywords'])) {
-                // Filtrer les offres selon les mots-clés identifiés
-                $query->where(function($q) use ($userNeeds) {
-                    foreach ($userNeeds['keywords'] as $keyword) {
-                        $q->orWhere('title', 'like', "%{$keyword}%")
-                          ->orWhere('description', 'like', "%{$keyword}%");
-                    }
+                // Filtrer les offres selon les mots-clés identifiés OU les offres de l'utilisateur
+                $query->where(function($q) use ($userNeeds, $user) {
+                    // Inclure les offres de l'utilisateur lui-même
+                    $q->where('user_id', $user->id)
+                      // OU les offres qui correspondent aux mots-clés identifiés
+                      ->orWhere(function($subQ) use ($userNeeds) {
+                          foreach ($userNeeds['keywords'] as $keyword) {
+                              $subQ->orWhere('title', 'like', "%{$keyword}%")
+                                   ->orWhere('description', 'like', "%{$keyword}%");
+                          }
+                      });
                 });
             }
+            // Si aucun mot-clé n'est identifié, toutes les offres actives sont affichées (pas de filtre)
         }
         
         $offers = $query->get()
