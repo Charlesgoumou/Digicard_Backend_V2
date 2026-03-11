@@ -49,13 +49,15 @@ class GeminiService
                 return null;
             }
 
+            $timeout = config('gemini.timeout', 180);
+            $connectTimeout = config('gemini.connect_timeout', 30);
             Log::info('Appel à Gemini API', [
                 'has_api_key' => !empty($this->apiKey),
-                'api_url' => $this->apiUrl
+                'api_url' => $this->apiUrl,
+                'timeout' => $timeout,
             ]);
 
-            // Appel à l'API Gemini (timeout augmenté pour la génération de contenu)
-            $response = Http::timeout(120)->post($this->apiUrl . '?key=' . $this->apiKey, [
+            $response = Http::connectTimeout($connectTimeout)->timeout($timeout)->post($this->apiUrl . '?key=' . $this->apiKey, [
                 'contents' => [
                     [
                         'parts' => [
@@ -137,7 +139,9 @@ class GeminiService
      */
     private function callGeminiPortfolioWithRepair(string $prompt): ?array
     {
-        $response = Http::timeout(120)->post($this->apiUrl . '?key=' . $this->apiKey, [
+        $timeout = config('gemini.timeout', 180);
+        $connectTimeout = config('gemini.connect_timeout', 30);
+        $response = Http::connectTimeout($connectTimeout)->timeout($timeout)->post($this->apiUrl . '?key=' . $this->apiKey, [
             'contents' => [['parts' => [['text' => $prompt]]]],
             'generationConfig' => [
                 'temperature' => 0.7,
@@ -591,12 +595,15 @@ PROMPT;
                 return '';
             }
 
+            $timeout = config('gemini.timeout', 180);
+            $connectTimeout = config('gemini.connect_timeout', 30);
             Log::info('Extraction de texte depuis une image', [
                 'mime_type' => $mimeType,
-                'api_url' => $this->apiUrl
+                'api_url' => $this->apiUrl,
+                'timeout' => $timeout,
             ]);
 
-            $response = Http::timeout(120)->post($this->apiUrl . '?key=' . $this->apiKey, [
+            $response = Http::connectTimeout($connectTimeout)->timeout($timeout)->post($this->apiUrl . '?key=' . $this->apiKey, [
                 'contents' => [
                     [
                         'parts' => [
@@ -655,9 +662,11 @@ PROMPT;
                 return '';
             }
 
-            Log::info('Extraction de texte depuis un PDF');
+            $timeout = config('gemini.timeout', 180);
+            $connectTimeout = config('gemini.connect_timeout', 30);
+            Log::info('Extraction de texte depuis un PDF', ['timeout' => $timeout]);
 
-            $response = Http::timeout(120)->post($this->apiUrl . '?key=' . $this->apiKey, [
+            $response = Http::connectTimeout($connectTimeout)->timeout($timeout)->post($this->apiUrl . '?key=' . $this->apiKey, [
                 'contents' => [
                     [
                         'parts' => [
@@ -741,7 +750,9 @@ Retourne UN SEUL objet JSON avec cette structure EXACTE (sans markdown, sans com
 IMPORTANT: Retourne UNIQUEMENT le JSON, sans balises markdown, sans texte avant ou après.
 PROMPT;
 
-            $response = Http::timeout(90)->post($this->apiUrl . '?key=' . $this->apiKey, [
+            $timeout = config('gemini.timeout', 180);
+            $connectTimeout = config('gemini.connect_timeout', 30);
+            $response = Http::connectTimeout($connectTimeout)->timeout($timeout)->post($this->apiUrl . '?key=' . $this->apiKey, [
                 'contents' => [
                     [
                         'parts' => [
@@ -870,7 +881,9 @@ IMPORTANT:
 - Extrais les dates du texte et place-les dans le champ "date" de chaque élément (formations et timeline)
 PROMPT;
 
-            $response = Http::timeout(90)->post($this->apiUrl . '?key=' . $this->apiKey, [
+            $timeout = config('gemini.timeout', 180);
+            $connectTimeout = config('gemini.connect_timeout', 30);
+            $response = Http::connectTimeout($connectTimeout)->timeout($timeout)->post($this->apiUrl . '?key=' . $this->apiKey, [
                 'contents' => [
                     [
                         'parts' => [
@@ -1071,7 +1084,9 @@ RÈGLES STRICTES:
 PROMPT;
 
             $maxTokens = config('gemini.max_output_tokens', 16384);
-            $response = Http::timeout(90)->post($this->apiUrl . '?key=' . $this->apiKey, [
+            $timeout = config('gemini.timeout', 180);
+            $connectTimeout = config('gemini.connect_timeout', 30);
+            $response = Http::connectTimeout($connectTimeout)->timeout($timeout)->post($this->apiUrl . '?key=' . $this->apiKey, [
                 'contents' => [
                     [
                         'parts' => [
@@ -1335,7 +1350,9 @@ RÈGLES STRICTES:
 13. Assure-toi que le JSON est COMPLET et VALIDE avant de le retourner
 PROMPT;
 
-            $response = Http::timeout(90)->post($this->apiUrl . '?key=' . $this->apiKey, [
+            $timeout = config('gemini.timeout', 180);
+            $connectTimeout = config('gemini.connect_timeout', 30);
+            $response = Http::connectTimeout($connectTimeout)->timeout($timeout)->post($this->apiUrl . '?key=' . $this->apiKey, [
                 'contents' => [
                     [
                         'parts' => [

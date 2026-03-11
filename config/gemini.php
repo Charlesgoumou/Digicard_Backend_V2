@@ -16,6 +16,13 @@ return [
     'api_url' => env('GEMINI_API_URL', 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'),
 
     /*
+    | Timeout (secondes) pour les appels API : extraction PDF/image et génération de contenu.
+    | Les PDF lourds ou l'API chargée peuvent dépasser 10s ; 180s aligne particuliers et business.
+    */
+    'timeout' => (int) env('GEMINI_TIMEOUT', 180),
+    'connect_timeout' => (int) env('GEMINI_CONNECT_TIMEOUT', 30),
+
+    /*
     | Limite de tokens en sortie pour éviter la troncature (ex: formations manquantes).
     | Gemini 2.5 Flash supporte jusqu'à 8192+ ; 16384 améliore l'exhaustivité.
     */
