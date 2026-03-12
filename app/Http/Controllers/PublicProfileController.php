@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\Order;
+use App\Models\OrderEmployee;
 use App\Models\CompanyPage;
 use App\Models\UserPortfolio;
 use App\Models\AppointmentSetting;
@@ -15,6 +16,43 @@ use Illuminate\Support\Facades\Storage;
 
 class PublicProfileController extends Controller
 {
+    /**
+     * Affiche le profil public via short_code (URL courte /p/{code}).
+     * Compatibilité: utilise ensuite la logique existante (show) en injectant order=id.
+     */
+    public function showByShortCode(Request $request, string $code)
+    {
+        $order = Order::where('short_code', $code)->firstOrFail();
+        $user = $order->user;
+
+        // Forcer l'utilisation de cette commande spécifique
+        $request->query->set('order', $order->id);
+
+        return $this->show($request, $user);
+    }
+
+    /**
+     * Variante pour les cartes employés: /p/{code}/{username}
+     * On valide que l'utilisateur est bien lié à la commande (owner ou employee).
+     */
+    public function showByShortCodeForUser(Request $request, string $code, User $user)
+    {
+        $order = Order::where('short_code', $code)->firstOrFail();
+
+        $isOwner = (int) $order->user_id === (int) $user->id;
+        $isEmployee = OrderEmployee::where('order_id', $order->id)
+            ->where('employee_id', $user->id)
+            ->exists();
+
+        if (!$isOwner && !$isEmployee) {
+            abort(404);
+        }
+
+        $request->query->set('order', $order->id);
+
+        return $this->show($request, $user);
+    }
+
     /**
      * Affiche le profil public d'un utilisateur trouvé par son 'username'.
      * Si un paramètre 'order' est passé, affiche les données de cette commande spécifique.
@@ -1072,6 +1110,59 @@ class PublicProfileController extends Controller
         return response($vcardOutput, 200)
                 ->header('Content-Type', 'text/vcard; charset=utf-8')
                 ->header('Content-Disposition', 'attachment; filename="' . $filename . '"');
+    }
+
+    /**
+     * vCard via short_code (URL courte /p/{code}/vcard)
+     */
+    public function downloadVcardByShortCode(Request $request, string $code)
+    {
+        $order = Order::where('short_code', $code)->firstOrFail();
+        $user = $order->user;
+
+        $request->query->set('order', $order->id);
+
+        return $this->downloadVcard($request, $user);
+    }
+
+    /**
+     * vCard via short_code + username (cartes employés)
+     */
+    public function downloadVcardByShortCodeForUser(Request $request, string $code, User $user)
+    {
+        $order = Order::where('short_code', $code)->firstOrFail();
+
+        $isOwner = (int) $order->user_id === (int) $user->id;
+        $isEmployee = OrderEmployee::where('order_id', $order->id)
+            ->where('employee_id', $user->id)
+            ->exists();
+
+        if (!$isOwner && !$isEmployee) {
+            abort(404);
+        }
+
+        $request->query->set('order', $order->id);
+
+        return $this->downloadVcard($request, $user);
+    }
+
+    /**
+     * Redirige vers les services / portfolio associés à un short_code.
+     * Actuellement, redirige vers l'API portfolio existante pour l'utilisateur.
+     */
+    public function redirectToServices(Request $request, string $code)
+    {
+        $order = Order::where('short_code', $code)->firstOrFail();
+        $user = $order->user;
+
+        // Pour les comptes particuliers, rediriger vers le portfolio personnel public
+        // Pour les business_admin, on pourrait rediriger vers la page entreprise si nécessaire.
+        if ($user->role === 'individual') {
+            return redirect()->to(config('app.url') . '/api/portfolio/' . $user->username);
+        }
+
+        // Fallback: rediriger vers la page entreprise publique si elle existe
+        return redirect()->to(config('app.url') . '/api/company/' . $user->username);
     }
 }
 

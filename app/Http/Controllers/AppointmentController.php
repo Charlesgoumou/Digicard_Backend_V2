@@ -380,8 +380,9 @@ class AppointmentController extends Controller
         $availability = $settings->weekly_availability ?? [];
         $dateRules = $availability['date_rules'] ?? [];
         
-        // ✅ CORRECTION : Étendre $endDate pour inclure tous les mois configurés dans les règles
+        // ✅ CORRECTION : Étendre $endDate pour inclure TOUTES les règles configurées
         // Cela permet d'afficher les créneaux même s'ils sont au-delà de la période par défaut (60 jours)
+        // On parcourt toutes les règles pour trouver la date la plus éloignée
         foreach ($dateRules as $rule) {
             $type = $rule['type'] ?? 'specific';
             
@@ -391,7 +392,8 @@ class AppointmentController extends Controller
                 foreach ($dates as $dateString) {
                     try {
                         $ruleDate = Carbon::parse($dateString);
-                        if ($ruleDate->gt($endDate)) {
+                        // Étendre $endDate si la date est dans le futur et dépasse la date actuelle
+                        if ($ruleDate->gte($today) && $ruleDate->gt($endDate)) {
                             $endDate = $ruleDate->copy();
                         }
                     } catch (\Exception $e) {
@@ -406,13 +408,16 @@ class AppointmentController extends Controller
                 if ($ruleMonth && $ruleYear) {
                     try {
                         $lastDayOfRuleMonth = Carbon::create($ruleYear, $ruleMonth, 1)->endOfMonth();
-                        if ($lastDayOfRuleMonth->gt($endDate) && $lastDayOfRuleMonth->gte($today)) {
+                        // Étendre $endDate si le mois est dans le futur et dépasse la date actuelle
+                        if ($lastDayOfRuleMonth->gte($today) && $lastDayOfRuleMonth->gt($endDate)) {
                             $endDate = $lastDayOfRuleMonth->copy();
                         }
                     } catch (\Exception $e) {
                         continue;
                     }
                 }
+                // Note : Pour les règles récurrentes SANS mois/année spécifiés (récurrentes indéfiniment),
+                // elles seront traitées dans la boucle principale jusqu'à $endDate (qui est au minimum 60 jours)
             }
         }
         
@@ -437,6 +442,16 @@ class AppointmentController extends Controller
             'initial_end_date' => $today->copy()->addDays($daysAhead)->format('Y-m-d'),
             'extended_end_date' => $endDate->format('Y-m-d'),
             'end_date_extended' => $endDate->gt($today->copy()->addDays($daysAhead)),
+            'all_rules_summary' => array_map(function($rule) {
+                return [
+                    'type' => $rule['type'] ?? 'unknown',
+                    'day_of_week' => $rule['day_of_week'] ?? null,
+                    'month' => $rule['month'] ?? null,
+                    'year' => $rule['year'] ?? null,
+                    'dates_count' => isset($rule['dates']) ? count($rule['dates']) : 0,
+                    'slots_count' => isset($rule['slots']) ? count($rule['slots']) : 0,
+                ];
+            }, $dateRules),
         ]);
         
         // Si c'est la nouvelle structure (date_rules), calculer directement les dates
@@ -474,8 +489,10 @@ class AppointmentController extends Controller
                     foreach ($dates as $dateString) {
                         try {
                             $date = Carbon::parse($dateString);
-                            // Vérifier que la date est dans la période et dans le futur
-                            if ($date->gte($today) && $date->lte($endDate)) {
+                            // ✅ CORRECTION : Vérifier que la date est dans le futur
+                            // $endDate a déjà été étendu pour inclure toutes les dates spécifiques,
+                            // donc on peut vérifier seulement que la date est >= aujourd'hui
+                            if ($date->gte($today)) {
                                 $dateKey = $date->format('Y-m-d');
                                 // Ajouter les créneaux pour cette date (peut être fusionné avec d'autres règles)
                                 if (!isset($datesWithSlots[$dateKey])) {
@@ -484,7 +501,7 @@ class AppointmentController extends Controller
                                         'slots' => []
                                     ];
                                 }
-                                // Fusionner les créneaux (éviter les doublons)
+                                // ✅ Fusionner les créneaux de TOUTES les règles correspondantes (éviter les doublons)
                                 foreach ($slots as $slot) {
                                     $slotKey = $slot['start'] . '_' . $slot['duration'];
                                     if (!isset($datesWithSlots[$dateKey]['slots'][$slotKey])) {
@@ -494,6 +511,11 @@ class AppointmentController extends Controller
                             }
                         } catch (\Exception $e) {
                             // Ignorer les dates invalides
+                            Log::warning('[AppointmentController@getAvailableDates] Date invalide ignorée', [
+                                'date_string' => $dateString,
+                                'error' => $e->getMessage(),
+                                'rule_index' => $ruleIndex,
+                            ]);
                             continue;
                         }
                     }
@@ -541,10 +563,11 @@ class AppointmentController extends Controller
                                     'end_date' => $endDate->format('Y-m-d'),
                                 ]);
                                 
-                                // ✅ CORRECTION : Parcourir tous les jours du mois configuré, même s'ils dépassent $endDate initial
-                                // Car $endDate a déjà été étendu pour inclure ce mois
+                                // ✅ CORRECTION : Parcourir tous les jours du mois configuré
+                                // $endDate a déjà été étendu pour inclure ce mois, donc on parcourt jusqu'à la fin du mois
+                                // (pas besoin de vérifier $endDate car il a déjà été étendu pour inclure ce mois)
                                 while ($currentDate->lte($lastDayOfMonth)) {
-                                    // Ne garder que les dates dans le futur (pas dans le passé)
+                                    // Ne garder que les dates dans le futur (pas dans le passé) et qui correspondent au jour de la semaine
                                     if ($currentDate->gte($today) && $currentDate->dayOfWeekIso == $ruleDayOfWeek) {
                                         $dateKey = $currentDate->format('Y-m-d');
                                         $datesFoundForThisRule[] = $dateKey;
@@ -556,7 +579,7 @@ class AppointmentController extends Controller
                                                 'slots' => []
                                             ];
                                         }
-                                        // Fusionner les créneaux (éviter les doublons)
+                                        // ✅ Fusionner les créneaux de TOUTES les règles correspondantes (éviter les doublons)
                                         foreach ($slots as $slot) {
                                             $slotKey = $slot['start'] . '_' . $slot['duration'];
                                             if (!isset($datesWithSlots[$dateKey]['slots'][$slotKey])) {

@@ -748,9 +748,30 @@ class UserPortfolioController extends Controller
                         'strlen' => $textLen,
                     ]);
 
-                    // PDF scanné ou illisible : bascule sur Gemini Vision (ancienne méthode)
+                    // PDF scanné ou illisible : bascule sur Gemini Vision (avec retry sur timeout)
                     $tStartVision = microtime(true);
-                    $extractedText = $this->extractTextFromPdfWithGemini($file);
+                    $extractedText = '';
+                    $visionAttempts = 0;
+                    $maxVisionAttempts = 2;
+                    while ($visionAttempts < $maxVisionAttempts) {
+                        try {
+                            $extractedText = $this->extractTextFromPdfWithGemini($file);
+                            break;
+                        } catch (\Exception $visionEx) {
+                            $visionAttempts++;
+                            if ($this->isTimeoutException($visionEx) && $visionAttempts < $maxVisionAttempts) {
+                                Log::warning('[PROFILAGE extractDocument] Timeout Gemini Vision, retry ' . $visionAttempts . '/' . $maxVisionAttempts);
+                                continue;
+                            }
+                            if ($this->isTimeoutException($visionEx)) {
+                                Log::error('Exception lors de l\'extraction du document (timeout après retry): ' . $visionEx->getMessage());
+                                return response()->json([
+                                    'message' => 'L\'extraction a pris trop de temps. Veuillez réessayer dans quelques instants ou utiliser un fichier plus léger.',
+                                ], 503);
+                            }
+                            throw $visionEx;
+                        }
+                    }
                     $tVision = round(microtime(true) - $tStartVision, 3);
                     Log::info('PDF scanné ou vide, extraction via Gemini Vision', [
                         'length' => strlen($extractedText),
@@ -819,10 +840,16 @@ class UserPortfolioController extends Controller
                 'user_id' => $user->id,
                 'profile_type' => $profileType ?? 'unknown'
             ]);
+            $userMessage = 'Erreur lors du traitement du document.';
+            if ($this->isTimeoutException($e)) {
+                $userMessage = 'L\'extraction a pris trop de temps. Veuillez réessayer dans quelques instants ou utiliser un fichier plus léger.';
+            } elseif (!empty($e->getMessage())) {
+                $userMessage = 'Erreur lors du traitement du document: ' . $e->getMessage();
+            }
             return response()->json([
-                'message' => 'Erreur lors du traitement du document: ' . $e->getMessage(),
+                'message' => $userMessage,
                 'error' => config('app.debug') ? $e->getMessage() : 'Erreur lors du traitement du document.',
-            ], 500);
+            ], $this->isTimeoutException($e) ? 503 : 500);
         }
     }
 
@@ -846,6 +873,19 @@ class UserPortfolioController extends Controller
     /**
      * Extrait le texte d'un PDF en utilisant Gemini Vision API
      */
+    /**
+     * Indique si l'exception correspond à un timeout (cURL 28 / 10004).
+     */
+    private function isTimeoutException(\Exception $e): bool
+    {
+        $msg = $e->getMessage();
+        return (stripos($msg, 'timeout') !== false || strpos($msg, '10004') !== false);
+    }
+
+    /**
+     * Extrait le texte d'un PDF en utilisant Gemini Vision API.
+     * En cas de timeout, l'exception est propagée pour permettre un retry par l'appelant.
+     */
     private function extractTextFromPdfWithGemini($file)
     {
         try {
@@ -855,6 +895,9 @@ class UserPortfolioController extends Controller
             return $geminiService->extractTextFromPdf($pdfData);
         } catch (\Exception $e) {
             Log::error('Erreur lors de l\'extraction du texte du PDF: ' . $e->getMessage());
+            if ($this->isTimeoutException($e)) {
+                throw $e;
+            }
             return '';
         }
     }

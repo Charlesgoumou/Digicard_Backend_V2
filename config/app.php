@@ -68,6 +68,16 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Date à partir de laquelle les liens "Services" utilisent le format court /e/{code}
+    |--------------------------------------------------------------------------
+    | Les commandes créées avant cette date gardent l'ancienne syntaxe
+    | (/entreprise/{username}?order=... ou ?code=...). Mettre à null pour utiliser
+    | le format court pour toutes les commandes ayant un short_code.
+    */
+    'company_short_url_since' => env('COMPANY_SHORT_URL_SINCE', '2025-11-02'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

@@ -45,7 +45,7 @@ class OrderController extends Controller
                     $query->select('id', 'user_id', 'order_number', 'order_type', 'card_quantity',
                                   'total_employees', 'employee_slots', 'unit_price', 'total_price',
                                   'annual_subscription', 'subscription_start_date', 'status',
-                                  'is_configured', 'access_token',
+                                  'is_configured', 'access_token', 'short_code',
                                   // ✅ NOUVEAU : Colonnes pour les cartes supplémentaires
                                   'additional_cards_count', 'additional_cards_total_price',
                                   'created_at', 'updated_at');
@@ -227,7 +227,7 @@ class OrderController extends Controller
                 ->select('id', 'user_id', 'order_number', 'order_type', 'card_quantity',
                         'total_employees', 'employee_slots', 'unit_price', 'total_price',
                         'annual_subscription', 'subscription_start_date', 'status',
-                        'is_configured', 'access_token',
+                        'is_configured', 'access_token', 'short_code',
                         // ✅ CORRECTION : Colonnes de profil pour ProfileSelectionView
                         'profile_name', 'profile_title', 'order_avatar_url', 'profile_border_color',
                         'save_contact_button_color', 'services_button_color',

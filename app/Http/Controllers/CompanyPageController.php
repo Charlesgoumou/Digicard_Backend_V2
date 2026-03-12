@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\AppointmentSetting;
 use App\Models\CompanyPage;
+use App\Models\Order;
 use App\Models\User;
 use App\Services\GeminiService;
 use App\Services\ImageCompressionService;
@@ -442,13 +443,25 @@ class CompanyPageController extends Controller
             ], 404);
         }
 
-        // Récupérer order_id depuis la requête si fourni
+        // Récupérer l'identifiant de commande depuis la requête si fourni
+        // Préférer le short_code (URL-safe), fallback sur l'ancien paramètre order (id ou order_number)
+        $code = $request->query('code');
         $orderParam = $request->query('order');
         $orderId = null;
         $order = null;
 
+        // Si un code court est fourni, l'utiliser en priorité
+        if ($code) {
+            $order = \App\Models\Order::where('short_code', $code)
+                ->where('user_id', $user->id)
+                ->first();
+            if ($order) {
+                $orderId = $order->id;
+            }
+        }
+
         // Si un order est fourni, chercher la commande par ID ou par order_number
-        if ($orderParam) {
+        if (!$orderId && $orderParam) {
             // Essayer d'abord par ID numérique
             if (is_numeric($orderParam)) {
                 $order = \App\Models\Order::where('id', (int) $orderParam)
@@ -608,6 +621,100 @@ class CompanyPageController extends Controller
             'appointment_setting_enabled' => $pageData['appointment_setting']['is_enabled'] ?? null,
         ]);
         
+        return response()->json([
+            'user' => [
+                'username' => $user->username,
+                'company_name' => $user->company_name,
+            ],
+            'pageData' => $pageData,
+        ]);
+    }
+
+    /**
+     * Affiche la page publique entreprise par short_code (URL courte /e/{code})
+     * Même format de réponse que show() pour réutilisation du frontend.
+     */
+    public function showByCode($code)
+    {
+        $code = trim((string) $code);
+        if ($code === '') {
+            return response()->json(['message' => 'Code invalide.'], 400);
+        }
+
+        $order = Order::where('short_code', $code)
+            ->where('status', 'validated')
+            ->first();
+
+        if (!$order) {
+            Log::warning('Company Page ShowByCode - Commande non trouvée ou non validée', ['code' => $code]);
+            return response()->json([
+                'message' => 'Page entreprise non trouvée ou lien invalide.',
+            ], 404);
+        }
+
+        $user = $order->user;
+        if (!$user || $user->role !== 'business_admin') {
+            return response()->json([
+                'message' => 'Page entreprise non disponible pour ce lien.',
+            ], 404);
+        }
+
+        $orderId = $order->id;
+
+        $companyPage = CompanyPage::where('order_id', $orderId)
+            ->where('user_id', $user->id)
+            ->where('is_published', true)
+            ->first();
+        if (!$companyPage) {
+            $companyPage = CompanyPage::where('order_id', $orderId)
+                ->where('user_id', $user->id)
+                ->first();
+        }
+        if (!$companyPage) {
+            $companyPage = CompanyPage::where('user_id', $user->id)
+                ->whereNull('order_id')
+                ->where('is_published', true)
+                ->first();
+        }
+        if (!$companyPage) {
+            $companyPage = CompanyPage::where('user_id', $user->id)
+                ->whereNull('order_id')
+                ->first();
+        }
+
+        if (!$companyPage) {
+            Log::warning('Company Page ShowByCode - Aucune page entreprise', ['order_id' => $orderId]);
+            return response()->json([
+                'message' => 'Aucune page entreprise trouvée. Veuillez configurer la section "Nos Services" dans les paramètres.',
+            ], 404);
+        }
+
+        $contactInfo = \App\Models\OrderEmployee::where('order_id', $orderId)
+            ->where('employee_id', $user->id)
+            ->where('is_configured', true)
+            ->first();
+        if (!$contactInfo && $order) {
+            $contactInfo = (object)[
+                'profile_name' => $order->profile_name ?? $user->name,
+                'address_neighborhood' => $order->address_neighborhood ?? null,
+                'address_commune' => $order->address_commune ?? null,
+                'address_city' => $order->address_city ?? null,
+                'address_country' => $order->address_country ?? null,
+                'phone_numbers' => $order->phone_numbers ?? null,
+                'emails' => $order->emails ?? null,
+                'website_url' => $order->website_url ?? null,
+                'whatsapp_url' => $order->whatsapp_url ?? null,
+                'linkedin_url' => $order->linkedin_url ?? null,
+                'facebook_url' => $order->facebook_url ?? null,
+                'twitter_url' => $order->twitter_url ?? null,
+                'youtube_url' => $order->youtube_url ?? null,
+                'deezer_url' => $order->deezer_url ?? null,
+                'spotify_url' => $order->spotify_url ?? null,
+            ];
+        }
+
+        $pageData = $this->formatPageData($companyPage, $contactInfo, $user, $orderId);
+
         return response()->json([
             'user' => [
                 'username' => $user->username,

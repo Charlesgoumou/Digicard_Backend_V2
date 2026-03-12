@@ -229,6 +229,7 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
 
 // Routes publiques pour afficher les pages
 Route::get('/company/{username}', [CompanyPageController::class, 'show'])->name('company-page.show');
+Route::get('/e/{code}', [CompanyPageController::class, 'showByCode'])->name('company-page.show-by-code');
 Route::get('/portfolio/{username}', [UserPortfolioController::class, 'show'])->name('user-portfolio.show');
 Route::get('/portfolio/{username}/menu', [UserPortfolioController::class, 'showMenu'])->name('user-portfolio.menu');
 
