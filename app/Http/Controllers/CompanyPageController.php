@@ -641,21 +641,30 @@ class CompanyPageController extends Controller
             return response()->json(['message' => 'Code invalide.'], 400);
         }
 
-        $order = Order::where('short_code', $code)
-            ->where('status', 'validated')
-            ->first();
+        $order = Order::where('short_code', $code)->first();
 
         if (!$order) {
-            Log::warning('Company Page ShowByCode - Commande non trouvée ou non validée', ['code' => $code]);
+            Log::warning('Company Page ShowByCode - Aucune commande avec ce short_code', ['code' => $code]);
             return response()->json([
                 'message' => 'Page entreprise non trouvée ou lien invalide.',
+                'reason' => 'order_not_found',
+            ], 404);
+        }
+
+        if ($order->status !== 'validated') {
+            Log::warning('Company Page ShowByCode - Commande non validée', ['code' => $code, 'order_id' => $order->id, 'status' => $order->status]);
+            return response()->json([
+                'message' => 'Cette page n\'est pas encore visible. Validez votre commande (via l\'espace admin ou après finalisation du paiement) pour que le contenu « Nos Services » s\'affiche ici.',
+                'reason' => 'order_not_validated',
             ], 404);
         }
 
         $user = $order->user;
         if (!$user || $user->role !== 'business_admin') {
+            Log::warning('Company Page ShowByCode - Lien non associé à un compte entreprise', ['code' => $code, 'order_id' => $order->id]);
             return response()->json([
                 'message' => 'Page entreprise non disponible pour ce lien.',
+                'reason' => 'not_business_admin',
             ], 404);
         }
 
@@ -683,9 +692,10 @@ class CompanyPageController extends Controller
         }
 
         if (!$companyPage) {
-            Log::warning('Company Page ShowByCode - Aucune page entreprise', ['order_id' => $orderId]);
+            Log::warning('Company Page ShowByCode - Aucune page entreprise (Nos Services non configurée)', ['order_id' => $orderId, 'user_id' => $user->id]);
             return response()->json([
-                'message' => 'Aucune page entreprise trouvée. Veuillez configurer la section "Nos Services" dans les paramètres.',
+                'message' => 'Cette page entreprise n\'existe pas ou n\'est pas encore publiée. Configurez la section "Nos Services" dans Paramètres (onglet Nos Services).',
+                'reason' => 'company_page_not_found',
             ], 404);
         }
 
