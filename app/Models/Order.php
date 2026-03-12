@@ -54,6 +54,7 @@ class Order extends Model
         'status',
         'is_configured',
         'access_token',
+        'short_code',
         'payment_session_token', // ✅ NOUVEAU: Token pour restaurer la session après redirection externe
     ];
 
@@ -124,6 +125,24 @@ class Order extends Model
     }
 
     /**
+     * Génère un code court URL-safe (base62) pour les URLs publiques.
+     */
+    public function generateShortCode(int $length = 8): string
+    {
+        $characters = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        $maxIndex = strlen($characters) - 1;
+
+        do {
+            $code = '';
+            for ($i = 0; $i < $length; $i++) {
+                $code .= $characters[random_int(0, $maxIndex)];
+            }
+        } while (self::where('short_code', $code)->exists());
+
+        return $code;
+    }
+
+    /**
      * Boot method pour générer automatiquement le token
      * ✅ CORRECTION : Générer le token dès la création de la commande (pas seulement à la validation)
      * Cela garantit que chaque commande a son URL unique dès le départ
@@ -140,6 +159,11 @@ class Order extends Model
             if (!$order->access_token) {
                 $order->access_token = $order->generateAccessToken();
             }
+
+            // Générer aussi le code court si la colonne existe et si absent
+            if (!$order->short_code) {
+                $order->short_code = $order->generateShortCode();
+            }
         });
 
         // Générer le token automatiquement quand la commande est validée (si pas déjà généré)
@@ -148,6 +172,11 @@ class Order extends Model
             // Cela permet aux anciennes commandes de garder leur comportement (pas de token = fallback sur ?order=id)
             if ($order->isDirty('status') && $order->status === 'validated' && !$order->access_token) {
                 $order->access_token = $order->generateAccessToken();
+            }
+
+            // Assurer un short_code pour les commandes existantes quand elles passent en validated
+            if ($order->isDirty('status') && $order->status === 'validated' && !$order->short_code) {
+                $order->short_code = $order->generateShortCode();
             }
         });
 

@@ -153,21 +153,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    <meta name="robots" content="noindex, nofollow">
     <title>{{ $displayName }}@if($displayTitle) - {{ $displayTitle }}@endif - DigiCard</title>
 
     <!-- ✅ Métadonnées Open Graph pour le partage sur les réseaux sociaux -->
     @php
         // Construire l'URL complète du profil
-        $profileUrl = url('/profil/' . $user->username);
-        $queryParams = [];
-        if (isset($accessToken) && $accessToken) {
-            $queryParams['token'] = $accessToken;
-        }
-        if (isset($orderId) && $orderId) {
-            $queryParams['order'] = $orderId;
-        }
-        if (!empty($queryParams)) {
-            $profileUrl .= '?' . http_build_query($queryParams);
+        if (isset($order) && $order && !empty($order->short_code)) {
+            // URL courte (préférée) sans username
+            $profileUrl = url('/p/' . $order->short_code);
+        } else {
+            // Fallback compat: ancienne URL + query params (token/order)
+            $profileUrl = url('/profil/' . $user->username);
+            $queryParams = [];
+            if (isset($accessToken) && $accessToken) {
+                $queryParams['token'] = $accessToken;
+            }
+            if (isset($orderId) && $orderId) {
+                $queryParams['order'] = $orderId;
+            }
+            if (!empty($queryParams)) {
+                $profileUrl .= '?' . http_build_query($queryParams);
+            }
         }
         
         // Construire l'URL complète de l'avatar (doit être absolue pour Open Graph)
@@ -570,13 +577,20 @@
         <div class="space-y-3 mb-8">
             <!-- Bouton Enregistrer le Contact (couleur personnalisable, sans icône) -->
             @php
-                $vcardUrl = route('profile.public.vcard', ['user' => $user->username]);
-                if ($order) {
-                    // Utiliser le token si disponible, sinon utiliser l'ID de commande
-                    if ($order->access_token) {
-                        $vcardUrl .= '?token=' . urlencode($order->access_token);
-                    } else {
-                        $vcardUrl .= '?order=' . $order->id;
+                if ($order && !empty($order->short_code)) {
+                    // URL courte (préférée)
+                    $vcardUrl = $user->role === 'employee'
+                        ? route('profile.public.short.vcard-user', ['code' => $order->short_code, 'user' => $user->username])
+                        : route('profile.public.short.vcard', ['code' => $order->short_code]);
+                } else {
+                    // Fallback compat (token/order)
+                    $vcardUrl = route('profile.public.vcard', ['user' => $user->username]);
+                    if ($order) {
+                        if ($order->access_token) {
+                            $vcardUrl .= '?token=' . urlencode($order->access_token);
+                        } else {
+                            $vcardUrl .= '?order=' . $order->id;
+                        }
                     }
                 }
             @endphp
@@ -619,28 +633,36 @@
                     if ($websiteFeaturedInServicesButton && $companyWebsiteUrl) {
                         $servicesButtonUrl = $companyWebsiteUrl;
                     } else {
-                        // ✅ CORRECTION: Parser FRONTEND_URL pour extraire uniquement la première URL valide
+                        // ✅ Nouveau standard : lien court /e/{short_code} (sans username ni ?code=)
                         $frontendUrlRaw = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173'));
                         $frontendUrl = $frontendUrlRaw;
-
-                        // Si FRONTEND_URL contient plusieurs URLs séparées par des virgules, prendre la première
                         if (strpos($frontendUrlRaw, ',') !== false) {
                             $urls = array_map('trim', explode(',', $frontendUrlRaw));
                             foreach ($urls as $url) {
-                                // Vérifier que l'URL est valide
                                 if (filter_var($url, FILTER_VALIDATE_URL)) {
                                     $frontendUrl = $url;
                                     break;
                                 }
                             }
                         }
-
-                        $servicesButtonUrl = $frontendUrl . '/entreprise/' . $companyPageUsername;
-                        // Ajouter l'order_id à l'URL si une commande est fournie pour afficher le contenu spécifique de cette commande
-                        if ($order && $order->id) {
-                            $servicesButtonUrl .= '?order=' . $order->id;
-                        } elseif ($orderEmployee && $orderEmployee->order_id) {
-                            $servicesButtonUrl .= '?order=' . $orderEmployee->order_id;
+                        $useShortCompanyUrl = $order && !empty($order->short_code);
+                        $sinceDate = config('app.company_short_url_since');
+                        if ($useShortCompanyUrl && $sinceDate !== null && $sinceDate !== '') {
+                            $since = \Carbon\Carbon::parse($sinceDate)->startOfDay();
+                            $useShortCompanyUrl = $order->created_at && $order->created_at >= $since;
+                        }
+                        if ($useShortCompanyUrl) {
+                            $servicesButtonUrl = $frontendUrl . '/e/' . $order->short_code;
+                        } else {
+                            // Anciennes commandes : conserver l'ancienne syntaxe (/entreprise/...?order= ou ?code=)
+                            $servicesButtonUrl = $frontendUrl . '/entreprise/' . $companyPageUsername;
+                            if ($order && !empty($order->short_code)) {
+                                $servicesButtonUrl .= '?code=' . $order->short_code;
+                            } elseif ($order && $order->id) {
+                                $servicesButtonUrl .= '?order=' . $order->id;
+                            } elseif ($orderEmployee && $orderEmployee->order_id) {
+                                $servicesButtonUrl .= '?order=' . $orderEmployee->order_id;
+                            }
                         }
                     }
                 @endphp

@@ -17,11 +17,33 @@ Route::get('/storage/{path}', [StorageController::class, 'serve'])
     ->where('path', '.*')
     ->name('storage.serve');
 
-// --- ROUTE DU PROFIL PUBLIC ---
+// --- ROUTE DU PROFIL PUBLIC (ancienne URL, conservée pour compat) ---
 Route::get('/profil/{user:username}', [PublicProfileController::class, 'show'])
      ->name('profile.public.show');
 
-// --- NOUVELLE ROUTE PUBLIQUE POUR LA vCard ---
+// --- ROUTES COURTES (URL-safe) protégées par throttle ---
+Route::middleware('throttle:20,1')->group(function () {
+    // /p/{code} : profil public via short_code (Order)
+    Route::get('/p/{code}', [PublicProfileController::class, 'showByShortCode'])
+        ->name('profile.public.short.show');
+
+    // vCard courte : /p/{code}/vcard
+    Route::get('/p/{code}/vcard', [PublicProfileController::class, 'downloadVcardByShortCode'])
+        ->name('profile.public.short.vcard');
+
+    // Route services / portfolio simplifiée : /p/{code}/services
+    Route::get('/p/{code}/services', [PublicProfileController::class, 'redirectToServices'])
+        ->name('profile.public.short.services');
+});
+
+// --- Anciennes routes courtes avec username (compatibilité) ---
+// /p/{code}/{username} : support des cartes employés existants via short_code + username
+Route::get('/p/{code}/{user:username}', [PublicProfileController::class, 'showByShortCodeForUser'])
+    ->name('profile.public.short.show-user');
+Route::get('/p/{code}/{user:username}/vcard', [PublicProfileController::class, 'downloadVcardByShortCodeForUser'])
+    ->name('profile.public.short.vcard-user');
+
+// --- NOUVELLE ROUTE PUBLIQUE POUR LA vCard (ancienne URL, compat) ---
 // Elle utilise le 'username' pour trouver l'utilisateur et déclencher le téléchargement
 Route::get('/profil/{user:username}/vcard', [PublicProfileController::class, 'downloadVcard'])
      ->name('profile.public.vcard');
