@@ -280,6 +280,21 @@ class OrderController extends Controller
 
         // Envoyer un email à l'utilisateur si la commande est validée
         if ($newStatus === 'validated') {
+            // ✅ NOUVEAU : Déclencher l'analyse de matching Marketplace en arrière-plan
+            try {
+                \App\Jobs\ProcessMarketplaceMatching::dispatch($order->user_id);
+                Log::info('ProcessMarketplaceMatching: Job dispatché après validation manuelle de commande', [
+                    'order_id' => $order->id,
+                    'user_id' => $order->user_id
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Erreur lors du dispatch du Job ProcessMarketplaceMatching', [
+                    'order_id' => $order->id,
+                    'user_id' => $order->user_id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+            
             try {
                 // ✅ S'assurer que la relation user est chargée
                 if (!$order->relationLoaded('user')) {

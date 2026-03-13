@@ -225,6 +225,9 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::post('/marketplace/messages/{messageId}/reply', [MarketplaceController::class, 'replyToMessage'])->name('marketplace.messages.reply');
     // Récupérer tous les messages de l'utilisateur
     Route::get('/marketplace/messages', [MarketplaceController::class, 'getUserMessages'])->name('marketplace.messages.user');
+    Route::get('/marketplace/messages/unread-count', [MarketplaceController::class, 'getUnreadMessagesCount'])->name('marketplace.messages.unread-count');
+    Route::get('/marketplace/match-notifications', [MarketplaceController::class, 'getMatchNotifications'])->name('marketplace.match-notifications');
+    Route::post('/marketplace/notifications/{notificationId}/read', [MarketplaceController::class, 'markNotificationAsRead'])->name('marketplace.notifications.read');
 });
 
 // Routes publiques pour afficher les pages

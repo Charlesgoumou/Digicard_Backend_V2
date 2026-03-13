@@ -1626,6 +1626,21 @@ class OrderController extends Controller
                         'subscription_start_date' => $order->subscription_start_date
                     ]);
 
+                    // ✅ NOUVEAU : Déclencher l'analyse de matching Marketplace en arrière-plan
+                    try {
+                        \App\Jobs\ProcessMarketplaceMatching::dispatch($order->user_id);
+                        Log::info('ProcessMarketplaceMatching: Job dispatché après validation de commande', [
+                            'order_id' => $order->id,
+                            'user_id' => $order->user_id
+                        ]);
+                    } catch (\Exception $e) {
+                        Log::error('Erreur lors du dispatch du Job ProcessMarketplaceMatching', [
+                            'order_id' => $order->id,
+                            'user_id' => $order->user_id,
+                            'error' => $e->getMessage()
+                        ]);
+                    }
+
                     // Notifications (Email & Admin)
                     try {
                         // Admin Notif
