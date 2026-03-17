@@ -10,6 +10,7 @@ class ChapChapPayService
 {
     protected $baseUrl;
     protected $apiKey;
+    protected $hmacKey;
 
     public function __construct()
     {
@@ -20,6 +21,7 @@ class ChapChapPayService
         
         $this->baseUrl = $configBaseUrl ?: env('CHAP_CHAP_BASE_URL', 'https://api.chapchappay.com/api');
         $this->apiKey = $configApiKey ?: env('CHAP_CHAP_PUBLIC_KEY', '');
+        $this->hmacKey = env('CHAP_CHAP_SECRET_KEY', '');
         
         // Log pour déboguer la configuration
         Log::debug('Chap Chap Pay Service: Configuration initialisée', [
@@ -192,6 +194,71 @@ class ChapChapPayService
         } catch (\Exception $e) {
             Log::error('Chap Chap Pay: Exception lors de la vérification du statut', [
                 'transaction_id' => $transactionId,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Déclencher une opération PUSH (payout) via Chap Chap Pay.
+     * Endpoint supposé cohérent avec la doc publique (PUSH API) et les patterns E-Commerce.
+     */
+    public function createPushOperation(array $data)
+    {
+        if (empty($this->apiKey)) {
+            Log::error('Chap Chap Pay PUSH: Clé API manquante');
+            return null;
+        }
+
+        try {
+            $payload = [
+                'amount' => $data['amount'],
+                'description' => $data['description'] ?? 'Payout',
+                'order_id' => $data['order_id'],
+                'notify_url' => $data['notify_url'],
+                'provider' => $data['provider'] ?? null,
+                'destination' => $data['destination'] ?? null,
+            ];
+
+            $body = json_encode($payload, JSON_UNESCAPED_SLASHES);
+            $headers = [
+                'Content-Type' => 'application/json',
+                'CCP-Api-Key' => $this->apiKey,
+            ];
+
+            if (!empty($this->hmacKey)) {
+                $headers['CCP-HMAC-Signature'] = hash_hmac('sha256', $body, $this->hmacKey);
+            } else {
+                Log::warning('Chap Chap Pay PUSH: CHAP_CHAP_SECRET_KEY manquante, signature HMAC non envoyée');
+            }
+
+            $endpoint = $this->baseUrl . '/push/operation';
+
+            Log::info('Chap Chap Pay PUSH: Envoi opération', [
+                'order_id' => $payload['order_id'] ?? null,
+                'amount' => $payload['amount'] ?? null,
+                'endpoint' => $endpoint,
+                'has_hmac' => !empty($this->hmacKey),
+            ]);
+
+            $response = Http::withoutVerifying()
+                ->withHeaders($headers)
+                ->timeout(30)
+                ->post($endpoint, $payload);
+
+            Log::info('Chap Chap Pay PUSH: Réponse', [
+                'status_code' => $response->status(),
+                'response_body' => $response->body(),
+            ]);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Chap Chap Pay PUSH: Exception', [
                 'error' => $e->getMessage(),
             ]);
             return null;

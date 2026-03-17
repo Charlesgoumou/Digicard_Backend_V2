@@ -9,8 +9,12 @@ use App\Models\MarketplacePurchase;
 use App\Models\MarketplaceMessage;
 use App\Models\MarketplaceOfferImage;
 use App\Models\MarketplaceMatchScore;
+use App\Models\Wallet;
+use App\Models\WalletTransaction;
 use App\Models\CompanyPage;
 use App\Models\User;
+use App\Notifications\MarketplaceTransactionNotification;
+use App\Notifications\MarketplaceMatchNotification;
 use App\Services\GeminiService;
 use App\Services\PerplexityService;
 use App\Services\ImageCompressionService;
@@ -24,6 +28,159 @@ use Illuminate\Validation\ValidationException;
 
 class MarketplaceController extends Controller
 {
+    /**
+     * Endpoint unifié: notifications Marketplace (matching + transactions) via Laravel notifications (database).
+     */
+    public function getMarketplaceNotifications(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json(['notifications' => [], 'unread_count' => 0], 200);
+        }
+
+        try {
+            $allowedTypes = [
+                MarketplaceMatchNotification::class,
+                MarketplaceTransactionNotification::class,
+            ];
+
+            $notifications = $user->notifications()
+                ->whereIn('type', $allowedTypes)
+                ->orderBy('created_at', 'desc')
+                ->take(30)
+                ->get()
+                ->map(function ($notification) {
+                    $data = $notification->data ?? [];
+                    return [
+                        'id' => $notification->id,
+                        'category' => $data['type'] ?? 'marketplace',
+                        'message' => $data['message'] ?? null,
+                        'offer_id' => $data['offer_id'] ?? null,
+                        'purchase_id' => $data['purchase_id'] ?? null,
+                        'match_score' => $data['match_score'] ?? null,
+                        'url' => $data['url'] ?? null,
+                        'read_at' => $notification->read_at,
+                        'created_at' => $notification->created_at,
+                        'raw_type' => $notification->type,
+                    ];
+                });
+
+            $unreadCount = $user->unreadNotifications()
+                ->whereIn('type', $allowedTypes)
+                ->count();
+
+            return response()->json([
+                'notifications' => $notifications,
+                'unread_count' => $unreadCount,
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error('Erreur lors de la récupération des notifications marketplace', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json(['notifications' => [], 'unread_count' => 0], 200);
+        }
+    }
+
+    /**
+     * Reçu d'achat (transaction interne) - accessible par l'acheteur et le vendeur.
+     */
+    public function getPurchaseReceipt(Request $request, $purchaseId)
+    {
+        $user = $request->user();
+
+        $purchase = MarketplacePurchase::with(['offer.seller', 'buyer'])
+            ->findOrFail($purchaseId);
+
+        $offer = $purchase->offer;
+
+        if (!$offer) {
+            return response()->json(['message' => 'Offre introuvable.'], 404);
+        }
+
+        $isBuyer = (int) $purchase->buyer_id === (int) $user->id;
+        $isSeller = (int) $offer->user_id === (int) $user->id;
+        if (!$isBuyer && !$isSeller) {
+            return response()->json(['message' => 'Non autorisé.'], 403);
+        }
+
+        // Récupérer les transactions wallet associées (si existantes)
+        $buyerTx = WalletTransaction::where('marketplace_purchase_id', $purchase->id)
+            ->where('type', 'purchase_debit')
+            ->orderByDesc('id')
+            ->first();
+        $sellerTx = WalletTransaction::where('marketplace_purchase_id', $purchase->id)
+            ->where('type', 'sale_credit')
+            ->orderByDesc('id')
+            ->first();
+
+        $reference = 'MP-' . $purchase->id;
+
+        return response()->json([
+            'reference' => $reference,
+            'purchase' => [
+                'id' => $purchase->id,
+                'status' => $purchase->status,
+                'price' => $purchase->price,
+                'currency' => $purchase->currency,
+                'created_at' => $purchase->created_at,
+            ],
+            'offer' => [
+                'id' => $offer->id,
+                'title' => $offer->title,
+                'type' => $offer->type,
+                'is_active' => (bool) $offer->is_active,
+            ],
+            'buyer' => [
+                'id' => $purchase->buyer?->id,
+                'name' => $purchase->buyer?->name ?? 'Acheteur',
+            ],
+            'seller' => [
+                'id' => $offer->seller?->id,
+                'name' => $offer->seller?->name ?? 'Vendeur',
+            ],
+            'wallet' => [
+                'buyer_tx' => $buyerTx ? [
+                    'id' => $buyerTx->id,
+                    'type' => $buyerTx->type,
+                    'direction' => $buyerTx->direction,
+                    'status' => $buyerTx->status,
+                    'amount_minor' => (int) $buyerTx->amount_minor,
+                    'currency' => $buyerTx->currency,
+                    'idempotency_key' => $buyerTx->idempotency_key,
+                    'external_reference' => $buyerTx->external_reference,
+                    'created_at' => $buyerTx->created_at,
+                ] : null,
+                'seller_tx' => $sellerTx ? [
+                    'id' => $sellerTx->id,
+                    'type' => $sellerTx->type,
+                    'direction' => $sellerTx->direction,
+                    'status' => $sellerTx->status,
+                    'amount_minor' => (int) $sellerTx->amount_minor,
+                    'currency' => $sellerTx->currency,
+                    'idempotency_key' => $sellerTx->idempotency_key,
+                    'external_reference' => $sellerTx->external_reference,
+                    'created_at' => $sellerTx->created_at,
+                ] : null,
+            ],
+        ], 200);
+    }
+
+    private function currencyFactor(string $currency): int
+    {
+        $c = strtoupper($currency);
+        if (in_array($c, ['GNF', 'XOF'], true)) return 1;
+        return 100;
+    }
+
+    private function moneyToMinor($amount, string $currency = 'EUR'): int
+    {
+        // $amount peut être string (decimal cast). On force une conversion robuste.
+        $factor = $this->currencyFactor($currency);
+        return (int) round(((float) $amount) * $factor);
+    }
+
     /**
      * Récupérer toutes les offres disponibles
      * Avec recherche en temps réel, recommandation intelligente et tri personnalisé
@@ -45,7 +202,9 @@ class MarketplaceController extends Controller
             Log::debug('Table marketplace_offer_images n\'existe pas encore, relation images ignorée');
         }
         
-        $query = MarketplaceOffer::where('is_active', true)
+        // Par défaut: on expose seulement les offres actives.
+        // Exceptions: "sales" et "purchases" doivent aussi inclure les offres désactivées (vendues).
+        $query = MarketplaceOffer::query()
             ->with($withRelations)
             ->withCount('reviews');
         
@@ -70,23 +229,23 @@ class MarketplaceController extends Controller
         
         // Filtrer selon le type demandé
         if ($filter === 'sales' && $user) {
-            // Mes ventes : offres créées par l'utilisateur
+            // Mes ventes : toutes les offres créées par l'utilisateur (actives + désactivées)
             $query->where('user_id', $user->id);
         } elseif ($filter === 'purchases' && $user) {
-            // Mes achats : offres achetées par l'utilisateur
+            // Mes achats : toutes les offres achetées par l'utilisateur (actives + désactivées)
             $purchasedOfferIds = MarketplacePurchase::where('buyer_id', $user->id)
                 ->where('status', '=', 'completed')
                 ->pluck('offer_id');
             $query->whereIn('id', $purchasedOfferIds);
         } elseif ($filter === 'favorites' && $user) {
-            // Mes favoris : offres ajoutées aux favoris par l'utilisateur
+            // Mes favoris : offres actives ajoutées aux favoris
             $favoriteOfferIds = MarketplaceFavorite::where('user_id', $user->id)
                 ->pluck('offer_id');
-            $query->whereIn('id', $favoriteOfferIds);
-        } elseif ($filter === 'all') {
-            // ✅ CORRECTION : Dans l'onglet "all", TOUTES les offres actives doivent être visibles
-            // Le tri intelligent par score de matching se fera après le chargement
-            // Pas de filtre ici, on affiche toutes les offres
+            $query->whereIn('id', $favoriteOfferIds)
+                  ->where('is_active', true);
+        } else {
+            // "all" (et tout autre filtre inconnu) => offres actives uniquement
+            $query->where('is_active', true);
         }
         
         // ✅ AMÉLIORATION : Charger les scores de matching pour l'utilisateur si connecté
@@ -120,11 +279,25 @@ class MarketplaceController extends Controller
                 // Vérifier si l'utilisateur est le vendeur
                 $isSeller = $user && $offer->user_id === $user->id;
                 
-                // Vérifier si l'utilisateur a acheté cette offre
-                $isPurchased = $user ? MarketplacePurchase::where('offer_id', $offer->id)
-                    ->where('buyer_id', $user->id)
-                    ->where('status', '=', 'completed')
-                    ->exists() : false;
+                // Vérifier si l'utilisateur a acheté cette offre + récupérer le dernier achat (pour reçu)
+                $latestPurchase = null;
+                if ($user) {
+                    $latestPurchase = MarketplacePurchase::where('offer_id', $offer->id)
+                        ->where('buyer_id', $user->id)
+                        ->where('status', '=', 'completed')
+                        ->orderByDesc('id')
+                        ->first();
+                }
+                $isPurchased = (bool) $latestPurchase;
+
+                // Pour le vendeur: récupérer l'acheteur du dernier achat completed (si vendu)
+                $latestSale = null;
+                if ($user && $offer->user_id === $user->id) {
+                    $latestSale = MarketplacePurchase::where('offer_id', $offer->id)
+                        ->where('status', '=', 'completed')
+                        ->orderByDesc('id')
+                        ->first();
+                }
                 
                 // ✅ CORRECTION : Vérifier que le seller existe avant d'accéder à ses propriétés
                 $seller = $offer->seller ?? null;
@@ -152,6 +325,7 @@ class MarketplaceController extends Controller
                     'currency' => $offer->currency,
                     'image_url' => $offer->image_url, // Image principale (pour compatibilité)
                     'images' => $images, // Toutes les images
+                    'is_active' => (bool) $offer->is_active,
                     'seller_id' => $offer->user_id,
                     'seller_name' => $seller ? ($seller->name ?? 'Anonyme') : 'Anonyme',
                     'seller_title' => $seller ? ($seller->title ?? null) : null,
@@ -161,6 +335,10 @@ class MarketplaceController extends Controller
                     'is_favorite' => $isFavorite,
                     'is_seller' => $isSeller,
                     'is_purchased' => $isPurchased,
+                    'purchase_id' => $latestPurchase ? $latestPurchase->id : null,
+                    'purchased_at' => $latestPurchase ? $latestPurchase->created_at : null,
+                    'sale_purchase_id' => $latestSale ? $latestSale->id : null,
+                    'sold_at' => $latestSale ? $latestSale->created_at : null,
                     'is_profile_complete' => $isProfileComplete,
                     'match_score' => $matchScore ? (float) $matchScore : null, // ✅ NOUVEAU : Score de matching
                     'created_at' => $offer->created_at,
@@ -572,6 +750,13 @@ class MarketplaceController extends Controller
     public function toggleFavorite(Request $request, $id)
     {
         $user = $request->user();
+
+        $offer = MarketplaceOffer::findOrFail($id);
+        if (!$offer->is_active) {
+            return response()->json([
+                'message' => 'Cette offre est indisponible. Impossible de l’ajouter aux favoris.'
+            ], 409);
+        }
         
         $favorite = MarketplaceFavorite::where('offer_id', $id)
             ->where('user_id', $user->id)
@@ -652,6 +837,175 @@ class MarketplaceController extends Controller
             'message' => 'Offre ajoutée au panier',
             'purchase' => $purchase
         ], 201);
+    }
+
+    /**
+     * Achat interne (via solde système) : débit acheteur -> crédit vendeur -> désactivation offre
+     * Transaction atomique.
+     */
+    public function purchaseInternal(Request $request, $id)
+    {
+        $buyer = $request->user();
+        $idempotencyKey = $request->header('Idempotency-Key');
+        if ($idempotencyKey && !is_string($idempotencyKey)) {
+            $idempotencyKey = null;
+        }
+
+        try {
+            return DB::transaction(function () use ($buyer, $id, $idempotencyKey) {
+                // Idempotence: si on a déjà une transaction avec cette clé, renvoyer succès
+                if ($idempotencyKey) {
+                    $existing = WalletTransaction::where('idempotency_key', $idempotencyKey)->first();
+                    if ($existing && $existing->status === 'completed') {
+                        return response()->json([
+                            'message' => 'Transaction déjà traitée.',
+                            'wallet_transaction_id' => $existing->id,
+                        ], 200);
+                    }
+                }
+
+                /** @var MarketplaceOffer $offer */
+                $offer = MarketplaceOffer::where('id', $id)->lockForUpdate()->firstOrFail();
+
+                if (!$offer->is_active) {
+                    return response()->json(['message' => 'Cette offre est déjà indisponible.'], 409);
+                }
+
+                if ((int) $offer->user_id === (int) $buyer->id) {
+                    return response()->json(['message' => 'Vous ne pouvez pas acheter votre propre offre.'], 403);
+                }
+
+                $currency = strtoupper($offer->currency ?: 'EUR');
+                $amountMinor = $this->moneyToMinor($offer->price, $currency);
+                if ($amountMinor <= 0) {
+                    return response()->json(['message' => 'Montant invalide pour cette offre.'], 422);
+                }
+
+                $sellerId = (int) $offer->user_id;
+
+                // Créer / récupérer wallets puis lock pour garantir la cohérence
+                $buyerWallet = Wallet::firstOrCreate(
+                    ['user_id' => $buyer->id, 'currency' => $currency],
+                    ['balance_minor' => 0],
+                );
+                $sellerWallet = Wallet::firstOrCreate(
+                    ['user_id' => $sellerId, 'currency' => $currency],
+                    ['balance_minor' => 0],
+                );
+
+                $buyerWallet = Wallet::where('id', $buyerWallet->id)->lockForUpdate()->first();
+                $sellerWallet = Wallet::where('id', $sellerWallet->id)->lockForUpdate()->first();
+
+                if ((int) $buyerWallet->balance_minor < $amountMinor) {
+                    return response()->json([
+                        'message' => 'Solde insuffisant. Veuillez recharger votre solde.',
+                        'required_minor' => $amountMinor,
+                        'balance_minor' => (int) $buyerWallet->balance_minor,
+                        'currency' => $currency,
+                    ], 402);
+                }
+
+                // Créer l'achat "completed" (transaction interne immédiate)
+                $purchase = MarketplacePurchase::create([
+                    'offer_id' => $offer->id,
+                    'buyer_id' => $buyer->id,
+                    'price' => $offer->price,
+                    'currency' => $currency,
+                    'status' => 'completed',
+                ]);
+
+                // Ledger: débit acheteur
+                $buyerTx = WalletTransaction::create([
+                    'wallet_id' => $buyerWallet->id,
+                    'user_id' => $buyer->id,
+                    'direction' => 'debit',
+                    'type' => 'purchase_debit',
+                    'amount_minor' => $amountMinor,
+                    'currency' => $currency,
+                    'status' => 'completed',
+                    'marketplace_offer_id' => $offer->id,
+                    'marketplace_purchase_id' => $purchase->id,
+                    'idempotency_key' => $idempotencyKey,
+                    'meta' => [
+                        'seller_id' => $sellerId,
+                        'offer_title' => $offer->title,
+                    ],
+                    'completed_at' => now(),
+                ]);
+
+                // Ledger: crédit vendeur
+                $sellerTx = WalletTransaction::create([
+                    'wallet_id' => $sellerWallet->id,
+                    'user_id' => $sellerId,
+                    'direction' => 'credit',
+                    'type' => 'sale_credit',
+                    'amount_minor' => $amountMinor,
+                    'currency' => $currency,
+                    'status' => 'completed',
+                    'marketplace_offer_id' => $offer->id,
+                    'marketplace_purchase_id' => $purchase->id,
+                    'idempotency_key' => $idempotencyKey ? ($idempotencyKey . '-seller') : null,
+                    'meta' => [
+                        'buyer_id' => (int) $buyer->id,
+                        'offer_title' => $offer->title,
+                    ],
+                    'completed_at' => now(),
+                ]);
+
+                // Mise à jour balances
+                $buyerWallet->balance_minor = (int) $buyerWallet->balance_minor - $amountMinor;
+                $sellerWallet->balance_minor = (int) $sellerWallet->balance_minor + $amountMinor;
+                $buyerWallet->save();
+                $sellerWallet->save();
+
+                // Désactiver l'offre
+                $offer->is_active = false;
+                $offer->save();
+
+                // Notifications simples (DB)
+                $seller = User::find($sellerId);
+                if ($seller) {
+                    $seller->notify(new MarketplaceTransactionNotification(
+                        message: 'Vous avez vendu: ' . $offer->title,
+                        offerId: (int) $offer->id,
+                        purchaseId: (int) $purchase->id,
+                        otherUserId: (int) $buyer->id,
+                    ));
+                }
+                $buyer->notify(new MarketplaceTransactionNotification(
+                    message: 'Achat effectué: ' . $offer->title,
+                    offerId: (int) $offer->id,
+                    purchaseId: (int) $purchase->id,
+                    otherUserId: (int) $sellerId,
+                ));
+
+                return response()->json([
+                    'message' => 'Achat effectué avec succès.',
+                    'purchase_id' => $purchase->id,
+                    'buyer_wallet' => [
+                        'currency' => $currency,
+                        'balance_minor' => (int) $buyerWallet->balance_minor,
+                    ],
+                    'seller_wallet' => [
+                        'currency' => $currency,
+                        'balance_minor' => (int) $sellerWallet->balance_minor,
+                    ],
+                    'wallet_transactions' => [
+                        'buyer' => $buyerTx->id,
+                        'seller' => $sellerTx->id,
+                    ],
+                    'offer_id' => $offer->id,
+                    'offer_is_active' => (bool) $offer->is_active,
+                ], 200);
+            }, 3);
+        } catch (\Throwable $e) {
+            Log::error('Erreur achat interne marketplace', [
+                'offer_id' => $id,
+                'buyer_id' => $buyer ? $buyer->id : null,
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json(['message' => 'Erreur lors de la transaction.'], 500);
+        }
     }
 
     /**

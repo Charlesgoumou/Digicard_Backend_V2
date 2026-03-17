@@ -17,11 +17,15 @@ use App\Http\Controllers\Admin\UserController as AdminUserController;
 use App\Http\Controllers\Admin\OrderController as AdminOrderController;
 use App\Http\Controllers\Admin\CompanyPageController as AdminCompanyPageController;
 use App\Http\Controllers\Admin\SettingsController;
+use App\Http\Controllers\Admin\MarketplaceOfferController as AdminMarketplaceOfferController;
+use App\Http\Controllers\Admin\MarketplacePurchaseController as AdminMarketplacePurchaseController;
 use App\Http\Controllers\StorageController;
 use App\Http\Controllers\SocialController;
 use App\Http\Controllers\AppointmentController;
 use App\Http\Controllers\SharedContactController;
 use App\Http\Controllers\MarketplaceController;
+use App\Http\Controllers\WalletController;
+use App\Http\Controllers\WalletExternalController;
 use App\Http\Controllers\UserPreferencesController;
 use App\Http\Controllers\ImageSearchController;
 use App\Http\Controllers\DashboardController as FrontendDashboardController;
@@ -73,6 +77,8 @@ Route::post('/contact', [ContactController::class, 'sendMessage'])->name('contac
 
 // Webhook pour Chap Chap Pay (publique, sans authentification)
 Route::post('/payment/webhook', [OrderController::class, 'paymentWebhook'])->name('api.payment.webhook');
+// Webhook Chap Chap Pay pour Wallet (publique)
+Route::post('/wallet/webhook/chapchappay', [WalletExternalController::class, 'chapChapWebhook'])->name('wallet.webhook.chapchappay');
 
 // ✅ NOUVEAU: Route de simulation pour le développement (simule le webhook)
 // Cette route permet de forcer la validation d'une commande en développement local
@@ -211,8 +217,12 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::post('/marketplace/offers/{id}/reviews', [MarketplaceController::class, 'addReview'])->name('marketplace.offers.reviews');
     // Ajouter au panier
     Route::post('/marketplace/offers/{id}/add-to-cart', [MarketplaceController::class, 'addToCart'])->name('marketplace.offers.add-to-cart');
+    // Achat interne (via solde système)
+    Route::post('/marketplace/offers/{id}/purchase-internal', [MarketplaceController::class, 'purchaseInternal'])->name('marketplace.offers.purchase-internal');
     // Envoyer un message à l'annonceur
     Route::post('/marketplace/send-message', [MarketplaceController::class, 'sendMessage'])->name('marketplace.send-message');
+    // Reçu / détails achat
+    Route::get('/marketplace/purchases/{purchaseId}', [MarketplaceController::class, 'getPurchaseReceipt'])->name('marketplace.purchases.receipt');
     // Mettre à jour une offre
     Route::put('/marketplace/offers/{id}', [MarketplaceController::class, 'update'])->name('marketplace.offers.update');
     // Supprimer une offre
@@ -226,8 +236,16 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     // Récupérer tous les messages de l'utilisateur
     Route::get('/marketplace/messages', [MarketplaceController::class, 'getUserMessages'])->name('marketplace.messages.user');
     Route::get('/marketplace/messages/unread-count', [MarketplaceController::class, 'getUnreadMessagesCount'])->name('marketplace.messages.unread-count');
+    // Notifications marketplace (matching + transactions) - endpoint unifié
+    Route::get('/marketplace/notifications', [MarketplaceController::class, 'getMarketplaceNotifications'])->name('marketplace.notifications.index');
     Route::get('/marketplace/match-notifications', [MarketplaceController::class, 'getMatchNotifications'])->name('marketplace.match-notifications');
     Route::post('/marketplace/notifications/{notificationId}/read', [MarketplaceController::class, 'markNotificationAsRead'])->name('marketplace.notifications.read');
+
+    // --- Routes Wallet / Solde (Protégées) ---
+    Route::get('/wallet', [WalletController::class, 'show'])->name('wallet.show');
+    Route::get('/wallet/transactions', [WalletController::class, 'transactions'])->name('wallet.transactions');
+    Route::post('/wallet/deposit/chapchappay', [WalletExternalController::class, 'initiateChapChapDeposit'])->name('wallet.deposit.chapchappay');
+    Route::post('/wallet/withdraw', [WalletExternalController::class, 'initiateWithdraw'])->name('wallet.withdraw');
 });
 
 // Routes publiques pour afficher les pages
@@ -302,6 +320,17 @@ Route::middleware(['auth:sanctum', 'admin'])->prefix('admin')->name('admin.')->g
     Route::post('/homepage', [SettingsController::class, 'updateHomepage'])->name('homepage.update');
     Route::post('/homepage/upload-testimonial-avatar', [SettingsController::class, 'uploadTestimonialAvatar'])->name('homepage.upload-testimonial-avatar');
     Route::post('/homepage/upload-social-proof-logo', [SettingsController::class, 'uploadSocialProofLogo'])->name('homepage.upload-social-proof-logo');
+
+    // Marketplace (Admin)
+    Route::get('/marketplace/offers', [AdminMarketplaceOfferController::class, 'index'])->name('marketplace.offers.index');
+    Route::post('/marketplace/offers', [AdminMarketplaceOfferController::class, 'store'])->name('marketplace.offers.store');
+    Route::get('/marketplace/offers/{offer}', [AdminMarketplaceOfferController::class, 'show'])->name('marketplace.offers.show');
+    Route::put('/marketplace/offers/{offer}', [AdminMarketplaceOfferController::class, 'update'])->name('marketplace.offers.update');
+    Route::delete('/marketplace/offers/{offer}', [AdminMarketplaceOfferController::class, 'destroy'])->name('marketplace.offers.destroy');
+    Route::patch('/marketplace/offers/{offer}/toggle', [AdminMarketplaceOfferController::class, 'toggle'])->name('marketplace.offers.toggle');
+
+    Route::get('/marketplace/purchases', [AdminMarketplacePurchaseController::class, 'index'])->name('marketplace.purchases.index');
+    Route::get('/marketplace/purchases/{purchase}', [AdminMarketplacePurchaseController::class, 'show'])->name('marketplace.purchases.show');
 });
 
 // Route pour arrêter l'impersonation (accessible sans être admin)
