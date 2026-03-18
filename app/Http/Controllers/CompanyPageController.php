@@ -5,11 +5,14 @@ namespace App\Http\Controllers;
 use App\Models\AppointmentSetting;
 use App\Models\CompanyPage;
 use App\Models\User;
+use App\Models\MarketplaceUserNeed;
+use App\Jobs\ProcessMarketplaceMatching;
 use App\Services\GeminiService;
 use App\Services\ImageCompressionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class CompanyPageController extends Controller
 {
@@ -103,6 +106,10 @@ class CompanyPageController extends Controller
             return response()->json(['message' => 'Accès non autorisé.'], 403);
         }
 
+        // Snapshot pour détecter les changements importants pour le matching
+        $beforeCompanyWebsite = null;
+        $beforeServicesHash = null;
+
         $validated = $request->validate([
             'order_id' => 'nullable|exists:orders,id',
             'company_name' => 'nullable|string|max:255',
@@ -167,6 +174,9 @@ class CompanyPageController extends Controller
             );
         }
 
+        $beforeCompanyWebsite = $companyPage->company_website_url;
+        $beforeServicesHash = md5(json_encode($companyPage->services ?? []));
+
         // Cas spécial : Si le site web est renseigné ET la case est cochée pour le mettre en avant,
         // on permet la sauvegarde même si les autres champs sont vides
         $websiteFeatured = isset($validated['website_featured_in_services_button']) && $validated['website_featured_in_services_button'] === true;
@@ -220,6 +230,21 @@ class CompanyPageController extends Controller
 
         // Recharger la page depuis la base de données pour avoir toutes les données à jour
         $companyPage->refresh();
+
+        // Déclencher matching si site entreprise/services ont changé (throttle léger)
+        $afterCompanyWebsite = $companyPage->company_website_url;
+        $afterServicesHash = md5(json_encode($companyPage->services ?? []));
+        if ($beforeCompanyWebsite !== $afterCompanyWebsite || $beforeServicesHash !== $afterServicesHash) {
+            $throttleKey = "marketplace_matching_trigger_{$user->id}";
+            if (!Cache::has($throttleKey)) {
+                Cache::put($throttleKey, true, now()->addSeconds(45));
+                if (config('queue.default') === 'sync') {
+                    (new ProcessMarketplaceMatching($user->id))->handle();
+                } else {
+                    ProcessMarketplaceMatching::dispatch($user->id);
+                }
+            }
+        }
         
         // Formater les données pour le frontend (comme dans la méthode index)
         $companyPageData = $companyPage->toArray();
@@ -933,6 +958,70 @@ class CompanyPageController extends Controller
                 return response()->json([
                     'message' => 'Erreur lors de l\'analyse du texte. Veuillez réessayer.'
                 ], 500);
+            }
+
+            // ✅ Marketplace: si aucun site web fourni, extraire des besoins (keywords) depuis le document
+            try {
+                $companyPage = CompanyPage::where('user_id', $user->id)->first();
+                $hasWebsite = !empty($user->website_url) || (!empty($companyPage) && !empty($companyPage->company_website_url));
+
+                if (!$hasWebsite) {
+                    $needsData = $geminiService->extractMarketplaceNeedsFromText($extractedText, $user->title ?? null);
+                    if ($needsData && is_array($needsData)) {
+                        $keywords = $needsData['keywords'] ?? [];
+                        if (!is_array($keywords)) {
+                            $keywords = [];
+                        }
+
+                        MarketplaceUserNeed::updateOrCreate(
+                            ['user_id' => $user->id, 'source' => 'gemini_document'],
+                            [
+                                'source_ref' => $file->getClientOriginalName(),
+                                'keywords' => array_values(array_unique(array_filter(array_map('strtolower', $keywords)))),
+                                'needs' => $needsData['needs'] ?? null,
+                                'last_error' => empty($keywords) ? 'Gemini: aucun keyword retourné (document)' : null,
+                                'last_extracted_at' => now(),
+                            ]
+                        );
+
+                        // Déclencher matching (sync si driver sync)
+                        if (config('queue.default') === 'sync') {
+                            (new \App\Jobs\ProcessMarketplaceMatching($user->id))->handle();
+                        } else {
+                            \App\Jobs\ProcessMarketplaceMatching::dispatch($user->id);
+                        }
+                    } else {
+                        MarketplaceUserNeed::updateOrCreate(
+                            ['user_id' => $user->id, 'source' => 'gemini_document'],
+                            [
+                                'source_ref' => $file->getClientOriginalName(),
+                                'keywords' => [],
+                                'needs' => null,
+                                'last_error' => 'Gemini: extraction besoins impossible (document)',
+                                'last_extracted_at' => now(),
+                            ]
+                        );
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::error('CompanyPageController: Marketplace needs (Gemini) - erreur', [
+                    'user_id' => $user->id,
+                    'error' => $e->getMessage(),
+                ]);
+                try {
+                    MarketplaceUserNeed::updateOrCreate(
+                        ['user_id' => $user->id, 'source' => 'gemini_document'],
+                        [
+                            'source_ref' => $file->getClientOriginalName(),
+                            'keywords' => [],
+                            'needs' => null,
+                            'last_error' => $e->getMessage(),
+                            'last_extracted_at' => now(),
+                        ]
+                    );
+                } catch (\Throwable $ignored) {
+                    // noop
+                }
             }
 
             return response()->json([

@@ -19,6 +19,7 @@ use App\Http\Controllers\Admin\CompanyPageController as AdminCompanyPageControll
 use App\Http\Controllers\Admin\SettingsController;
 use App\Http\Controllers\Admin\MarketplaceOfferController as AdminMarketplaceOfferController;
 use App\Http\Controllers\Admin\MarketplacePurchaseController as AdminMarketplacePurchaseController;
+use App\Http\Controllers\Admin\PermissionController as AdminPermissionController;
 use App\Http\Controllers\StorageController;
 use App\Http\Controllers\SocialController;
 use App\Http\Controllers\AppointmentController;
@@ -205,6 +206,7 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     // --- Routes Marketplace (Protégées) ---
     // Liste de toutes les offres disponibles
     Route::get('/marketplace/offers', [MarketplaceController::class, 'index'])->name('marketplace.offers.index');
+    Route::get('/marketplace/filter-options', [MarketplaceController::class, 'filterOptions'])->name('marketplace.filter-options');
     // Détails d'une offre avec ses avis
     Route::get('/marketplace/offers/{id}', [MarketplaceController::class, 'show'])->name('marketplace.offers.show');
     // Générer la description d'une offre avec l'IA à partir d'une image
@@ -223,6 +225,8 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::post('/marketplace/send-message', [MarketplaceController::class, 'sendMessage'])->name('marketplace.send-message');
     // Reçu / détails achat
     Route::get('/marketplace/purchases/{purchaseId}', [MarketplaceController::class, 'getPurchaseReceipt'])->name('marketplace.purchases.receipt');
+    Route::patch('/marketplace/purchases/{purchase}/fulfillment', [MarketplaceController::class, 'updatePurchaseFulfillment'])->name('marketplace.purchases.fulfillment');
+    Route::patch('/marketplace/purchases/{purchase}/dispute', [MarketplaceController::class, 'requestDispute'])->name('marketplace.purchases.dispute');
     // Mettre à jour une offre
     Route::put('/marketplace/offers/{id}', [MarketplaceController::class, 'update'])->name('marketplace.offers.update');
     // Supprimer une offre
@@ -240,6 +244,10 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::get('/marketplace/notifications', [MarketplaceController::class, 'getMarketplaceNotifications'])->name('marketplace.notifications.index');
     Route::get('/marketplace/match-notifications', [MarketplaceController::class, 'getMatchNotifications'])->name('marketplace.match-notifications');
     Route::post('/marketplace/notifications/{notificationId}/read', [MarketplaceController::class, 'markNotificationAsRead'])->name('marketplace.notifications.read');
+
+    // Matching (diagnostic + exécution manuelle)
+    Route::post('/marketplace/matching/run', [MarketplaceController::class, 'runMatchingNow'])->name('marketplace.matching.run');
+    Route::get('/marketplace/matching/status', [MarketplaceController::class, 'matchingStatus'])->name('marketplace.matching.status');
 
     // --- Routes Wallet / Solde (Protégées) ---
     Route::get('/wallet', [WalletController::class, 'show'])->name('wallet.show');
@@ -321,16 +329,44 @@ Route::middleware(['auth:sanctum', 'admin'])->prefix('admin')->name('admin.')->g
     Route::post('/homepage/upload-testimonial-avatar', [SettingsController::class, 'uploadTestimonialAvatar'])->name('homepage.upload-testimonial-avatar');
     Route::post('/homepage/upload-social-proof-logo', [SettingsController::class, 'uploadSocialProofLogo'])->name('homepage.upload-social-proof-logo');
 
-    // Marketplace (Admin)
-    Route::get('/marketplace/offers', [AdminMarketplaceOfferController::class, 'index'])->name('marketplace.offers.index');
-    Route::post('/marketplace/offers', [AdminMarketplaceOfferController::class, 'store'])->name('marketplace.offers.store');
-    Route::get('/marketplace/offers/{offer}', [AdminMarketplaceOfferController::class, 'show'])->name('marketplace.offers.show');
-    Route::put('/marketplace/offers/{offer}', [AdminMarketplaceOfferController::class, 'update'])->name('marketplace.offers.update');
-    Route::delete('/marketplace/offers/{offer}', [AdminMarketplaceOfferController::class, 'destroy'])->name('marketplace.offers.destroy');
-    Route::patch('/marketplace/offers/{offer}/toggle', [AdminMarketplaceOfferController::class, 'toggle'])->name('marketplace.offers.toggle');
+    // Permissions Admin (Marketplace)
+    Route::get('/permissions/marketplace', [AdminPermissionController::class, 'marketplaceIndex'])->name('permissions.marketplace.index');
+    Route::put('/roles/{role}/permissions/marketplace', [AdminPermissionController::class, 'updateRoleMarketplace'])->name('permissions.marketplace.role.update');
 
-    Route::get('/marketplace/purchases', [AdminMarketplacePurchaseController::class, 'index'])->name('marketplace.purchases.index');
-    Route::get('/marketplace/purchases/{purchase}', [AdminMarketplacePurchaseController::class, 'show'])->name('marketplace.purchases.show');
+    // Marketplace (Admin)
+    Route::get('/marketplace/offers', [AdminMarketplaceOfferController::class, 'index'])
+        ->middleware('admin_permission:marketplace.offers.read')
+        ->name('marketplace.offers.index');
+    Route::post('/marketplace/offers', [AdminMarketplaceOfferController::class, 'store'])
+        ->middleware('admin_permission:marketplace.offers.create')
+        ->name('marketplace.offers.store');
+    Route::get('/marketplace/offers/{offer}', [AdminMarketplaceOfferController::class, 'show'])
+        ->middleware('admin_permission:marketplace.offers.read')
+        ->name('marketplace.offers.show');
+    Route::put('/marketplace/offers/{offer}', [AdminMarketplaceOfferController::class, 'update'])
+        ->middleware('admin_permission:marketplace.offers.update')
+        ->name('marketplace.offers.update');
+    Route::delete('/marketplace/offers/{offer}', [AdminMarketplaceOfferController::class, 'destroy'])
+        ->middleware('admin_permission:marketplace.offers.delete')
+        ->name('marketplace.offers.destroy');
+    Route::patch('/marketplace/offers/{offer}/toggle', [AdminMarketplaceOfferController::class, 'toggle'])
+        ->middleware('admin_permission:marketplace.offers.toggle')
+        ->name('marketplace.offers.toggle');
+
+    Route::get('/marketplace/purchases', [AdminMarketplacePurchaseController::class, 'index'])
+        ->middleware('admin_permission:marketplace.purchases.read')
+        ->name('marketplace.purchases.index');
+    Route::get('/marketplace/purchases/{purchase}', [AdminMarketplacePurchaseController::class, 'show'])
+        ->middleware('admin_permission:marketplace.purchases.read')
+        ->name('marketplace.purchases.show');
+
+    Route::patch('/marketplace/purchases/{purchase}/refund/approve', [AdminMarketplacePurchaseController::class, 'approveRefund'])
+        ->middleware('admin_permission:marketplace.purchases.read')
+        ->name('marketplace.purchases.refund.approve');
+
+    Route::patch('/marketplace/purchases/{purchase}/refund/deny', [AdminMarketplacePurchaseController::class, 'denyDispute'])
+        ->middleware('admin_permission:marketplace.purchases.read')
+        ->name('marketplace.purchases.refund.deny');
 });
 
 // Route pour arrêter l'impersonation (accessible sans être admin)

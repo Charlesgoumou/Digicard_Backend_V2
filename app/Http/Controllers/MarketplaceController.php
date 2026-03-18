@@ -19,15 +19,82 @@ use App\Services\GeminiService;
 use App\Services\PerplexityService;
 use App\Services\ImageCompressionService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
+use App\Jobs\ProcessMarketplaceMatching;
 use Illuminate\Validation\ValidationException;
 
 class MarketplaceController extends Controller
 {
+    /**
+     * Exécuter le matching maintenant (utile en dev/support).
+     * - Si QUEUE_CONNECTION=sync : exécute immédiatement.
+     * - Sinon : dispatch en queue et retourne "queued".
+     */
+    public function runMatchingNow(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['message' => 'Non autorisé'], 401);
+        }
+
+        $mode = strtolower((string) config('queue.default'));
+        $runKey = "marketplace_matching_last_run_{$user->id}";
+
+        try {
+            if ($mode === 'sync') {
+                (new ProcessMarketplaceMatching((int) $user->id))->handle();
+                return response()->json([
+                    'status' => 'completed',
+                    'mode' => 'sync',
+                    'last_run' => Cache::get($runKey),
+                ], 200);
+            }
+
+            ProcessMarketplaceMatching::dispatch((int) $user->id);
+
+            return response()->json([
+                'status' => 'queued',
+                'mode' => $mode,
+                'message' => 'Matching planifié. Lancez le worker queue pour exécuter.',
+            ], 202);
+        } catch (\Throwable $e) {
+            Log::error('Marketplace matching: erreur runMatchingNow', [
+                'user_id' => $user->id,
+                'message' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Erreur lors du lancement du matching.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Statut du matching pour l’utilisateur courant (dernier run).
+     */
+    public function matchingStatus(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['message' => 'Non autorisé'], 401);
+        }
+
+        $runKey = "marketplace_matching_last_run_{$user->id}";
+        $last = Cache::get($runKey);
+
+        return response()->json([
+            'queue_driver' => config('queue.default'),
+            'has_perplexity_key' => !empty(config('perplexity.api_key')),
+            'has_gemini_key' => !empty(config('gemini.api_key')),
+            'last_run' => $last,
+        ], 200);
+    }
     /**
      * Endpoint unifié: notifications Marketplace (matching + transactions) via Laravel notifications (database).
      */
@@ -122,6 +189,14 @@ class MarketplaceController extends Controller
             'purchase' => [
                 'id' => $purchase->id,
                 'status' => $purchase->status,
+                'fulfillment_status' => $purchase->fulfillment_status ?? MarketplacePurchase::FULFILLMENT_COMPLETED,
+                'seller_fulfilled_at' => $purchase->seller_fulfilled_at,
+                'buyer_confirmed_at' => $purchase->buyer_confirmed_at,
+                'buyer_disputed_at' => $purchase->buyer_disputed_at,
+                'dispute_reason' => $purchase->dispute_reason,
+                'admin_decided_at' => $purchase->admin_decided_at,
+                'refund_processed_at' => $purchase->refund_processed_at,
+                'refund_reason' => $purchase->refund_reason,
                 'price' => $purchase->price,
                 'currency' => $purchase->currency,
                 'created_at' => $purchase->created_at,
@@ -163,6 +238,136 @@ class MarketplaceController extends Controller
                     'external_reference' => $sellerTx->external_reference,
                     'created_at' => $sellerTx->created_at,
                 ] : null,
+            ],
+        ], 200);
+    }
+
+    /**
+     * Ouvrir un litige (acheteur) sur une commande.
+     * Permet d'initier ensuite un remboursement côté admin.
+     */
+    public function requestDispute(Request $request, MarketplacePurchase $purchase)
+    {
+        $user = $request->user();
+        $validated = $request->validate([
+            'reason' => 'nullable|string|max:1000',
+        ]);
+
+        $purchase->loadMissing('offer');
+        $offer = $purchase->offer;
+
+        if (! $offer) {
+            return response()->json(['message' => 'Offre introuvable.'], 404);
+        }
+
+        if ((int) $purchase->buyer_id !== (int) $user->id) {
+            return response()->json(['message' => 'Action réservée à l’acheteur.'], 403);
+        }
+
+        $fs = (string) ($purchase->fulfillment_status ?? MarketplacePurchase::FULFILLMENT_COMPLETED);
+        if (in_array($fs, [
+            MarketplacePurchase::FULFILLMENT_COMPLETED,
+            MarketplacePurchase::FULFILLMENT_REFUNDED,
+            MarketplacePurchase::FULFILLMENT_CANCELLED,
+        ], true)) {
+            return response()->json(['message' => 'Litige impossible dans l’état actuel.'], 422);
+        }
+
+        if ($fs === MarketplacePurchase::FULFILLMENT_DISPUTE_REQUESTED) {
+            return response()->json(['message' => 'Litige déjà ouvert pour cette commande.'], 409);
+        }
+
+        $purchase->fulfillment_status = MarketplacePurchase::FULFILLMENT_DISPUTE_REQUESTED;
+        $purchase->buyer_disputed_at = now();
+        $purchase->dispute_reason = (string) ($validated['reason'] ?? 'Litige ouvert par l’acheteur');
+        $purchase->save();
+
+        return response()->json([
+            'message' => 'Litige ouvert. Un admin pourra traiter la demande.',
+            'purchase' => [
+                'id' => $purchase->id,
+                'fulfillment_status' => $purchase->fulfillment_status,
+                'buyer_disputed_at' => $purchase->buyer_disputed_at,
+            ],
+        ], 200);
+    }
+
+    /**
+     * Cycle de vie commande (après paiement interne) : vendeur / acheteur.
+     */
+    public function updatePurchaseFulfillment(Request $request, MarketplacePurchase $purchase)
+    {
+        $user = $request->user();
+        $validated = $request->validate([
+            'action' => 'required|string|in:seller_in_progress,seller_delivered,buyer_confirm',
+        ]);
+
+        $purchase->loadMissing('offer');
+        $offer = $purchase->offer;
+        if (! $offer || $purchase->status !== 'completed') {
+            return response()->json(['message' => 'Cet achat ne peut pas être mis à jour.'], 422);
+        }
+
+        $fs = (string) ($purchase->fulfillment_status ?? MarketplacePurchase::FULFILLMENT_PENDING);
+
+        if ($validated['action'] === 'seller_in_progress') {
+            if ((int) $offer->user_id !== (int) $user->id) {
+                return response()->json(['message' => 'Action réservée au vendeur.'], 403);
+            }
+            if ($fs !== MarketplacePurchase::FULFILLMENT_PENDING) {
+                return response()->json(['message' => 'Cette commande n’est plus à l’étape « à traiter ».'], 422);
+            }
+            $purchase->fulfillment_status = MarketplacePurchase::FULFILLMENT_IN_PROGRESS;
+            $purchase->save();
+        } elseif ($validated['action'] === 'seller_delivered') {
+            if ((int) $offer->user_id !== (int) $user->id) {
+                return response()->json(['message' => 'Action réservée au vendeur.'], 403);
+            }
+            if (! in_array($fs, [MarketplacePurchase::FULFILLMENT_PENDING, MarketplacePurchase::FULFILLMENT_IN_PROGRESS], true)) {
+                return response()->json(['message' => 'Impossible de marquer comme livré / prestation terminée dans cet état.'], 422);
+            }
+            $purchase->fulfillment_status = MarketplacePurchase::FULFILLMENT_AWAITING_BUYER;
+            $purchase->seller_fulfilled_at = now();
+            $purchase->save();
+
+            $buyer = User::find($purchase->buyer_id);
+            if ($buyer) {
+                $buyer->notify(new MarketplaceTransactionNotification(
+                    message: 'Le vendeur a indiqué la livraison ou la fin de prestation : '.$offer->title,
+                    offerId: (int) $offer->id,
+                    purchaseId: (int) $purchase->id,
+                    otherUserId: (int) $user->id,
+                ));
+            }
+        } elseif ($validated['action'] === 'buyer_confirm') {
+            if ((int) $purchase->buyer_id !== (int) $user->id) {
+                return response()->json(['message' => 'Action réservée à l’acheteur.'], 403);
+            }
+            if ($fs !== MarketplacePurchase::FULFILLMENT_AWAITING_BUYER) {
+                return response()->json(['message' => 'Vous ne pouvez confirmer qu’après l’indication du vendeur.'], 422);
+            }
+            $purchase->fulfillment_status = MarketplacePurchase::FULFILLMENT_COMPLETED;
+            $purchase->buyer_confirmed_at = now();
+            $purchase->save();
+
+            $seller = User::find($offer->user_id);
+            if ($seller) {
+                $seller->notify(new MarketplaceTransactionNotification(
+                    message: 'L’acheteur a confirmé la réception : '.$offer->title,
+                    offerId: (int) $offer->id,
+                    purchaseId: (int) $purchase->id,
+                    otherUserId: (int) $user->id,
+                ));
+            }
+        }
+
+        return response()->json([
+            'message' => 'Statut mis à jour.',
+            'purchase' => [
+                'id' => $purchase->id,
+                'fulfillment_status' => $purchase->fulfillment_status,
+                'seller_fulfilled_at' => $purchase->seller_fulfilled_at,
+                'buyer_confirmed_at' => $purchase->buyer_confirmed_at,
             ],
         ], 200);
     }
@@ -247,6 +452,35 @@ class MarketplaceController extends Controller
             // "all" (et tout autre filtre inconnu) => offres actives uniquement
             $query->where('is_active', true);
         }
+
+        $applyListingFilters = in_array($filter, ['all', 'favorites'], true);
+        $sortMode = strtolower((string) $request->query('sort', 'match'));
+        if (! in_array($sortMode, ['match', 'newest', 'price_asc', 'price_desc', 'rating'], true)) {
+            $sortMode = 'match';
+        }
+
+        if ($applyListingFilters) {
+            $category = (string) $request->query('category', '');
+            if ($category !== '' && $category !== 'all' && in_array($category, MarketplaceOffer::allowedCategoryKeys(), true)) {
+                $query->where('category', $category);
+            }
+            $offerType = (string) $request->query('offer_type', '');
+            if (in_array($offerType, ['offer', 'product', 'service'], true)) {
+                $query->where('type', $offerType);
+            }
+            $cur = strtoupper(preg_replace('/[^A-Za-z]/', '', (string) $request->query('currency', '')));
+            if (strlen($cur) === 3) {
+                $query->where('currency', $cur);
+            }
+            $pmin = $request->query('price_min');
+            $pmax = $request->query('price_max');
+            if ($pmin !== null && $pmin !== '' && is_numeric($pmin)) {
+                $query->where('price', '>=', max(0, (float) $pmin));
+            }
+            if ($pmax !== null && $pmax !== '' && is_numeric($pmax)) {
+                $query->where('price', '<=', max(0, (float) $pmax));
+            }
+        }
         
         // ✅ AMÉLIORATION : Charger les scores de matching pour l'utilisateur si connecté
         $matchScores = [];
@@ -263,7 +497,7 @@ class MarketplaceController extends Controller
             'count' => $offers->count()
         ]);
         
-        $offers = $offers->map(function ($offer) use ($user, $matchScores) {
+        $offers = $offers->map(function ($offer) use ($user, $matchScores, $filter) {
             try {
                 // Calculer la note moyenne
                 $averageRating = $offer->reviews()->avg('rating');
@@ -315,12 +549,39 @@ class MarketplaceController extends Controller
                         ];
                     })->sortBy('order')->values()->toArray();
                 }
+
+                $fulfillmentStatus = null;
+                $fulfillmentActions = [
+                    'buyer_confirm' => false,
+                    'buyer_can_dispute' => false,
+                    'seller_in_progress' => false,
+                    'seller_delivered' => false,
+                ];
+                if ($filter === 'purchases' && $latestPurchase) {
+                    $fulfillmentStatus = $latestPurchase->fulfillment_status ?? MarketplacePurchase::FULFILLMENT_COMPLETED;
+                    $fulfillmentActions['buyer_confirm'] = $fulfillmentStatus === MarketplacePurchase::FULFILLMENT_AWAITING_BUYER;
+                    $fulfillmentActions['buyer_can_dispute'] = in_array($fulfillmentStatus, [
+                        MarketplacePurchase::FULFILLMENT_PENDING,
+                        MarketplacePurchase::FULFILLMENT_IN_PROGRESS,
+                        MarketplacePurchase::FULFILLMENT_AWAITING_BUYER,
+                    ], true);
+                }
+                if ($filter === 'sales' && $latestSale) {
+                    $fulfillmentStatus = $latestSale->fulfillment_status ?? MarketplacePurchase::FULFILLMENT_PENDING;
+                    $fulfillmentActions['seller_in_progress'] = $fulfillmentStatus === MarketplacePurchase::FULFILLMENT_PENDING;
+                    $fulfillmentActions['seller_delivered'] = in_array($fulfillmentStatus, [
+                        MarketplacePurchase::FULFILLMENT_PENDING,
+                        MarketplacePurchase::FULFILLMENT_IN_PROGRESS,
+                    ], true);
+                }
                 
                 return [
                     'id' => $offer->id,
                     'title' => $offer->title,
                     'description' => $offer->description,
                     'type' => $offer->type,
+                    'category' => $offer->category,
+                    'category_label' => MarketplaceOffer::categoryLabel($offer->category),
                     'price' => $offer->price,
                     'currency' => $offer->currency,
                     'image_url' => $offer->image_url, // Image principale (pour compatibilité)
@@ -342,6 +603,8 @@ class MarketplaceController extends Controller
                     'is_profile_complete' => $isProfileComplete,
                     'match_score' => $matchScore ? (float) $matchScore : null, // ✅ NOUVEAU : Score de matching
                     'created_at' => $offer->created_at,
+                    'fulfillment_status' => $fulfillmentStatus,
+                    'fulfillment_actions' => $fulfillmentActions,
                 ];
             } catch (\Exception $e) {
                 Log::error('MarketplaceController: Erreur lors du mapping d\'une offre', [
@@ -357,37 +620,79 @@ class MarketplaceController extends Controller
             return $offer !== null;
         });
         
-        // ✅ AMÉLIORATION : Tri intelligent par score de matching (les plus élevés en premier)
-        // Si l'utilisateur est connecté et qu'on est sur l'onglet "all", utiliser le matching
-        if ($user && $filter === 'all') {
-            $offers = $offers->sortByDesc(function ($offer) {
-                // Priorité absolue au score de matching s'il existe
-                if ($offer['match_score'] !== null && $offer['match_score'] > 0) {
-                    return 10000 + $offer['match_score']; // Score de matching en priorité
+        // ✅ Ranking amélioré (sans filtrer): adapte l'affichage au profil
+        // Principes:
+        // - match_score est prioritaire (si présent)
+        // - si recherche: boost fort sur match du titre, puis description
+        // - ensuite: profil complet + avis + note + récence
+        $searchLower = trim(mb_strtolower((string) $search));
+        $searchTerms = $searchLower !== '' ? array_values(array_filter(preg_split('/\s+/', $searchLower))) : [];
+
+        $rankFn = function ($offer) use ($user, $filter, $searchTerms) {
+            $score = 0.0;
+
+            $matchScore = isset($offer['match_score']) && $offer['match_score'] !== null ? (float) $offer['match_score'] : 0.0;
+            if ($user && $filter === 'all') {
+                // Poids fort: matching personnalisé
+                $score += $matchScore * 120.0; // ex: 1 match (6–12) devient visible en haut
+            }
+
+            // Pertinence recherche (dès 1 lettre) : titre >> description
+            if (!empty($searchTerms)) {
+                $t = mb_strtolower((string) ($offer['title'] ?? ''));
+                $d = mb_strtolower((string) ($offer['description'] ?? ''));
+                foreach ($searchTerms as $term) {
+                    if ($term === '') continue;
+                    if (mb_strlen($term) < 2) continue;
+
+                    if (mb_strpos($t, $term) !== false) {
+                        $score += 500.0; // gros boost si match titre
+                    } elseif (mb_strpos($d, $term) !== false) {
+                        $score += 120.0; // boost moindre si match description
+                    }
                 }
-                
-                // Sinon, tri classique : priorité aux profils complets
-                $score = 0;
-                if ($offer['is_profile_complete']) {
-                    $score += 1000;
+            }
+
+            // Profil vendeur complet
+            if (!empty($offer['is_profile_complete'])) {
+                $score += 80.0;
+            }
+
+            // Avis / note
+            $reviewsCount = (int) ($offer['reviews_count'] ?? 0);
+            $avg = (float) ($offer['average_rating'] ?? 0);
+            $score += min(60.0, $reviewsCount * 6.0); // cap avis
+            $score += min(40.0, $avg * 8.0);          // cap note
+
+            // Récence (max ~30 points)
+            $createdAt = $offer['created_at'] ?? null;
+            try {
+                if ($createdAt) {
+                    $hours = now()->diffInHours(\Carbon\Carbon::parse($createdAt));
+                    $score += max(0.0, 30.0 - min(30.0, $hours / 24.0 * 10.0)); // 0-24h: ~30, puis décroît
                 }
-                // Priorité aux offres avec le plus d'avis
-                $score += ($offer['reviews_count'] ?? 0) * 10;
-                // Priorité aux offres avec une meilleure note
-                $score += ($offer['average_rating'] ?? 0) * 5;
-                return $score;
+            } catch (\Throwable $e) {
+                // ignore
+            }
+
+            return $score;
+        };
+
+        if ($applyListingFilters && $sortMode === 'price_asc') {
+            $offers = $offers->sortBy(fn ($o) => (float) ($o['price'] ?? 0))->values();
+        } elseif ($applyListingFilters && $sortMode === 'price_desc') {
+            $offers = $offers->sortByDesc(fn ($o) => (float) ($o['price'] ?? 0))->values();
+        } elseif ($applyListingFilters && $sortMode === 'newest') {
+            $offers = $offers->sortByDesc(fn ($o) => strtotime((string) ($o['created_at'] ?? '')))->values();
+        } elseif ($applyListingFilters && $sortMode === 'rating') {
+            $offers = $offers->sortByDesc(function ($o) {
+                $avg = (float) ($o['average_rating'] ?? 0);
+                $n = (int) ($o['reviews_count'] ?? 0);
+
+                return $avg * 1000 + min(500, $n * 10);
             })->values();
         } else {
-            // Tri classique pour les autres onglets ou utilisateurs non connectés
-            $offers = $offers->sortByDesc(function ($offer) {
-                $score = 0;
-                if ($offer['is_profile_complete']) {
-                    $score += 1000;
-                }
-                $score += ($offer['reviews_count'] ?? 0) * 10;
-                $score += ($offer['average_rating'] ?? 0) * 5;
-                return $score;
-            })->values();
+            $offers = $offers->sortByDesc($rankFn)->values();
         }
         
         // ✅ DEBUG : Logger le nombre d'offres final
@@ -396,6 +701,37 @@ class MarketplaceController extends Controller
         ]);
         
         return response()->json($offers);
+    }
+
+    /**
+     * Libellés catégories + options de tri (pour la barre de filtres).
+     */
+    public function filterOptions(Request $request)
+    {
+        $categories = [];
+        foreach (MarketplaceOffer::allowedCategoryKeys() as $key) {
+            $categories[] = [
+                'value' => $key,
+                'label' => MarketplaceOffer::categoryLabel($key),
+            ];
+        }
+
+        return response()->json([
+            'categories' => $categories,
+            'sort' => [
+                ['value' => 'match', 'label' => 'Pour vous (pertinence)'],
+                ['value' => 'newest', 'label' => 'Plus récentes'],
+                ['value' => 'price_asc', 'label' => 'Prix croissant'],
+                ['value' => 'price_desc', 'label' => 'Prix décroissant'],
+                ['value' => 'rating', 'label' => 'Mieux notées'],
+            ],
+            'offer_types' => [
+                ['value' => '', 'label' => 'Tous types'],
+                ['value' => 'product', 'label' => 'Produit'],
+                ['value' => 'service', 'label' => 'Service'],
+                ['value' => 'offer', 'label' => 'Offre'],
+            ],
+        ], 200);
     }
 
     /**
@@ -485,12 +821,34 @@ class MarketplaceController extends Controller
         
         // Vérifier si l'utilisateur est le vendeur
         $isSeller = $user && $offer->user_id === $user->id;
+
+        // Éligibilité avis : uniquement l'acheteur, après confirmation de réception.
+        $hasReviewed = false;
+        $canReview = false;
+        if ($user && ! $isSeller) {
+            $hasReviewed = MarketplaceReview::where('offer_id', $offer->id)
+                ->where('user_id', $user->id)
+                ->exists();
+
+            $buyerPurchase = MarketplacePurchase::where('offer_id', $offer->id)
+                ->where('buyer_id', $user->id)
+                ->where('status', 'completed')
+                ->orderByDesc('id')
+                ->first();
+
+            if ($buyerPurchase) {
+                $fs = $buyerPurchase->fulfillment_status ?? MarketplacePurchase::FULFILLMENT_COMPLETED;
+                $canReview = ! $hasReviewed && $fs === MarketplacePurchase::FULFILLMENT_COMPLETED;
+            }
+        }
         
         return response()->json([
             'id' => $offer->id,
             'title' => $offer->title,
             'description' => $offer->description,
             'type' => $offer->type,
+            'category' => $offer->category,
+            'category_label' => MarketplaceOffer::categoryLabel($offer->category),
             'price' => $offer->price,
             'currency' => $offer->currency,
             'image_url' => $offer->image_url, // Image principale (pour compatibilité)
@@ -505,6 +863,8 @@ class MarketplaceController extends Controller
             'latest_message' => $latestMessage, // Dernier message (pour le vendeur)
             'is_favorite' => $isFavorite,
             'is_seller' => $isSeller, // Indique si l'utilisateur actuel est le vendeur
+            'can_review' => $canReview,
+            'has_reviewed' => $hasReviewed,
             'created_at' => $offer->created_at,
         ]);
     }
@@ -519,10 +879,12 @@ class MarketplaceController extends Controller
         // ✅ CORRECTION : Validation améliorée pour éviter l'erreur 422
         // Si des images sont envoyées, elles doivent être valides
         // Si aucune image n'est envoyée, c'est accepté (nullable)
+        $catRule = 'nullable|string|in:'.implode(',', MarketplaceOffer::allowedCategoryKeys());
         $rules = [
             'title' => 'required|string|max:255',
             'description' => 'required|string',
             'type' => 'required|in:offer,product,service',
+            'category' => $catRule,
             'price' => 'required|numeric|min:0',
             'currency' => 'nullable|string|max:3',
         ];
@@ -561,11 +923,16 @@ class MarketplaceController extends Controller
             }
         }
         
+        $cat = $validated['category'] ?? null;
+        if (! $cat || ! in_array($cat, MarketplaceOffer::allowedCategoryKeys(), true)) {
+            $cat = 'autre';
+        }
         $offer = MarketplaceOffer::create([
             'user_id' => $user->id,
             'title' => $validated['title'],
             'description' => $validated['description'],
             'type' => $validated['type'],
+            'category' => $cat,
             'price' => $validated['price'],
             'currency' => $validated['currency'] ?? 'EUR',
             'image_url' => $imageUrl, // Image principale (première image)
@@ -785,6 +1152,26 @@ class MarketplaceController extends Controller
             'rating' => 'required|integer|min:1|max:5',
             'comment' => 'required|string|max:1000',
         ]);
+
+        // Pro: autoriser seulement si l'utilisateur a acheté et que la réception est confirmée.
+        $purchase = MarketplacePurchase::where('offer_id', $id)
+            ->where('buyer_id', $user->id)
+            ->where('status', 'completed')
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $purchase) {
+            throw ValidationException::withMessages([
+                'comment' => ['Vous devez avoir acheté cette offre pour laisser un avis.'],
+            ]);
+        }
+
+        $fs = $purchase->fulfillment_status ?? MarketplacePurchase::FULFILLMENT_COMPLETED;
+        if ($fs !== MarketplacePurchase::FULFILLMENT_COMPLETED) {
+            throw ValidationException::withMessages([
+                'comment' => ['Vous pouvez laisser un avis uniquement après confirmation de la réception.'],
+            ]);
+        }
         
         // Vérifier si l'utilisateur a déjà laissé un avis
         $existingReview = MarketplaceReview::where('offer_id', $id)
@@ -850,6 +1237,10 @@ class MarketplaceController extends Controller
         if ($idempotencyKey && !is_string($idempotencyKey)) {
             $idempotencyKey = null;
         }
+        // Le champ wallet_transactions.idempotency_key est un UUID (36 chars)
+        if (is_string($idempotencyKey) && !preg_match('/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/', $idempotencyKey)) {
+            $idempotencyKey = null;
+        }
 
         try {
             return DB::transaction(function () use ($buyer, $id, $idempotencyKey) {
@@ -912,6 +1303,7 @@ class MarketplaceController extends Controller
                     'price' => $offer->price,
                     'currency' => $currency,
                     'status' => 'completed',
+                    'fulfillment_status' => MarketplacePurchase::FULFILLMENT_PENDING,
                 ]);
 
                 // Ledger: débit acheteur
@@ -934,6 +1326,8 @@ class MarketplaceController extends Controller
                 ]);
 
                 // Ledger: crédit vendeur
+                // NB: idempotency_key est unique et au format UUID. On ne peut pas suffixer "-seller".
+                $sellerIdempotencyKey = $idempotencyKey ? (string) Str::uuid() : null;
                 $sellerTx = WalletTransaction::create([
                     'wallet_id' => $sellerWallet->id,
                     'user_id' => $sellerId,
@@ -944,10 +1338,11 @@ class MarketplaceController extends Controller
                     'status' => 'completed',
                     'marketplace_offer_id' => $offer->id,
                     'marketplace_purchase_id' => $purchase->id,
-                    'idempotency_key' => $idempotencyKey ? ($idempotencyKey . '-seller') : null,
+                    'idempotency_key' => $sellerIdempotencyKey,
                     'meta' => [
                         'buyer_id' => (int) $buyer->id,
                         'offer_title' => $offer->title,
+                        'buyer_idempotency_key' => $idempotencyKey,
                     ],
                     'completed_at' => now(),
                 ]);
@@ -1090,6 +1485,7 @@ class MarketplaceController extends Controller
             'title' => 'sometimes|string|max:255',
             'description' => 'sometimes|string',
             'type' => 'sometimes|in:offer,product,service',
+            'category' => 'sometimes|nullable|string|in:'.implode(',', MarketplaceOffer::allowedCategoryKeys()),
             'price' => 'sometimes|numeric|min:0',
             'currency' => 'nullable|string|max:3',
             'is_active' => 'sometimes|boolean',
@@ -1100,6 +1496,11 @@ class MarketplaceController extends Controller
         if (isset($validated['title'])) $offer->title = $validated['title'];
         if (isset($validated['description'])) $offer->description = $validated['description'];
         if (isset($validated['type'])) $offer->type = $validated['type'];
+        if (array_key_exists('category', $validated)) {
+            $offer->category = $validated['category'] && in_array($validated['category'], MarketplaceOffer::allowedCategoryKeys(), true)
+                ? $validated['category']
+                : 'autre';
+        }
         if (isset($validated['price'])) $offer->price = $validated['price'];
         if (isset($validated['currency'])) $offer->currency = $validated['currency'];
         if (isset($validated['is_active'])) $offer->is_active = $validated['is_active'];

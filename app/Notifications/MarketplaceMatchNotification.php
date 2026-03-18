@@ -4,11 +4,10 @@ namespace App\Notifications;
 
 use App\Models\MarketplaceOffer;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-class MarketplaceMatchNotification extends Notification implements ShouldQueue
+class MarketplaceMatchNotification extends Notification
 {
     use Queueable;
 
@@ -31,7 +30,9 @@ class MarketplaceMatchNotification extends Notification implements ShouldQueue
      */
     public function via(object $notifiable): array
     {
-        return ['database', 'mail'];
+        // Pour Marketplace, on privilégie l'alerte in-app (badge + liste) via la DB.
+        // L'email peut être ajouté plus tard via une config dédiée.
+        return ['database'];
     }
 
     /**

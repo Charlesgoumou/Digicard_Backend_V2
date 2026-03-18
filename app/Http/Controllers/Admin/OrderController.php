@@ -280,9 +280,14 @@ class OrderController extends Controller
 
         // Envoyer un email à l'utilisateur si la commande est validée
         if ($newStatus === 'validated') {
-            // ✅ NOUVEAU : Déclencher l'analyse de matching Marketplace en arrière-plan
+            // ✅ Matching Marketplace (queue ou sync selon config)
             try {
-                \App\Jobs\ProcessMarketplaceMatching::dispatch($order->user_id);
+                $driver = config('queue.default');
+                if ($driver === 'sync') {
+                    (new \App\Jobs\ProcessMarketplaceMatching((int) $order->user_id))->handle();
+                } else {
+                    \App\Jobs\ProcessMarketplaceMatching::dispatch($order->user_id);
+                }
                 Log::info('ProcessMarketplaceMatching: Job dispatché après validation manuelle de commande', [
                     'order_id' => $order->id,
                     'user_id' => $order->user_id
