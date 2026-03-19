@@ -227,8 +227,8 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::get('/marketplace/purchases/{purchaseId}', [MarketplaceController::class, 'getPurchaseReceipt'])->name('marketplace.purchases.receipt');
     Route::patch('/marketplace/purchases/{purchase}/fulfillment', [MarketplaceController::class, 'updatePurchaseFulfillment'])->name('marketplace.purchases.fulfillment');
     Route::patch('/marketplace/purchases/{purchase}/dispute', [MarketplaceController::class, 'requestDispute'])->name('marketplace.purchases.dispute');
-    // Mettre à jour une offre
-    Route::put('/marketplace/offers/{id}', [MarketplaceController::class, 'update'])->name('marketplace.offers.update');
+    // Mettre à jour une offre (POST accepté pour multipart/form-data + _method=PUT)
+    Route::match(['put', 'post'], '/marketplace/offers/{id}', [MarketplaceController::class, 'update'])->name('marketplace.offers.update');
     // Supprimer une offre
     Route::delete('/marketplace/offers/{id}', [MarketplaceController::class, 'destroy'])->name('marketplace.offers.destroy');
     // Récupérer les statistiques d'une offre

@@ -1492,18 +1492,44 @@ class MarketplaceController extends Controller
             'images.*' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120',
         ]);
         
-        // Mettre à jour les champs de base
-        if (isset($validated['title'])) $offer->title = $validated['title'];
-        if (isset($validated['description'])) $offer->description = $validated['description'];
-        if (isset($validated['type'])) $offer->type = $validated['type'];
+        // Mettre à jour les champs de base (validated)
+        if (isset($validated['title'])) {
+            $offer->title = $validated['title'];
+        }
+        if (isset($validated['description'])) {
+            $offer->description = $validated['description'];
+        }
+        if (isset($validated['type'])) {
+            $offer->type = $validated['type'];
+        }
         if (array_key_exists('category', $validated)) {
             $offer->category = $validated['category'] && in_array($validated['category'], MarketplaceOffer::allowedCategoryKeys(), true)
                 ? $validated['category']
                 : 'autre';
         }
-        if (isset($validated['price'])) $offer->price = $validated['price'];
-        if (isset($validated['currency'])) $offer->currency = $validated['currency'];
-        if (isset($validated['is_active'])) $offer->is_active = $validated['is_active'];
+        if (isset($validated['price'])) {
+            $offer->price = $validated['price'];
+        }
+        if (isset($validated['currency'])) {
+            $offer->currency = strtoupper(substr(preg_replace('/[^A-Za-z]/', '', (string) $validated['currency']), 0, 3)) ?: $offer->currency;
+        }
+        if (isset($validated['is_active'])) {
+            $offer->is_active = $validated['is_active'];
+        }
+
+        // Lecture explicite depuis la requête (multipart/form-data) pour prix et devise
+        if ($request->has('price')) {
+            $p = $request->input('price');
+            if ($p !== null && $p !== '' && is_numeric($p)) {
+                $offer->price = (float) $p;
+            }
+        }
+        if ($request->has('currency')) {
+            $cur = strtoupper(preg_replace('/[^A-Za-z]/', '', (string) $request->input('currency')));
+            if (strlen($cur) === 3) {
+                $offer->currency = $cur;
+            }
+        }
         
         // Gérer l'upload de nouvelles images si fournies
         if ($request->hasFile('images')) {
@@ -1549,7 +1575,31 @@ class MarketplaceController extends Controller
             $offer->load('seller:id,name');
         }
         
-        return response()->json($offer, 200);
+        // Réponse au même format que la liste/détail (category_label, images, etc.)
+        $images = [];
+        if ($offer->relationLoaded('images') && $offer->images) {
+            $images = $offer->images->map(function ($img) {
+                return ['id' => $img->id, 'url' => $img->image_url, 'image_url' => $img->image_url, 'order' => $img->order, 'is_primary' => (bool) $img->is_primary];
+            })->sortBy('order')->values()->toArray();
+        }
+        $payload = [
+            'id' => $offer->id,
+            'title' => $offer->title,
+            'description' => $offer->description,
+            'type' => $offer->type,
+            'category' => $offer->category,
+            'category_label' => MarketplaceOffer::categoryLabel($offer->category),
+            'price' => $offer->price,
+            'currency' => $offer->currency,
+            'image_url' => $offer->image_url,
+            'images' => $images,
+            'is_active' => (bool) $offer->is_active,
+            'seller_id' => $offer->user_id,
+            'user_id' => $offer->user_id,
+            'seller_name' => $offer->seller ? ($offer->seller->name ?? 'Anonyme') : 'Anonyme',
+            'created_at' => $offer->created_at,
+        ];
+        return response()->json($payload, 200);
     }
 
     /**
