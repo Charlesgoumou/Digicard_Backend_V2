@@ -1165,6 +1165,63 @@ class OrderController extends Controller
     }
 
     /**
+     * Mettre à jour les groupes de sécurité d'une commande business (pour /personnel -> onglet Paramètres).
+     */
+    public function updateSecurityGroups(Request $request, Order $order)
+    {
+        $user = $request->user();
+
+        // Autoriser uniquement le propriétaire de la commande (business_admin)
+        if ($user->role !== 'business_admin' || $order->user_id !== $user->id) {
+            return response()->json(['message' => 'Commande non trouvée.'], 404);
+        }
+
+        if ($order->status === 'cancelled') {
+            return response()->json(['message' => "Cette commande a été annulée et ne peut plus être modifiée."], 400);
+        }
+
+        if ($order->order_type !== 'business' && $order->order_type !== 'entreprise') {
+            return response()->json(['message' => "Action non autorisée pour ce type de commande."], 403);
+        }
+
+        $validated = $request->validate([
+            'security_groups' => 'nullable|array',
+            'security_groups.*' => 'required|string|max:80',
+            'group_security_configs' => 'nullable|array',
+            'group_security_configs.*' => 'nullable|array',
+        ]);
+
+        $groups = $validated['security_groups'] ?? [];
+        $incomingConfigs = $validated['group_security_configs'] ?? [];
+
+        $normalized = [];
+        $alignedConfigs = [];
+        foreach ($groups as $i => $g) {
+            $v = trim((string) $g);
+            if ($v === '') {
+                continue;
+            }
+            if (in_array($v, $normalized, true)) {
+                continue;
+            }
+            $normalized[] = $v;
+            $cfg = $incomingConfigs[$i] ?? null;
+            $alignedConfigs[] = is_array($cfg) && $cfg !== [] ? $cfg : null;
+        }
+
+        $order->security_groups = $normalized;
+        $order->group_security_configs = $alignedConfigs;
+        $order->save();
+
+        return response()->json([
+            'message' => 'Groupes mis à jour avec succès.',
+            'security_groups' => $order->security_groups ?? [],
+            'group_security_configs' => $order->group_security_configs ?? [],
+            'order' => $order,
+        ], 200);
+    }
+
+    /**
      * Uploader un design personnalisé pour une commande
      */
     public function uploadCustomDesign(Request $request)

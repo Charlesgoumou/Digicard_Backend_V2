@@ -44,6 +44,8 @@ class Order extends Model
         'card_quantity',
         'total_employees',
         'employee_slots',
+        'security_groups',
+        'group_security_configs',
         'cards_per_employee',
         'unit_price',
         'total_price',
@@ -62,6 +64,8 @@ class Order extends Model
         'subscription_start_date' => 'date',
         'is_configured' => 'boolean',
         'employee_slots' => 'array',
+        'security_groups' => 'array',
+        'group_security_configs' => 'array',
         'phone_numbers' => 'array',
         'emails' => 'array',
     ];

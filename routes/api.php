@@ -130,6 +130,7 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::delete('/employees/{employee}', [EmployeeController::class, 'destroy'])->name('employees.destroy');
     Route::post('/employees/{employee}/add-card', [EmployeeController::class, 'addCard'])->name('employees.add-card');
     Route::post('/employees/{employee}/remove-card', [EmployeeController::class, 'removeCard'])->name('employees.remove-card');
+    Route::post('/employees/{employee}/reset-device', [EmployeeController::class, 'resetDevice'])->name('employees.reset-device');
     // Assigner un employé à un slot
     Route::post('/orders/{orderId}/slots/{slotNumber}/assign', [EmployeeController::class, 'assignSlot'])->name('orders.slots.assign');
 
@@ -146,6 +147,7 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::get('/additional-payments/{additionalPaymentId}/check-status', [OrderController::class, 'checkAdditionalPaymentStatus'])->name('additional-payments.check-status');
     Route::patch('/orders/{order}/configure', [OrderController::class, 'markAsConfigured'])->name('orders.configure');
     Route::patch('/orders/{order}/profile', [OrderController::class, 'updateProfile'])->name('orders.profile.update');
+    Route::patch('/orders/{order}/security-groups', [OrderController::class, 'updateSecurityGroups'])->name('orders.security-groups.update');
     Route::post('/orders/{order}/avatar', [OrderController::class, 'uploadOrderAvatar'])->name('orders.avatar.upload');
     Route::post('/orders/{order}/use-profile-avatar', [OrderController::class, 'useProfileAvatar'])->name('orders.avatar.use-profile');
     Route::post('/orders/upload-custom-design', [OrderController::class, 'uploadCustomDesign'])->name('orders.upload-custom-design');

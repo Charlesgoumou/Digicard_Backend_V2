@@ -91,7 +91,7 @@ class EmployeeController extends Controller
 
          // Récupérer les employés avec leurs cartes
          $employees = $admin->employees()
-             ->select('id', 'name', 'email', 'username', 'email_verified_at', 'created_at')
+             ->select('id', 'name', 'email', 'username', 'email_verified_at', 'created_at', 'device_uuid', 'device_label')
              ->get()
              ->map(function ($employee) {
                  // Calculer le nombre total de cartes pour cet employé
@@ -103,6 +103,28 @@ class EmployeeController extends Controller
              });
 
          return response()->json($employees);
+    }
+
+    /**
+     * Réinitialise l'appareil lié à un employé (déverrouillage / changement de téléphone).
+     */
+    public function resetDevice(Request $request, User $employee)
+    {
+        $admin = $request->user();
+
+        if ($admin->role !== 'business_admin') {
+            return response()->json(['message' => 'Action non autorisée.'], 403);
+        }
+
+        if ($employee->business_admin_id !== $admin->id) {
+            return response()->json(['message' => 'Employé non trouvé ou non autorisé.'], 404);
+        }
+
+        $employee->device_uuid = null;
+        $employee->device_label = null;
+        $employee->save();
+
+        return response()->json(['message' => 'Appareil réinitialisé avec succès.'], 200);
     }
 
      /**
@@ -720,6 +742,9 @@ class EmployeeController extends Controller
         $validated = $request->validate([
             'employee_name' => 'required|string|max:255',
             'employee_email' => 'required|email|max:255',
+            'employee_matricule' => 'nullable|string|max:255',
+            'employee_department' => 'nullable|string|max:255',
+            'employee_group' => 'nullable|string|max:255',
         ]);
 
         try {
@@ -922,6 +947,9 @@ if ($existingEmployee) {
                 [
                     'employee_email' => $employee->email,
                     'employee_name' => $employee->name,
+                    'employee_matricule' => $validated['employee_matricule'] ?? null,
+                    'employee_department' => $validated['employee_department'] ?? null,
+                    'employee_group' => $validated['employee_group'] ?? null,
                     'card_quantity' => max(1, $slots[$slotIndex]['cards_quantity']), // ✅ MINIMUM 1 carte
                     'is_configured' => false,
                 ]

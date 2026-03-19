@@ -14,6 +14,9 @@ class OrderEmployee extends Model
         'employee_id',
         'employee_email',
         'employee_name',
+        'employee_matricule',
+        'employee_department',
+        'employee_group',
         'card_quantity',
         'is_configured',
         // Champs de profil individuels
