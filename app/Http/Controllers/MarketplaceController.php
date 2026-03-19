@@ -1704,7 +1704,18 @@ class MarketplaceController extends Controller
         }
         
         try {
-            $messages = MarketplaceMessage::where('offer_id', $offer->id)
+            $query = MarketplaceMessage::where('offer_id', $offer->id);
+
+            // "Article" = 1 offre pour la messagerie seller
+            // Mais un acheteur ne doit voir que ses échanges avec le vendeur (pas les autres acheteurs).
+            if (! $isSeller) {
+                $query->where(function ($q) use ($user) {
+                    $q->where('sender_id', $user->id)
+                      ->orWhere('receiver_id', $user->id);
+                });
+            }
+
+            $messages = $query
                 ->with(['sender', 'receiver', 'offer'])
                 ->orderBy('created_at', 'asc')
                 ->get()
