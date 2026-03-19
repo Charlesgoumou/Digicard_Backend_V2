@@ -7,6 +7,7 @@ use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use App\Http\Middleware\EnsureUserIsAdmin;
+use App\Http\Middleware\EnsureAdminHasPermission;
 use App\Http\Middleware\EnsureFrontendRequestsAreStateful;
 use App\Http\Middleware\HandleCors;
 
@@ -60,6 +61,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'admin' => EnsureUserIsAdmin::class,
+            'admin_permission' => EnsureAdminHasPermission::class,
         ]);
 
     })

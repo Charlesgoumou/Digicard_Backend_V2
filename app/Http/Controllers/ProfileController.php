@@ -3,9 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Services\ImageCompressionService;
+use App\Jobs\ProcessMarketplaceMatching;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Cache;
 // ❗️ JeroenDesloovere\VCard\VCard n'est plus nécessaire ici
 
 class ProfileController extends Controller
@@ -24,6 +26,9 @@ class ProfileController extends Controller
     public function update(Request $request)
     {
         $user = $request->user();
+
+        $beforeTitle = $user->title;
+        $beforeWebsite = $user->website_url;
 
         $validatedData = $request->validate([
             // Le username n'est plus modifiable - il est généré automatiquement
@@ -59,6 +64,21 @@ class ProfileController extends Controller
         ]);
 
         $user->update($validatedData);
+
+        // Déclencher le matching si le titre ou le site web a changé (throttle léger)
+        $afterTitle = $user->title;
+        $afterWebsite = $user->website_url;
+        if ($beforeTitle !== $afterTitle || $beforeWebsite !== $afterWebsite) {
+            $throttleKey = "marketplace_matching_trigger_{$user->id}";
+            if (!Cache::has($throttleKey)) {
+                Cache::put($throttleKey, true, now()->addSeconds(45));
+                if (config('queue.default') === 'sync') {
+                    (new ProcessMarketplaceMatching($user->id))->handle();
+                } else {
+                    ProcessMarketplaceMatching::dispatch($user->id);
+                }
+            }
+        }
 
         return response()->json($user->fresh());
     }
