@@ -1,7 +1,25 @@
 /**
- * Pointage — profil public : arrivée / départ (même empreinte que useDeviceFingerprint).
+ * Pointage — profil public : reconnaissance silencieuse (arcc_emp_access_token + verify-identity).
  */
 /* global window, document, navigator, crypto */
+
+const EMP_AUTH_LS_KEY = "arcc_emp_access_token";
+
+function readEmpAuthTokenForOrder(orderId) {
+  if (orderId == null || orderId === "") return null;
+  try {
+    const raw = localStorage.getItem(EMP_AUTH_LS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && parsed.byOrder) {
+      const t = parsed.byOrder[String(orderId)];
+      return typeof t === "string" && t.length > 0 ? t : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 async function sha256Hex(input) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
@@ -166,7 +184,6 @@ function writeStoredSeal(orderId, uuid, model) {
   }
 }
 
-/** Même logique que le frontend Vue : UUID stable par commande sur cet appareil. */
 async function getOrCreateDeviceIdentity(orderId) {
   if (orderId == null || orderId === "") {
     return computeDeviceIdentity();
@@ -181,7 +198,6 @@ async function getOrCreateDeviceIdentity(orderId) {
   return fresh;
 }
 
-/** Anneau GeoJSON [lng,lat][] */
 function pointInPolygonRing(lng, lat, ring) {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -196,8 +212,8 @@ function pointInPolygonRing(lng, lat, ring) {
   return inside;
 }
 
-function readBootstrap() {
-  const el = document.getElementById("pointage-bootstrap");
+function readPublicMeta() {
+  const el = document.getElementById("pointage-public-meta");
   if (!el) return null;
   try {
     return JSON.parse(el.textContent || "{}");
@@ -237,7 +253,7 @@ function formatTimeFrFromIso(iso) {
 }
 
 function applyPointageButtonUI(btn, dayStatus) {
-  const cap = document.getElementById("pointage-btn-caption");
+  const cap = btn.querySelector(".pointage-btn-caption");
   if (dayStatus === "CHECKED_IN") {
     btn.title = "Pointer le Départ";
     btn.setAttribute("aria-label", "Pointer le Départ");
@@ -263,72 +279,68 @@ function getPositionHighAccuracy() {
   });
 }
 
-function hidePointageButtonPermanently(btn) {
-  if (!btn) return;
+function createPointageButton() {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.id = "pointage-action-btn";
+  btn.className =
+    "social-icon pointage text-gray-400 relative cursor-pointer flex-col gap-0.5 inline-flex";
   btn.style.display = "none";
-  btn.setAttribute("hidden", "hidden");
-  btn.setAttribute("aria-hidden", "true");
+  btn.title = "Pointer l’arrivée";
+  btn.setAttribute("aria-label", "Pointer l’arrivée");
+  btn.innerHTML = `
+    <svg fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" class="w-7 h-7 flex-shrink-0">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+    <span class="pointage-btn-caption text-[0.5rem] text-slate-500 text-center leading-tight max-w-[5.75rem] hidden sm:block select-none"></span>
+    <span class="pointage-spinner hidden absolute inset-0 flex items-center justify-center bg-slate-900/60 rounded-md">
+      <span class="w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></span>
+    </span>
+    <span class="absolute -top-1 -right-1 w-3 h-3 bg-amber-400 rounded-full animate-pulse"></span>
+  `;
+  return btn;
 }
 
-async function run() {
-  const boot = readBootstrap();
-  const btn = document.getElementById("pointage-action-btn");
-  if (!boot || !btn || !boot.username) return;
+async function runSilentPointage() {
+  const meta = readPublicMeta();
+  if (!meta || !meta.eligible || !meta.username || !meta.order_id) {
+    return;
+  }
 
-  const apiRoot = (boot.api_base || "").replace(/\/$/, "");
-  const urlBind = `${apiRoot}/api/public/device/bind`;
-  const urlVerify = `${apiRoot}/api/public/pointage/verify`;
+  const empToken = readEmpAuthTokenForOrder(meta.order_id);
+  if (!empToken) {
+    return;
+  }
+
+  if (!window.crypto?.subtle) {
+    return;
+  }
+
+  const anchor = document.getElementById("pointage-employee-anchor");
+  if (!anchor || !anchor.parentNode) {
+    return;
+  }
+
+  const apiRoot = (meta.api_base || "").replace(/\/$/, "");
+  const urlVerifyIdentity = `${apiRoot}/api/public/pointage/verify-identity`;
   const urlCheckIn = `${apiRoot}/api/public/pointage/check-in`;
   const urlCheckOut = `${apiRoot}/api/public/pointage/check-out`;
-
-  const spinner = btn.querySelector(".pointage-spinner");
-  const showInitLoading = () => {
-    btn.style.display = "inline-flex";
-    btn.style.opacity = "0.85";
-    btn.disabled = true;
-    if (spinner) spinner.classList.remove("hidden");
-  };
-  const hideInitLoading = () => {
-    btn.style.opacity = "";
-    btn.disabled = false;
-    if (spinner) spinner.classList.add("hidden");
-  };
 
   let session = null;
   let devicePayload = null;
 
-  showInitLoading();
   try {
-    const { uuid, model } = await getOrCreateDeviceIdentity(boot.order_id || null);
+    const { uuid, model } = await getOrCreateDeviceIdentity(meta.order_id);
+    writeStoredSeal(meta.order_id, uuid, model);
     devicePayload = {
-      username: boot.username,
+      username: meta.username,
+      order_id: meta.order_id,
+      emp_auth_token: empToken,
       device_uuid: uuid,
       device_model: model,
-      order_id: boot.order_id || null,
-      access_token: boot.access_token || null,
-      short_code: boot.short_code || null,
     };
 
-    const resBind = await fetch(urlBind, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(devicePayload),
-    });
-    const bindData = await resBind.json().catch(() => ({}));
-    if (!resBind.ok || bindData.ok === false) {
-      hideInitLoading();
-      hidePointageButtonPermanently(btn);
-      if (bindData.code === "device_mismatch" || resBind.status === 409) {
-        showModal("Appareil non reconnu", "Cette commande est liée à un autre téléphone. Contactez votre administrateur pour réinitialiser l’appareil.", true);
-      }
-      return;
-    }
-    writeStoredSeal(boot.order_id, uuid, model);
-
-    const res = await fetch(urlVerify, {
+    const res = await fetch(urlVerifyIdentity, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -338,21 +350,13 @@ async function run() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
-      hideInitLoading();
-      if (data.code === "device_mismatch" || data.code === "model_mismatch") {
-        hidePointageButtonPermanently(btn);
-        showModal(
-          "Appareil non reconnu",
-          data.code === "model_mismatch"
-            ? "Le modèle d’appareil ne correspond pas à l’enregistrement. Contactez votre administrateur."
-            : "Cette commande est liée à un autre téléphone. Contactez votre administrateur pour réinitialiser l’appareil.",
-          true,
-        );
-      } else {
-        btn.style.display = "none";
+      if (data.code === "outside_schedule" || data.code === "pointage_unavailable") {
+        return;
+      }
+      if (data.code === "device_mismatch" || data.code === "invalid_enrollment") {
         showModal(
           "Pointage",
-          (data && data.message) || "Impossible de vérifier le pointage. Actualisez la page ou réessayez plus tard.",
+          "Cet appareil ne correspond pas à votre enregistrement ou le jeton n’est plus valide. Ouvrez votre espace personnel sur ce téléphone pour mettre à jour la liaison.",
           true,
         );
       }
@@ -361,16 +365,15 @@ async function run() {
     session = data;
     if (!session.day_status) session.day_status = "NOT_STARTED";
   } catch (e) {
-    console.warn("[pointage] verify failed", e);
-    hideInitLoading();
-    btn.style.display = "none";
+    console.warn("[pointage] verify-identity failed", e);
     return;
   }
 
-  hideInitLoading();
+  const btn = createPointageButton();
+  anchor.replaceWith(btn);
 
-  // Visibilité : ne pas se fier à l’heure locale du téléphone (décalage vs app.timezone).
-  // Le serveur refuse déjà check-in/out hors plage (outside_schedule).
+  const spinner = btn.querySelector(".pointage-spinner");
+
   const refreshVisibility = () => {
     if (!session) {
       btn.style.display = "none";
@@ -424,7 +427,12 @@ async function run() {
       }
 
       const apiBody = {
-        ...devicePayload,
+        username: devicePayload.username,
+        device_uuid: devicePayload.device_uuid,
+        device_model: devicePayload.device_model,
+        order_id: devicePayload.order_id,
+        access_token: null,
+        short_code: null,
         latitude: lat,
         longitude: lng,
       };
@@ -435,16 +443,16 @@ async function run() {
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify(apiBody),
         });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.ok) {
+        const cdata = await res.json().catch(() => ({}));
+        if (!res.ok || !cdata.ok) {
           let msg =
-            data.code === "already_checked_in"
+            cdata.code === "already_checked_in"
               ? "Vous avez déjà pointé votre arrivée aujourd'hui."
-              : data.message || "Impossible d'enregistrer l'arrivée.";
-          if (data.code === "outside_polygon") {
+              : cdata.message || "Impossible d'enregistrer l'arrivée.";
+          if (cdata.code === "outside_polygon") {
             msg = "Vous devez être à l'intérieur de la zone de l'entreprise pour pointer.";
           }
-          if (data.code === "outside_schedule") {
+          if (cdata.code === "outside_schedule") {
             msg = "Le pointage n'est pas autorisé en dehors des plages horaires définies pour votre groupe.";
           }
           showModal("Pointage", msg, true);
@@ -460,7 +468,9 @@ async function run() {
           month: "long",
           day: "numeric",
         });
-        const timeStr = formatTimeFrFromIso(data.check_in_time) || now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        const timeStr =
+          formatTimeFrFromIso(cdata.check_in_time) ||
+          now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
         const posStr = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
         showModal(
           "Pointage",
@@ -474,13 +484,13 @@ async function run() {
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify(apiBody),
         });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.ok) {
-          let msg = data.message || "Impossible d'enregistrer le départ.";
-          if (data.code === "no_check_in_today") msg = "Aucune arrivée enregistrée pour aujourd'hui.";
-          if (data.code === "already_checked_out") msg = "Le départ est déjà enregistré pour aujourd'hui.";
-          if (data.code === "outside_polygon") msg = "Vous devez être à l'intérieur de la zone de l'entreprise pour pointer.";
-          if (data.code === "outside_schedule") {
+        const cdata = await res.json().catch(() => ({}));
+        if (!res.ok || !cdata.ok) {
+          let msg = cdata.message || "Impossible d'enregistrer le départ.";
+          if (cdata.code === "no_check_in_today") msg = "Aucune arrivée enregistrée pour aujourd'hui.";
+          if (cdata.code === "already_checked_out") msg = "Le départ est déjà enregistré pour aujourd'hui.";
+          if (cdata.code === "outside_polygon") msg = "Vous devez être à l'intérieur de la zone de l'entreprise pour pointer.";
+          if (cdata.code === "outside_schedule") {
             msg = "Le pointage n'est pas autorisé en dehors des plages horaires définies pour votre groupe.";
           }
           showModal("Pointage", msg, true);
@@ -489,12 +499,8 @@ async function run() {
         session.day_status = "COMPLETED";
         session.can_check_in = false;
         session.can_check_out = false;
-        const outTime = formatTimeFrFromIso(data.check_out_time);
-        showModal(
-          "Pointage",
-          `Départ enregistré avec succès à ${outTime}. Bonne soirée !`,
-          false,
-        );
+        const outTime = formatTimeFrFromIso(cdata.check_out_time);
+        showModal("Pointage", `Départ enregistré avec succès à ${outTime}. Bonne soirée !`, false);
         refreshVisibility();
       }
     } catch (e) {
@@ -507,6 +513,15 @@ async function run() {
   });
 }
 
-document.addEventListener("DOMContentLoaded", run);
+function scheduleRun() {
+  const go = () => runSilentPointage().catch((e) => console.warn("[pointage]", e));
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(() => go(), { timeout: 2500 });
+  } else {
+    window.setTimeout(go, 0);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", scheduleRun);
 
 window.closePointageFeedbackModal = closeModal;

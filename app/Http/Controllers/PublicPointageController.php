@@ -46,6 +46,77 @@ class PublicPointageController extends Controller
 
         ['orderEmployee' => $orderEmployee, 'cfg' => $cfg, 'polygon' => $polygon] = $ctx;
 
+        return response()->json($this->buildVerifySuccessPayload($orderEmployee, $cfg, $polygon));
+    }
+
+    /**
+     * Reconnaissance silencieuse : jeton d’enrôlement (localStorage) + UUID appareil + profil public.
+     * Ne renvoie les données de pointage que si le créneau horaire groupe est actif (timezone app).
+     */
+    public function verifyIdentity(Request $request)
+    {
+        $validated = $request->validate([
+            'username' => 'required|string|max:255',
+            'order_id' => 'required|integer|exists:orders,id',
+            'emp_auth_token' => 'required|string|max:128',
+            'device_uuid' => 'required|string|max:128',
+            'device_model' => 'required|string|max:255',
+        ]);
+
+        $user = User::where('username', $validated['username'])->first();
+        if (! $user || $user->role !== 'employee') {
+            return response()->json(['ok' => false, 'code' => 'unauthorized'], 403);
+        }
+
+        $orderEmployee = OrderEmployee::where('order_id', $validated['order_id'])
+            ->where('employee_id', $user->id)
+            ->first();
+
+        if (! $orderEmployee || ! $orderEmployee->is_configured) {
+            return response()->json(['ok' => false, 'code' => 'unauthorized'], 403);
+        }
+
+        $storedToken = (string) ($orderEmployee->emp_auth_token ?? '');
+        if ($storedToken === '' || ! hash_equals($storedToken, $validated['emp_auth_token'])) {
+            return response()->json(['ok' => false, 'code' => 'invalid_enrollment'], 403);
+        }
+
+        if (! $orderEmployee->device_uuid || $orderEmployee->device_uuid !== $validated['device_uuid']) {
+            return response()->json(['ok' => false, 'code' => 'device_mismatch'], 403);
+        }
+
+        if (! $this->deviceModelsMatch($orderEmployee->device_model, $validated['device_model'])) {
+            return response()->json(['ok' => false, 'code' => 'model_mismatch'], 403);
+        }
+
+        $pseudo = [
+            'username' => $validated['username'],
+            'device_uuid' => $validated['device_uuid'],
+            'device_model' => $validated['device_model'],
+            'order_id' => $validated['order_id'],
+            'access_token' => null,
+            'short_code' => null,
+        ];
+
+        $ctx = $this->resolvePointageContext($pseudo);
+        if ($ctx instanceof \Illuminate\Http\JsonResponse) {
+            return response()->json(['ok' => false, 'code' => 'pointage_unavailable'], 403);
+        }
+
+        ['orderEmployee' => $oe, 'cfg' => $cfg, 'polygon' => $polygon] = $ctx;
+
+        if (! $this->isWithinSchedule($cfg)) {
+            return response()->json(['ok' => false, 'code' => 'outside_schedule'], 403);
+        }
+
+        $payload = $this->buildVerifySuccessPayload($oe, $cfg, $polygon);
+        $payload['within_schedule'] = true;
+
+        return response()->json($payload);
+    }
+
+    private function buildVerifySuccessPayload(OrderEmployee $orderEmployee, array $cfg, array $polygon): array
+    {
         $dayStatus = $this->resolveDayStatus($orderEmployee);
         $weekdaysNorm = $this->normalizeWeekdayBits($cfg['calendar']['weekdays'] ?? []);
         $payload = [
@@ -76,7 +147,7 @@ class PublicPointageController extends Controller
             $payload['duration_minutes'] = $todayRow->duration_minutes;
         }
 
-        return response()->json($payload);
+        return $payload;
     }
 
     /**

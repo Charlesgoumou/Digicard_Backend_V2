@@ -882,13 +882,69 @@ class OrderController extends Controller
     }
 
     /**
+     * Jeton longue durée pour reconnaissance silencieuse du profil public (stocké en localStorage employé).
+     */
+    private function issueEmpAuthTokenIfMissing(OrderEmployee $orderEmployee): void
+    {
+        if (! empty($orderEmployee->emp_auth_token)) {
+            return;
+        }
+        $orderEmployee->emp_auth_token = Str::random(64);
+        $orderEmployee->save();
+    }
+
+    /**
+     * Retourne (et crée si besoin) le jeton d’enrôlement pour le pointage sur profil public.
+     */
+    public function getEmpAuthToken(Request $request, Order $order)
+    {
+        $user = $request->user();
+
+        if ($user->role !== 'employee') {
+            return response()->json(['message' => 'Action non autorisée.'], 403);
+        }
+
+        if (! $this->canAccessOrder($user, $order)) {
+            return response()->json(['message' => 'Commande non trouvée.'], 404);
+        }
+
+        $ot = (string) ($order->order_type ?? '');
+        if ($ot !== 'business' && $ot !== 'entreprise') {
+            return response()->json(['message' => 'Non applicable.'], 422);
+        }
+
+        if ($order->status === 'cancelled') {
+            return response()->json(['message' => 'Cette commande a été annulée.'], 400);
+        }
+
+        $orderEmployee = OrderEmployee::where('order_id', $order->id)
+            ->where('employee_id', $user->id)
+            ->first();
+
+        if (! $orderEmployee || ! $orderEmployee->is_configured) {
+            return response()->json(['message' => 'Carte non configurée pour cette commande.'], 422);
+        }
+
+        if (! $orderEmployee->device_uuid) {
+            return response()->json(['message' => 'Liez d’abord votre appareil depuis l’espace personnel.'], 422);
+        }
+
+        $this->issueEmpAuthTokenIfMissing($orderEmployee);
+        $orderEmployee->refresh();
+
+        return response()->json([
+            'emp_auth_token' => $orderEmployee->emp_auth_token,
+        ]);
+    }
+
+    /**
      * Enregistre l'empreinte d'appareil pour l'employé sur cette commande (appareil unique par commande).
      */
     public function sealDevice(Request $request, Order $order)
     {
         $user = $request->user();
 
-        if (!$this->canAccessOrder($user, $order)) {
+        if (! $this->canAccessOrder($user, $order)) {
             return response()->json(['message' => 'Commande non trouvée.'], 404);
         }
 
@@ -896,7 +952,8 @@ class OrderController extends Controller
             return response()->json(['message' => 'Cette commande a été annulée.'], 400);
         }
 
-        if ($order->order_type !== 'business') {
+        $ot = (string) ($order->order_type ?? '');
+        if ($ot !== 'business' && $ot !== 'entreprise') {
             return response()->json(['message' => 'Liaison d\'appareil réservée aux commandes entreprise.'], 422);
         }
 
@@ -909,11 +966,11 @@ class OrderController extends Controller
             ->where('employee_id', $user->id)
             ->first();
 
-        if (!$orderEmployee) {
+        if (! $orderEmployee) {
             return response()->json(['message' => 'Aucune assignation pour cette commande.'], 404);
         }
 
-        if (!$orderEmployee->is_configured) {
+        if (! $orderEmployee->is_configured) {
             return response()->json(['message' => 'Configurez d\'abord votre carte avant de lier un appareil.'], 422);
         }
 
@@ -926,15 +983,27 @@ class OrderController extends Controller
             }
             $orderEmployee->device_model = $validated['device_model'];
             $orderEmployee->save();
+            $this->issueEmpAuthTokenIfMissing($orderEmployee);
+            $orderEmployee->refresh();
 
-            return response()->json(['message' => 'Appareil déjà enregistré.', 'sealed' => true]);
+            return response()->json([
+                'message' => 'Appareil déjà enregistré.',
+                'sealed' => true,
+                'emp_auth_token' => $orderEmployee->emp_auth_token,
+            ]);
         }
 
         $orderEmployee->device_uuid = $validated['device_uuid'];
         $orderEmployee->device_model = $validated['device_model'];
         $orderEmployee->save();
+        $this->issueEmpAuthTokenIfMissing($orderEmployee);
+        $orderEmployee->refresh();
 
-        return response()->json(['message' => 'Appareil lié avec succès.', 'sealed' => true]);
+        return response()->json([
+            'message' => 'Appareil lié avec succès.',
+            'sealed' => true,
+            'emp_auth_token' => $orderEmployee->emp_auth_token,
+        ]);
     }
 
     /**
