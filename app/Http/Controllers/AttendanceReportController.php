@@ -10,7 +10,9 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
-use Symfony\Component\HttpFoundation\Response;
+use Illuminate\Support\Str;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 /**
  * Rapports d'assiduité (pointage) pour les business_admin.
@@ -166,22 +168,21 @@ class AttendanceReportController extends Controller
 
         $stats = $this->recomputeGlobalStats($orderEmployees, $pointages, $securityGroups, $groupConfigs, $dateStr, $dow, $tz);
 
+        // Données : table order_employee_pointages (équivalent métier attendance_logs)
         return response()->json([
             'date' => $dateStr,
             'order_id' => $order->id,
+            'data_source' => 'order_employee_pointages',
             'stats' => $stats,
             'groups' => $resultGroups,
         ]);
     }
 
     /**
-     * Export pointage : CSV (compatible Excel, UTF-8 BOM) ou PDF.
-     *
-     * Query : order_id, date (ancre), period (day|week|month|quarter|semester|year),
-     * group_index (optionnel, index du groupe de sécurité), ungrouped=1 (non classés),
-     * format=csv|pdf (défaut csv).
+     * GET /api/business/reports/attendance/export
+     * Query: order_id, period (day|week|month|quarter|semester|year), date (ancre), group_index (null=tous, -1=non assignés, 0+=index groupe), format (csv|xlsx|pdf)
      */
-    public function export(Request $request): Response
+    public function export(Request $request)
     {
         $user = $request->user();
         if (!$user || $user->role !== 'business_admin') {
@@ -191,10 +192,9 @@ class AttendanceReportController extends Controller
         $validated = $request->validate([
             'order_id' => 'required|integer|exists:orders,id',
             'period' => 'nullable|string|in:day,week,month,quarter,semester,year',
-            'group_index' => 'nullable|integer|min:0',
-            'ungrouped' => 'nullable|boolean',
+            'group_index' => 'nullable|integer|min:-1',
             'date' => 'nullable|date_format:Y-m-d',
-            'format' => 'nullable|string|in:csv,pdf',
+            'format' => 'nullable|string|in:csv,xlsx,pdf',
         ]);
 
         $order = Order::findOrFail($validated['order_id']);
@@ -203,225 +203,246 @@ class AttendanceReportController extends Controller
         }
 
         $tz = config('app.timezone');
-        $anchorStr = $validated['date'] ?? Carbon::today($tz)->toDateString();
-        $anchor = Carbon::parse($anchorStr, $tz)->startOfDay();
+        $anchor = Carbon::parse($validated['date'] ?? Carbon::today($tz)->toDateString(), $tz)->startOfDay();
         $period = $validated['period'] ?? 'day';
-        $format = $validated['format'] ?? 'csv';
+        $format = $validated['format'] ?? 'xlsx';
 
-        [$from, $to] = $this->resolvePeriodRange($period, $anchor, $tz);
+        [$start, $end] = $this->periodBounds($anchor, $period, $tz);
+        $groupIndex = array_key_exists('group_index', $validated) ? $validated['group_index'] : null;
 
-        $ungrouped = filter_var($request->input('ungrouped', false), FILTER_VALIDATE_BOOLEAN);
-        $groupIndex = isset($validated['group_index']) && $validated['group_index'] !== null
-            ? (int) $validated['group_index']
-            : null;
+        $allEmployees = OrderEmployee::where('order_id', $order->id)
+            ->with(['employee:id,name,email,avatar_url'])
+            ->orderBy('id')
+            ->get();
 
-        $employees = $this->filterOrderEmployeesForExport($order, $groupIndex, $ungrouped);
+        $employees = $this->filterEmployeesForExport($allEmployees, $order, $groupIndex);
         if ($employees->isEmpty()) {
-            return response()->json(['message' => 'Aucun employé ne correspond au filtre de groupe.'], 422);
+            return response()->json(['message' => 'Aucun employé pour ce filtre de groupe.'], 422);
         }
 
         $securityGroups = is_array($order->security_groups) ? $order->security_groups : [];
         $groupConfigs = is_array($order->group_security_configs) ? $order->group_security_configs : [];
 
-        $rows = $this->buildExportRows(
-            $employees,
-            $securityGroups,
-            $groupConfigs,
-            $from,
-            $to,
-            $tz
-        );
+        $flatRows = $this->collectExportFlatRows($order, $employees, $securityGroups, $groupConfigs, $start, $end, $tz);
 
-        $meta = [
-            'order_id' => $order->id,
-            'order_number' => $order->order_number ?? $order->id,
-            'period' => $period,
-            'from' => $from->toDateString(),
-            'to' => $to->toDateString(),
-            'group_filter' => $ungrouped
-                ? 'non_classés'
-                : ($groupIndex !== null ? ('groupe_index_'.$groupIndex) : 'tous'),
-        ];
-
-        $asciiBase = 'pointage_order'.$order->id.'_'.$period.'_'.$from->format('Ymd').'_'.$to->format('Ymd');
-
-        if ($format === 'pdf') {
-            $pdf = Pdf::loadView('exports.attendance_pointage', [
-                'meta' => $meta,
-                'rows' => $rows,
-            ])->setPaper('a4', 'landscape');
-
-            return $pdf->download($asciiBase.'.pdf');
+        if (count($flatRows) === 0) {
+            return response()->json(['message' => 'Aucune ligne à exporter sur cette période.'], 422);
         }
 
-        return $this->streamCsvExport($rows, $asciiBase.'.csv');
+        $periodLabel = $this->periodLabelFr($period);
+        $groupLabel = $this->exportGroupDescription($order, $groupIndex);
+        $baseFilename = $this->buildExportBaseFilename($order, $period, $start, $end, $groupIndex);
+
+        if ($format === 'csv') {
+            return $this->buildCsvDownload($flatRows, $baseFilename);
+        }
+        if ($format === 'pdf') {
+            return $this->buildPdfDownload($order, $flatRows, $periodLabel, $groupLabel, $start, $end, $baseFilename);
+        }
+
+        return $this->buildXlsxDownload($flatRows, $baseFilename);
     }
 
     /**
-     * @return array{0: Carbon, 1: Carbon}
+     * @return array{0: \Carbon\Carbon, 1: \Carbon\Carbon}
      */
-    private function resolvePeriodRange(string $period, Carbon $anchor, string $tz): array
+    private function periodBounds(Carbon $anchor, string $period, string $tz): array
     {
-        $d = $anchor->copy()->timezone($tz)->startOfDay();
+        $a = $anchor->copy()->timezone($tz);
 
+        switch ($period) {
+            case 'week':
+                return [
+                    $a->copy()->startOfWeek(Carbon::MONDAY)->startOfDay(),
+                    $a->copy()->endOfWeek(Carbon::SUNDAY)->endOfDay(),
+                ];
+            case 'month':
+                return [
+                    $a->copy()->startOfMonth()->startOfDay(),
+                    $a->copy()->endOfMonth()->endOfDay(),
+                ];
+            case 'quarter':
+                return [
+                    $a->copy()->firstOfQuarter()->startOfDay(),
+                    $a->copy()->lastOfQuarter()->endOfDay(),
+                ];
+            case 'semester':
+                $y = $a->year;
+                if ($a->month <= 6) {
+                    return [
+                        Carbon::create($y, 1, 1, 0, 0, 0, $tz),
+                        Carbon::create($y, 6, 30, 23, 59, 59, $tz),
+                    ];
+                }
+
+                return [
+                    Carbon::create($y, 7, 1, 0, 0, 0, $tz),
+                    Carbon::create($y, 12, 31, 23, 59, 59, $tz),
+                ];
+            case 'year':
+                return [
+                    $a->copy()->startOfYear()->startOfDay(),
+                    $a->copy()->endOfYear()->endOfDay(),
+                ];
+            case 'day':
+            default:
+                return [$a->copy()->startOfDay(), $a->copy()->endOfDay()];
+        }
+    }
+
+    private function periodLabelFr(string $period): string
+    {
         return match ($period) {
-            'week' => [
-                $d->copy()->startOfWeek(Carbon::MONDAY)->startOfDay(),
-                $d->copy()->endOfWeek(Carbon::SUNDAY)->endOfDay(),
-            ],
-            'month' => [
-                $d->copy()->startOfMonth()->startOfDay(),
-                $d->copy()->endOfMonth()->endOfDay(),
-            ],
-            'quarter' => $this->quarterBounds($d),
-            'semester' => $d->month <= 6
-                ? [
-                    Carbon::create($d->year, 1, 1, 0, 0, 0, $tz),
-                    Carbon::create($d->year, 6, 30, 23, 59, 59, $tz),
-                ]
-                : [
-                    Carbon::create($d->year, 7, 1, 0, 0, 0, $tz),
-                    Carbon::create($d->year, 12, 31, 23, 59, 59, $tz),
-                ],
-            'year' => [
-                Carbon::create($d->year, 1, 1, 0, 0, 0, $tz),
-                Carbon::create($d->year, 12, 31, 23, 59, 59, $tz),
-            ],
-            default => [$d->copy()->startOfDay(), $d->copy()->endOfDay()],
+            'week' => 'Semaine',
+            'month' => 'Mois',
+            'quarter' => 'Trimestre',
+            'semester' => 'Semestre',
+            'year' => 'Année',
+            default => 'Jour',
         };
     }
 
-    /**
-     * @return array{0: Carbon, 1: Carbon}
-     */
-    private function quarterBounds(Carbon $d): array
+    private function exportGroupDescription(Order $order, ?int $groupIndex): string
     {
-        $tz = $d->timezone->getName();
-        $q = (int) ceil($d->month / 3);
-        $startMonth = ($q - 1) * 3 + 1;
-        $start = Carbon::create($d->year, $startMonth, 1, 0, 0, 0, $tz);
-        $end = $start->copy()->addMonths(3)->subDay()->endOfDay();
+        if ($groupIndex === null) {
+            return 'Tous les groupes';
+        }
+        if ($groupIndex === -1) {
+            return 'Employés non assignés à un groupe de sécurité';
+        }
+        $groups = is_array($order->security_groups) ? $order->security_groups : [];
+        $name = isset($groups[$groupIndex]) ? trim((string) $groups[$groupIndex]) : '';
 
-        return [$start, $end];
+        return $name !== ''
+            ? sprintf('Groupe %d : %s', $groupIndex + 1, $name)
+            : sprintf('Groupe %d', $groupIndex + 1);
+    }
+
+    private function buildExportBaseFilename(Order $order, string $period, Carbon $start, Carbon $end, ?int $groupIndex): string
+    {
+        $g = $groupIndex === null ? 'all' : (string) $groupIndex;
+        $slug = Str::slug($period.'-'.$start->format('Y-m-d').'-'.$end->format('Y-m-d').'-g'.$g, '-');
+
+        return 'assiduite-commande-'.$order->id.'-'.$slug;
     }
 
     /**
+     * @param  Collection<int, OrderEmployee>  $all
      * @return Collection<int, OrderEmployee>
      */
-    private function filterOrderEmployeesForExport(Order $order, ?int $groupIndex, bool $ungroupedOnly): Collection
+    private function filterEmployeesForExport(Collection $all, Order $order, ?int $groupIndex): Collection
     {
-        $all = OrderEmployee::where('order_id', $order->id)
-            ->with(['employee:id,name,email'])
-            ->orderBy('id')
-            ->get();
+        if ($groupIndex === null) {
+            return $all->values();
+        }
 
         $securityGroups = is_array($order->security_groups) ? $order->security_groups : [];
-        $known = [];
-        foreach ($securityGroups as $g) {
-            $t = trim((string) $g);
-            if ($t !== '') {
-                $known[$t] = true;
+        $knownNonEmpty = [];
+        foreach ($securityGroups as $gRaw) {
+            $n = is_string($gRaw) ? trim($gRaw) : '';
+            if ($n !== '') {
+                $knownNonEmpty[$n] = true;
             }
         }
 
-        if ($ungroupedOnly) {
-            return $all->filter(function (OrderEmployee $oe) use ($known) {
+        if ($groupIndex === -1) {
+            return $all->filter(function ($oe) use ($knownNonEmpty) {
                 $eg = trim((string) $oe->employee_group);
 
-                return $eg === '' || !isset($known[$eg]);
+                return $eg === '' || !isset($knownNonEmpty[$eg]);
             })->values();
         }
 
-        if ($groupIndex !== null) {
-            $name = $securityGroups[$groupIndex] ?? null;
-            $name = is_string($name) ? trim($name) : '';
-
-            if ($name === '') {
-                return collect();
-            }
-
-            return $all->filter(fn (OrderEmployee $oe) => trim((string) $oe->employee_group) === $name)->values();
+        if (!isset($securityGroups[$groupIndex])) {
+            return collect();
         }
 
-        return $all->values();
+        $target = trim((string) ($securityGroups[$groupIndex] ?? ''));
+
+        return $all->filter(function ($oe) use ($target) {
+            return trim((string) $oe->employee_group) === $target;
+        })->values();
+    }
+
+    private function resolveGroupLabelForEmployee(OrderEmployee $oe, Order $order): string
+    {
+        $g = trim((string) $oe->employee_group);
+        $groups = is_array($order->security_groups) ? $order->security_groups : [];
+        foreach ($groups as $i => $gRaw) {
+            $name = is_string($gRaw) ? trim($gRaw) : '';
+            if ($name === $g) {
+                return $name !== ''
+                    ? sprintf('Groupe %d : %s', $i + 1, $name)
+                    : sprintf('Groupe %d', $i + 1);
+            }
+        }
+
+        return 'Non assigné';
     }
 
     /**
-     * @param  Collection<int, OrderEmployee>  $employees
-     * @return list<array<string, mixed>>
+     * @return array<int, array<string, string>>
      */
-    private function buildExportRows(
-        Collection $employees,
+    private function collectExportFlatRows(
+        Order $order,
+        Collection $orderEmployees,
         array $securityGroups,
         array $groupConfigs,
-        Carbon $from,
-        Carbon $to,
+        Carbon $start,
+        Carbon $end,
         string $tz
     ): array {
-        $ids = $employees->pluck('id')->all();
-        if ($ids === []) {
+        $oeIds = $orderEmployees->pluck('id')->all();
+        if (count($oeIds) === 0) {
             return [];
         }
 
-        $pointages = OrderEmployeePointage::query()
-            ->whereIn('order_employee_id', $ids)
-            ->whereBetween('work_date', [$from->toDateString(), $to->toDateString()])
-            ->with(['orderEmployee.employee:id,name,email'])
-            ->orderBy('work_date')
-            ->orderBy('order_employee_id')
-            ->get();
+        $allPts = OrderEmployeePointage::whereIn('order_employee_id', $oeIds)
+            ->whereDate('work_date', '>=', $start->toDateString())
+            ->whereDate('work_date', '<=', $end->toDateString())
+            ->get()
+            ->groupBy(function ($p) {
+                $wd = $p->work_date;
+                if ($wd instanceof \Carbon\CarbonInterface) {
+                    return $wd->format('Y-m-d');
+                }
 
-        $byId = $employees->keyBy('id');
+                return substr((string) $wd, 0, 10);
+            });
+
         $out = [];
+        $cursor = $start->copy()->startOfDay();
 
-        foreach ($pointages as $pt) {
-            $oe = $pt->orderEmployee;
-            if (!$oe || !isset($byId[$oe->id])) {
-                continue;
+        while ($cursor->lte($end)) {
+            $dateStr = $cursor->toDateString();
+            $dow = (int) $cursor->format('N');
+            $ptsForDay = ($allPts->get($dateStr, collect()))->keyBy('order_employee_id');
+
+            foreach ($orderEmployees as $oe) {
+                $pt = $ptsForDay->get($oe->id);
+                [$cfg, $isWorkingDay] = $this->resolveConfigForEmployee($oe, $securityGroups, $groupConfigs, $dow);
+                $deadline = $this->groupDeadlineCarbon($dateStr, $cfg, $tz);
+                $row = $this->buildEmployeeRow($oe, $pt, $tz, $isWorkingDay, $deadline);
+
+                $out[] = [
+                    'date' => $dateStr,
+                    'group_label' => $this->resolveGroupLabelForEmployee($oe, $order),
+                    'full_name' => $row['full_name'],
+                    'email' => $row['email'],
+                    'matricule' => $row['matricule'] ?? '',
+                    'arrival' => $row['arrival'] ?? '',
+                    'departure' => $row['departure'] !== null && $row['departure'] !== '' ? $row['departure'] : '--:--',
+                    'status' => $row['status'],
+                    'status_label' => $this->statusLabelFr($row['status']),
+                    'late_label' => $row['is_late'] ? 'Oui' : 'Non',
+                    'gps_in' => $this->formatGpsCell($row['gps']['check_in'] ?? null),
+                    'gps_out' => $this->formatGpsCell($row['gps']['check_out'] ?? null),
+                ];
             }
-
-            $workDateStr = $pt->work_date instanceof Carbon
-                ? $pt->work_date->timezone($tz)->toDateString()
-                : Carbon::parse((string) $pt->work_date, $tz)->toDateString();
-
-            $dow = (int) Carbon::parse($workDateStr, $tz)->format('N');
-            [$cfg, $isWorkingDay] = $this->resolveConfigForEmployee($oe, $securityGroups, $groupConfigs, $dow);
-            $deadline = $this->groupDeadlineCarbon($workDateStr, $cfg, $tz);
-            $row = $this->buildEmployeeRow($oe, $pt, $tz, $isWorkingDay, $deadline);
-
-            $groupe = trim((string) $oe->employee_group) ?: '—';
-            $gpsIn = $this->formatGpsPair($row['gps']['check_in'] ?? null);
-            $gpsOut = $this->formatGpsPair($row['gps']['check_out'] ?? null);
-
-            $out[] = [
-                'date' => $workDateStr,
-                'groupe' => $groupe,
-                'nom' => $row['full_name'],
-                'email' => $row['email'],
-                'matricule' => $row['matricule'] ?? '',
-                'arrivee' => $row['arrival'] ?? '',
-                'depart' => $row['departure'] ?? '',
-                'duree_min' => $pt->duration_minutes ?? '',
-                'statut' => $this->statusLabelFr($row['status']),
-                'retard' => $row['is_late'] ? 'oui' : 'non',
-                'gps_entree' => $gpsIn,
-                'gps_sortie' => $gpsOut,
-            ];
+            $cursor->addDay();
         }
 
         return $out;
-    }
-
-    /**
-     * @param  array<string, mixed>|null  $pair
-     */
-    private function formatGpsPair(?array $pair): string
-    {
-        if (!$pair || !isset($pair['lat'], $pair['lng'])) {
-            return '';
-        }
-
-        return number_format((float) $pair['lat'], 6, '.', '').','.number_format((float) $pair['lng'], 6, '.', '');
     }
 
     private function statusLabelFr(string $status): string
@@ -431,91 +452,154 @@ class AttendanceReportController extends Controller
             'en_poste' => 'En poste',
             'retard' => 'Retard',
             'absent' => 'Absent',
-            'jour_off' => 'Jour non ouvré',
+            'jour_off' => 'Jour off',
             'non_configure' => 'Non configuré',
             default => $status,
         };
     }
 
     /**
-     * @param  list<array<string, mixed>>  $rows
+     * @param  array{lat: float, lng: float}|null  $pt
      */
-    private function streamCsvExport(array $rows, string $filename): StreamedResponse
+    private function formatGpsCell(?array $pt): string
     {
-        $headers = [
-            'Date',
-            'Groupe',
-            'Nom',
-            'Email',
-            'Matricule',
-            'Arrivée',
-            'Départ',
-            'Durée (min)',
-            'Statut',
-            'Retard',
-            'GPS entrée',
-            'GPS sortie',
-        ];
+        if (!$pt) {
+            return '';
+        }
 
-        return response()->streamDownload(function () use ($rows, $headers) {
-            echo "\xEF\xBB\xBF";
-            $sep = ';';
-            echo $this->csvLine($headers, $sep)."\r\n";
+        return number_format($pt['lat'], 6, ',', '').' ; '.number_format($pt['lng'], 6, ',', '');
+    }
+
+    /**
+     * @param  array<int, array<string, string>>  $rows
+     */
+    private function buildCsvDownload(array $rows, string $baseFilename): \Symfony\Component\HttpFoundation\StreamedResponse
+    {
+        $filename = $this->sanitizeFilename($baseFilename).'.csv';
+
+        return response()->streamDownload(function () use ($rows) {
+            $out = fopen('php://output', 'w');
+            fprintf($out, chr(0xEF).chr(0xBB).chr(0xBF));
+            fputcsv($out, [
+                'Date', 'Groupe', 'Employé', 'Email', 'Matricule', 'Arrivée', 'Départ', 'Statut', 'Retard', 'GPS entrée', 'GPS sortie',
+            ], ';');
             foreach ($rows as $r) {
-                $dep = isset($r['depart']) && (string) $r['depart'] !== '' ? (string) $r['depart'] : '--:--';
-                $line = [
-                    (string) $r['date'],
-                    (string) $r['groupe'],
-                    (string) $r['nom'],
-                    (string) $r['email'],
-                    (string) ($r['matricule'] ?? ''),
-                    (string) ($r['arrivee'] ?? ''),
-                    $dep,
-                    (string) ($r['duree_min'] ?? ''),
-                    (string) $r['statut'],
-                    (string) $r['retard'],
-                    (string) $r['gps_entree'],
-                    (string) $r['gps_sortie'],
-                ];
-                echo $this->csvLine($line, $sep)."\r\n";
+                fputcsv($out, [
+                    $r['date'],
+                    $r['group_label'],
+                    $r['full_name'],
+                    $r['email'],
+                    $r['matricule'],
+                    $r['arrival'],
+                    $r['departure'],
+                    $r['status_label'],
+                    $r['late_label'],
+                    $r['gps_in'],
+                    $r['gps_out'],
+                ], ';');
             }
+            fclose($out);
         }, $filename, [
             'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
     }
 
-    private function escapeCsvCell(string $value): string
+    /**
+     * @param  array<int, array<string, string>>  $rows
+     */
+    private function buildXlsxDownload(array $rows, string $baseFilename): \Illuminate\Http\Response
     {
-        if (strpbrk($value, ";\"\n\r") !== false) {
-            return '"'.str_replace('"', '""', $value).'"';
+        $spreadsheet = new Spreadsheet;
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Assiduite');
+
+        $table = [
+            ['Date', 'Groupe', 'Employé', 'Email', 'Matricule', 'Arrivée', 'Départ', 'Statut', 'Retard', 'GPS entrée', 'GPS sortie'],
+        ];
+        foreach ($rows as $r) {
+            $table[] = [
+                $r['date'],
+                $r['group_label'],
+                $r['full_name'],
+                $r['email'],
+                $r['matricule'],
+                $r['arrival'],
+                $r['departure'],
+                $r['status_label'],
+                $r['late_label'],
+                $r['gps_in'],
+                $r['gps_out'],
+            ];
+        }
+        $sheet->fromArray($table, null, 'A1', false);
+
+        foreach (range('A', 'K') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
         }
 
-        return $value;
+        $writer = new Xlsx($spreadsheet);
+        ob_start();
+        $writer->save('php://output');
+        $content = ob_get_clean();
+
+        $filename = $this->sanitizeFilename($baseFilename).'.xlsx';
+
+        return response($content, 200, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition' => 'attachment; filename="'.$filename.'"',
+            'Cache-Control' => 'max-age=0',
+        ]);
     }
 
     /**
-     * @param  list<string>  $cells
+     * @param  array<int, array<string, string>>  $rows
      */
-    private function csvLine(array $cells, string $sep): string
-    {
-        $parts = [];
-        foreach ($cells as $c) {
-            $parts[] = $this->escapeCsvCell((string) $c);
-        }
+    private function buildPdfDownload(
+        Order $order,
+        array $rows,
+        string $periodLabel,
+        string $groupLabel,
+        Carbon $start,
+        Carbon $end,
+        string $baseFilename
+    ): \Illuminate\Http\Response {
+        $pdf = Pdf::loadView('reports.attendance_export_pdf', [
+            'title' => 'Rapport d\'assiduité (pointage)',
+            'orderNumber' => $order->order_number ?? $order->id,
+            'periodLabel' => $periodLabel,
+            'groupLabel' => $groupLabel,
+            'startDate' => $start->format('d/m/Y'),
+            'endDate' => $end->format('d/m/Y'),
+            'rows' => $rows,
+        ])->setPaper('a4', 'landscape');
 
-        return implode($sep, $parts);
+        $filename = $this->sanitizeFilename($baseFilename).'.pdf';
+
+        return $pdf->download($filename);
+    }
+
+    private function sanitizeFilename(string $name): string
+    {
+        $name = preg_replace('/[^A-Za-z0-9._-]+/', '-', $name) ?? $name;
+
+        return trim($name, '-');
     }
 
     private function recomputeGlobalStats($orderEmployees, $pointages, array $securityGroups, array $groupConfigs, string $dateStr, int $dow, string $tz): array
     {
+        $configured = $orderEmployees->filter(function ($oe) {
+            return (bool) $oe->is_configured;
+        });
+
+        // total_employees = configurés ; present/late/missing_checkout = sous-ensemble ayant pointé
         $stats = [
-            'total_employees' => $orderEmployees->count(),
+            'total_employees' => $configured->count(),
             'present' => 0,
             'late' => 0,
             'missing_checkout' => 0,
         ];
 
-        foreach ($orderEmployees as $oe) {
+        foreach ($configured as $oe) {
             $pt = $pointages->get($oe->id);
             if (!$pt || !$pt->check_in_time) {
                 continue;

@@ -742,6 +742,10 @@ class PublicProfileController extends Controller
                     if (!is_array($wd) || count($wd) < 1) {
                         break;
                     }
+                    $dw = $cfg['calendar']['dailyWindow'] ?? null;
+                    if (!is_array($dw) || !isset($dw['start'], $dw['end']) || trim((string) $dw['start']) === '' || trim((string) $dw['end']) === '') {
+                        break;
+                    }
                     $showPointageSlot = true;
                     $pointageBootstrap = [
                         'username' => $user->username,
