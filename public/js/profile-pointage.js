@@ -204,7 +204,8 @@ function isWithinCalendar(calendar) {
   if (!calendar?.weekdays?.length) return false;
   const now = new Date();
   const bit = jsDayToWeekdayBit(now.getDay());
-  if (!calendar.weekdays.includes(bit)) return false;
+  // Tolérer weekdays renvoyés en chaînes ("1","2") depuis l’API JSON
+  if (!calendar.weekdays.some((w) => Number(w) === bit)) return false;
   const start = calendar.dailyWindow?.start || "00:00";
   const end = calendar.dailyWindow?.end || "23:59";
   const [sh, sm] = start.split(":").map((x) => parseInt(x, 10) || 0);

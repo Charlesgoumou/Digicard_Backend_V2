@@ -87,6 +87,44 @@ class Order extends Model
     }
 
     /**
+     * Config groupe (pointage / géofence) pour le libellé employee_group.
+     * 1) Alignement par index avec security_groups (comportement historique).
+     * 2) Secours : champ groupName dans la config (wizard) si les index ont divergé.
+     */
+    public function findGroupSecurityConfigByName(string $groupName): ?array
+    {
+        $groupName = trim($groupName);
+        if ($groupName === '') {
+            return null;
+        }
+
+        $groups = is_array($this->security_groups) ? $this->security_groups : [];
+        $configs = is_array($this->group_security_configs) ? $this->group_security_configs : [];
+
+        foreach ($groups as $i => $gLabel) {
+            if (! isset($configs[$i]) || ! is_array($configs[$i])) {
+                continue;
+            }
+            $gn = is_string($gLabel) ? trim($gLabel) : '';
+            if ($gn !== '' && $gn === $groupName) {
+                return $configs[$i];
+            }
+        }
+
+        foreach ($configs as $cfg) {
+            if (! is_array($cfg)) {
+                continue;
+            }
+            $embedded = isset($cfg['groupName']) ? trim((string) $cfg['groupName']) : '';
+            if ($embedded !== '' && $embedded === $groupName) {
+                return $cfg;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Génère un numéro de commande unique
      */
     public static function generateOrderNumber()
