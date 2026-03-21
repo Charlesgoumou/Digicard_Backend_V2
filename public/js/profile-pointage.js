@@ -196,26 +196,6 @@ function pointInPolygonRing(lng, lat, ring) {
   return inside;
 }
 
-function jsDayToWeekdayBit(d) {
-  return d === 0 ? 7 : d;
-}
-
-function isWithinCalendar(calendar) {
-  if (!calendar?.weekdays?.length) return false;
-  const now = new Date();
-  const bit = jsDayToWeekdayBit(now.getDay());
-  // Tolérer weekdays renvoyés en chaînes ("1","2") depuis l’API JSON
-  if (!calendar.weekdays.some((w) => Number(w) === bit)) return false;
-  const start = calendar.dailyWindow?.start || "00:00";
-  const end = calendar.dailyWindow?.end || "23:59";
-  const [sh, sm] = start.split(":").map((x) => parseInt(x, 10) || 0);
-  const [eh, em] = end.split(":").map((x) => parseInt(x, 10) || 0);
-  const mins = now.getHours() * 60 + now.getMinutes();
-  const startM = sh * 60 + sm;
-  const endM = eh * 60 + em;
-  return mins >= startM && mins <= endM;
-}
-
 function readBootstrap() {
   const el = document.getElementById("pointage-bootstrap");
   if (!el) return null;
@@ -389,8 +369,10 @@ async function run() {
 
   hideInitLoading();
 
+  // Visibilité : ne pas se fier à l’heure locale du téléphone (décalage vs app.timezone).
+  // Le serveur refuse déjà check-in/out hors plage (outside_schedule).
   const refreshVisibility = () => {
-    if (!session || !isWithinCalendar(session.calendar)) {
+    if (!session) {
       btn.style.display = "none";
       return;
     }
@@ -398,14 +380,12 @@ async function run() {
       btn.style.display = "none";
       return;
     }
-    btn.style.display = "";
+    btn.style.display = "inline-flex";
     applyPointageButtonUI(btn, session.day_status);
   };
 
   refreshVisibility();
   setInterval(refreshVisibility, 60 * 1000);
-
-  const spinner = btn.querySelector(".pointage-spinner");
 
   btn.addEventListener("click", async () => {
     if (btn.dataset.loading === "1") return;
