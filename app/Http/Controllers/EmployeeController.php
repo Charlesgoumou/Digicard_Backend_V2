@@ -126,7 +126,7 @@ class EmployeeController extends Controller
 
         $order = \App\Models\Order::where('id', $validated['order_id'])
             ->where('user_id', $admin->id)
-            ->where('order_type', 'business')
+            ->whereIn('order_type', ['business', 'entreprise'])
             ->first();
 
         if (!$order) {
@@ -143,6 +143,7 @@ class EmployeeController extends Controller
 
         $orderEmployee->device_uuid = null;
         $orderEmployee->device_model = null;
+        $orderEmployee->emp_auth_token = null;
         $orderEmployee->save();
 
         // Champs legacy sur users (non utilisés pour la logique par commande, nettoyage éventuel)

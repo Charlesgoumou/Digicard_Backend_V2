@@ -710,9 +710,13 @@ class PublicProfileController extends Controller
             ]);
         }
 
-        // Slot « Pointage » sur la carte (employé configuré + groupe avec pointage + polygone + jours)
-        $showPointageSlot = false;
-        $pointageBootstrap = null;
+        // Méta profil public pour reconnaissance silencieuse (script charge sans exposer de jeton serveur)
+        $pointagePublicMeta = [
+            'eligible' => false,
+            'username' => (string) ($user->username ?? ''),
+            'api_base' => url('/'),
+            'order_id' => null,
+        ];
         $isBusinessLikeOrder = $order && in_array((string) ($order->order_type ?? ''), ['business', 'entreprise'], true);
         if ($user->role === 'employee' && $orderEmployee && $orderEmployee->is_configured && $isBusinessLikeOrder) {
             $groupName = trim((string) ($orderEmployee->employee_group ?? ''));
@@ -739,14 +743,8 @@ class PublicProfileController extends Controller
                             $dw = $cfg['calendar']['dailyWindow'] ?? null;
                             if ($wdCount >= 1 && is_array($dw) && isset($dw['start'], $dw['end'])
                                 && trim((string) $dw['start']) !== '' && trim((string) $dw['end']) !== '') {
-                                $showPointageSlot = true;
-                                $pointageBootstrap = [
-                                    'username' => $user->username,
-                                    'order_id' => $order->id,
-                                    'access_token' => $accessToken,
-                                    'short_code' => $order->short_code,
-                                    'api_base' => url('/'),
-                                ];
+                                $pointagePublicMeta['eligible'] = true;
+                                $pointagePublicMeta['order_id'] = $order->id;
                             }
                         }
                     }
@@ -768,8 +766,7 @@ class PublicProfileController extends Controller
             'portfolio' => $portfolio ?? null,
             'appointmentSetting' => $appointmentSetting,
             'appointmentOrderId' => $appointmentOrderId,
-            'showPointageSlot' => $showPointageSlot,
-            'pointageBootstrap' => $pointageBootstrap,
+            'pointagePublicMeta' => $pointagePublicMeta,
         ]);
     }
 

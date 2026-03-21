@@ -85,6 +85,9 @@ Route::post('/public/device/bind', [PublicPointageController::class, 'bindDevice
 Route::post('/public/pointage/verify', [PublicPointageController::class, 'verify'])
     ->middleware('throttle:60,1')
     ->name('public.pointage.verify');
+Route::post('/public/pointage/verify-identity', [PublicPointageController::class, 'verifyIdentity'])
+    ->middleware('throttle:60,1')
+    ->name('public.pointage.verify-identity');
 Route::post('/public/pointage/check-in', [PublicPointageController::class, 'checkIn'])
     ->middleware('throttle:60,1')
     ->name('public.pointage.check-in');
@@ -170,6 +173,7 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::get('/additional-payments/{additionalPaymentId}/check-status', [OrderController::class, 'checkAdditionalPaymentStatus'])->name('additional-payments.check-status');
     Route::patch('/orders/{order}/configure', [OrderController::class, 'markAsConfigured'])->name('orders.configure');
     Route::post('/orders/{order}/seal-device', [OrderController::class, 'sealDevice'])->name('orders.seal-device');
+    Route::get('/orders/{order}/emp-auth-token', [OrderController::class, 'getEmpAuthToken'])->name('orders.emp-auth-token');
     Route::patch('/orders/{order}/profile', [OrderController::class, 'updateProfile'])->name('orders.profile.update');
     Route::patch('/orders/{order}/security-groups', [OrderController::class, 'updateSecurityGroups'])->name('orders.security-groups.update');
 

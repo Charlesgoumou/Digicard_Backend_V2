@@ -21,6 +21,7 @@ class OrderEmployee extends Model
         'is_configured',
         'device_uuid',
         'device_model',
+        'emp_auth_token',
         // Champs de profil individuels
         'profile_name',
         'profile_title',
@@ -51,6 +52,10 @@ class OrderEmployee extends Model
         'card_design_number',
         'card_design_custom_url',
         'no_design_yet',
+    ];
+
+    protected $hidden = [
+        'emp_auth_token',
     ];
 
     protected $casts = [
