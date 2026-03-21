@@ -713,7 +713,8 @@ class PublicProfileController extends Controller
         // Slot « Pointage » sur la carte (employé configuré + groupe avec pointage + polygone + jours)
         $showPointageSlot = false;
         $pointageBootstrap = null;
-        if ($user->role === 'employee' && $orderEmployee && $orderEmployee->is_configured && $order && ($order->order_type ?? '') === 'business') {
+        $isBusinessLikeOrder = $order && in_array((string) ($order->order_type ?? ''), ['business', 'entreprise'], true);
+        if ($user->role === 'employee' && $orderEmployee && $orderEmployee->is_configured && $isBusinessLikeOrder) {
             $groupName = trim((string) ($orderEmployee->employee_group ?? ''));
             if ($groupName !== '') {
                 $cfg = $order->findGroupSecurityConfigByName($groupName);
