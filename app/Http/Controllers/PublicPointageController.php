@@ -20,6 +20,14 @@ class PublicPointageController extends Controller
 
     public const STATUS_COMPLETED = 'COMPLETED';
 
+    /**
+     * État courant du pointage pour le jour calendaire (timezone app).
+     *
+     * Réponse : day_status ∈ { NOT_STARTED, CHECKED_IN, COMPLETED }
+     * - NOT_STARTED : pas d'arrivée enregistrée aujourd'hui
+     * - CHECKED_IN : arrivée OK, départ encore possible (polygon renvoyé si pas terminé)
+     * - COMPLETED : arrivée + départ enregistrés
+     */
     public function verify(Request $request)
     {
         $validated = $request->validate([
@@ -42,6 +50,8 @@ class PublicPointageController extends Controller
         $payload = [
             'ok' => true,
             'day_status' => $dayStatus,
+            'can_check_in' => $dayStatus === self::STATUS_NOT_STARTED,
+            'can_check_out' => $dayStatus === self::STATUS_CHECKED_IN,
             'calendar' => [
                 'weekdays' => $cfg['calendar']['weekdays'] ?? [],
                 'dailyWindow' => $cfg['calendar']['dailyWindow'] ?? ['start' => '08:00', 'end' => '18:00'],
@@ -128,7 +138,9 @@ class PublicPointageController extends Controller
     }
 
     /**
-     * Pointage de départ : arrivée existante, pas encore de sortie, même sécurité.
+     * Pointage de départ (check-out) : même contrôles que l'arrivée
+     * (appareil vérifié via buildVerifiedContext, horaire, position dans le polygone).
+     * Exige une arrivée aujourd'hui avec check_out_time encore null.
      */
     public function processDeparture(Request $request)
     {
@@ -183,9 +195,56 @@ class PublicPointageController extends Controller
     }
 
     /**
+     * Scelle l’appareil (empreinte + modèle) pour cette commande — sans session Sanctum (profil public / carte).
+     * À appeler avant verify / pointage si aucun device_uuid n’est encore en base.
+     */
+    public function bindDevice(Request $request)
+    {
+        $validated = $request->validate([
+            'username' => 'required|string|max:255',
+            'device_uuid' => 'required|string|max:128',
+            'device_model' => 'required|string|max:255',
+            'order_id' => 'nullable|integer|exists:orders,id',
+            'access_token' => 'nullable|string|max:512',
+            'short_code' => 'nullable|string|max:64',
+        ]);
+
+        $ctx = $this->resolvePointageContext($validated);
+        if ($ctx instanceof \Illuminate\Http\JsonResponse) {
+            return $ctx;
+        }
+
+        /** @var OrderEmployee $orderEmployee */
+        $orderEmployee = $ctx['orderEmployee'];
+
+        if (!$orderEmployee->device_uuid) {
+            $orderEmployee->device_uuid = $validated['device_uuid'];
+            $orderEmployee->device_model = $validated['device_model'];
+            $orderEmployee->save();
+
+            return response()->json(['ok' => true, 'sealed' => true, 'message' => 'Appareil lié.']);
+        }
+
+        if ($orderEmployee->device_uuid !== $validated['device_uuid']) {
+            return response()->json([
+                'ok' => false,
+                'code' => 'device_mismatch',
+                'message' => 'Un autre appareil est déjà lié pour cette commande.',
+            ], 409);
+        }
+
+        $orderEmployee->device_model = $validated['device_model'];
+        $orderEmployee->save();
+
+        return response()->json(['ok' => true, 'sealed' => true, 'message' => 'Appareil déjà enregistré.']);
+    }
+
+    /**
+     * Contexte pointage (employé, zone, horaires) sans vérification d’empreinte.
+     *
      * @return array{order: Order, orderEmployee: OrderEmployee, cfg: array, polygon: array}|\Illuminate\Http\JsonResponse
      */
-    private function buildVerifiedContext(array $validated)
+    private function resolvePointageContext(array $validated)
     {
         $user = User::where('username', $validated['username'])->first();
         if (!$user || $user->role !== 'employee') {
@@ -242,6 +301,31 @@ class PublicPointageController extends Controller
             return response()->json(['ok' => false, 'code' => 'no_schedule'], 403);
         }
 
+        $dw = $cfg['calendar']['dailyWindow'] ?? null;
+        if (!is_array($dw) || empty($dw['start']) || empty($dw['end'])) {
+            return response()->json(['ok' => false, 'code' => 'no_daily_window'], 403);
+        }
+
+        return [
+            'order' => $order,
+            'orderEmployee' => $orderEmployee,
+            'cfg' => $cfg,
+            'polygon' => $polygon,
+        ];
+    }
+
+    /**
+     * @return array{order: Order, orderEmployee: OrderEmployee, cfg: array, polygon: array}|\Illuminate\Http\JsonResponse
+     */
+    private function buildVerifiedContext(array $validated)
+    {
+        $ctx = $this->resolvePointageContext($validated);
+        if ($ctx instanceof \Illuminate\Http\JsonResponse) {
+            return $ctx;
+        }
+
+        $orderEmployee = $ctx['orderEmployee'];
+
         $serverUuid = $orderEmployee->device_uuid;
         if (!$serverUuid || $serverUuid !== $validated['device_uuid']) {
             return response()->json(['ok' => false, 'code' => 'device_mismatch'], 403);
@@ -251,12 +335,7 @@ class PublicPointageController extends Controller
             return response()->json(['ok' => false, 'code' => 'model_mismatch'], 403);
         }
 
-        return [
-            'order' => $order,
-            'orderEmployee' => $orderEmployee,
-            'cfg' => $cfg,
-            'polygon' => $polygon,
-        ];
+        return $ctx;
     }
 
     private function todayPointage(OrderEmployee $orderEmployee): ?OrderEmployeePointage
