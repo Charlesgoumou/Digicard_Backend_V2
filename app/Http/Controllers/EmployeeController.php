@@ -106,7 +106,7 @@ class EmployeeController extends Controller
     }
 
     /**
-     * Réinitialise l'appareil lié à un employé (déverrouillage / changement de téléphone).
+     * Réinitialise l'appareil lié à un employé pour une commande donnée (order_employees).
      */
     public function resetDevice(Request $request, User $employee)
     {
@@ -120,6 +120,32 @@ class EmployeeController extends Controller
             return response()->json(['message' => 'Employé non trouvé ou non autorisé.'], 404);
         }
 
+        $validated = $request->validate([
+            'order_id' => 'required|integer|exists:orders,id',
+        ]);
+
+        $order = \App\Models\Order::where('id', $validated['order_id'])
+            ->where('user_id', $admin->id)
+            ->where('order_type', 'business')
+            ->first();
+
+        if (!$order) {
+            return response()->json(['message' => 'Commande introuvable pour cet administrateur.'], 404);
+        }
+
+        $orderEmployee = \App\Models\OrderEmployee::where('order_id', $order->id)
+            ->where('employee_id', $employee->id)
+            ->first();
+
+        if (!$orderEmployee) {
+            return response()->json(['message' => 'Cet employé n\'est pas assigné à cette commande.'], 404);
+        }
+
+        $orderEmployee->device_uuid = null;
+        $orderEmployee->device_model = null;
+        $orderEmployee->save();
+
+        // Champs legacy sur users (non utilisés pour la logique par commande, nettoyage éventuel)
         $employee->device_uuid = null;
         $employee->device_label = null;
         $employee->save();

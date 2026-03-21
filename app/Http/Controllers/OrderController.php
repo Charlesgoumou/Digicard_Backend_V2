@@ -32,6 +32,7 @@ class OrderController extends Controller
         // On doit récupérer les commandes via order_employees
         $orderEmployees = OrderEmployee::where('employee_id', $user->id)
             ->select('id', 'order_id', 'employee_id', 'card_quantity', 'is_configured',
+                     'device_uuid', 'device_model',
                      'profile_name', 'profile_title', 'employee_avatar_url', 'profile_border_color',
                      'save_contact_button_color', 'services_button_color', 'phone_numbers', 'emails',
                      'birth_day', 'birth_month', 'website_url', 'address_neighborhood', 'address_commune',
@@ -46,6 +47,7 @@ class OrderController extends Controller
                                   'total_employees', 'employee_slots', 'unit_price', 'total_price',
                                   'annual_subscription', 'subscription_start_date', 'status',
                                   'is_configured', 'access_token', 'short_code',
+                                  'security_groups', 'group_security_configs',
                                   // ✅ NOUVEAU : Colonnes pour les cartes supplémentaires
                                   'additional_cards_count', 'additional_cards_total_price',
                                   'created_at', 'updated_at');
@@ -180,6 +182,8 @@ class OrderController extends Controller
                         'card_design_number' => $orderEmployee->card_design_number,
                         'card_design_custom_url' => $orderEmployee->card_design_custom_url,
                         'no_design_yet' => $orderEmployee->no_design_yet,
+                        'device_uuid' => $orderEmployee->device_uuid,
+                        'device_model' => $orderEmployee->device_model,
                     ];
 
                     // ✅ OPTIMISATION : Utiliser les données préchargées au lieu de faire une requête par commande
@@ -228,6 +232,7 @@ class OrderController extends Controller
                         'total_employees', 'employee_slots', 'unit_price', 'total_price',
                         'annual_subscription', 'subscription_start_date', 'status',
                         'is_configured', 'access_token', 'short_code',
+                        'security_groups', 'group_security_configs',
                         // ✅ CORRECTION : Colonnes de profil pour ProfileSelectionView
                         'profile_name', 'profile_title', 'order_avatar_url', 'profile_border_color',
                         'save_contact_button_color', 'services_button_color',
@@ -716,6 +721,9 @@ class OrderController extends Controller
                 ]);
             }
 
+            $employeeProfile['device_uuid'] = $orderEmployee->device_uuid;
+            $employeeProfile['device_model'] = $orderEmployee->device_model;
+
             // Assigner employee_profile à l'order après toutes les modifications
             $order->employee_profile = $employeeProfile;
 
@@ -744,6 +752,11 @@ class OrderController extends Controller
                     'employee_email' => $oe->employee_email,
                     'card_quantity' => $oe->card_quantity,
                     'is_configured' => $oe->is_configured,
+                    'device_uuid' => $oe->device_uuid,
+                    'device_model' => $oe->device_model,
+                    'employee_group' => $oe->employee_group,
+                    'employee_matricule' => $oe->employee_matricule,
+                    'employee_department' => $oe->employee_department,
                     'profile_name' => $oe->profile_name,
                     'profile_title' => $oe->profile_title,
                     'employee_avatar_url' => $oe->employee_avatar_url, // ✅ CORRECTION : Inclure employee_avatar_url dans order_employees
@@ -866,6 +879,62 @@ class OrderController extends Controller
             'message' => 'Commande paramétrée avec succès.',
             'order' => $order,
         ]);
+    }
+
+    /**
+     * Enregistre l'empreinte d'appareil pour l'employé sur cette commande (appareil unique par commande).
+     */
+    public function sealDevice(Request $request, Order $order)
+    {
+        $user = $request->user();
+
+        if (!$this->canAccessOrder($user, $order)) {
+            return response()->json(['message' => 'Commande non trouvée.'], 404);
+        }
+
+        if ($order->status === 'cancelled') {
+            return response()->json(['message' => 'Cette commande a été annulée.'], 400);
+        }
+
+        if ($order->order_type !== 'business') {
+            return response()->json(['message' => 'Liaison d\'appareil réservée aux commandes entreprise.'], 422);
+        }
+
+        $validated = $request->validate([
+            'device_uuid' => 'required|string|max:128',
+            'device_model' => 'required|string|max:255',
+        ]);
+
+        $orderEmployee = OrderEmployee::where('order_id', $order->id)
+            ->where('employee_id', $user->id)
+            ->first();
+
+        if (!$orderEmployee) {
+            return response()->json(['message' => 'Aucune assignation pour cette commande.'], 404);
+        }
+
+        if (!$orderEmployee->is_configured) {
+            return response()->json(['message' => 'Configurez d\'abord votre carte avant de lier un appareil.'], 422);
+        }
+
+        if ($orderEmployee->device_uuid) {
+            if ($orderEmployee->device_uuid !== $validated['device_uuid']) {
+                return response()->json([
+                    'message' => 'Un autre appareil est déjà lié à cette commande.',
+                    'code' => 'device_mismatch',
+                ], 409);
+            }
+            $orderEmployee->device_model = $validated['device_model'];
+            $orderEmployee->save();
+
+            return response()->json(['message' => 'Appareil déjà enregistré.', 'sealed' => true]);
+        }
+
+        $orderEmployee->device_uuid = $validated['device_uuid'];
+        $orderEmployee->device_model = $validated['device_model'];
+        $orderEmployee->save();
+
+        return response()->json(['message' => 'Appareil lié avec succès.', 'sealed' => true]);
     }
 
     /**

@@ -710,6 +710,51 @@ class PublicProfileController extends Controller
             ]);
         }
 
+        // Slot « Pointage » sur la carte (employé configuré + groupe avec pointage + polygone + jours)
+        $showPointageSlot = false;
+        $pointageBootstrap = null;
+        if ($user->role === 'employee' && $orderEmployee && $orderEmployee->is_configured && $order && ($order->order_type ?? '') === 'business') {
+            $groupName = trim((string) ($orderEmployee->employee_group ?? ''));
+            if ($groupName !== '') {
+                $secGroups = is_array($order->security_groups) ? $order->security_groups : [];
+                $secConfigs = is_array($order->group_security_configs) ? $order->group_security_configs : [];
+                foreach ($secGroups as $gi => $gLabel) {
+                    if (!isset($secConfigs[$gi]) || !is_array($secConfigs[$gi])) {
+                        continue;
+                    }
+                    $gn = is_string($gLabel) ? trim($gLabel) : '';
+                    if ($gn !== $groupName) {
+                        continue;
+                    }
+                    $cfg = $secConfigs[$gi];
+                    if (empty($cfg['services']['pointage'])) {
+                        break;
+                    }
+                    $poly = $cfg['geofence']['polygonGeoJson'] ?? null;
+                    if (!is_array($poly) || ($poly['type'] ?? '') !== 'Polygon') {
+                        break;
+                    }
+                    $ring = $poly['coordinates'][0] ?? [];
+                    if (!is_array($ring) || count($ring) < 4) {
+                        break;
+                    }
+                    $wd = $cfg['calendar']['weekdays'] ?? [];
+                    if (!is_array($wd) || count($wd) < 1) {
+                        break;
+                    }
+                    $showPointageSlot = true;
+                    $pointageBootstrap = [
+                        'username' => $user->username,
+                        'order_id' => $order->id,
+                        'access_token' => $accessToken,
+                        'short_code' => $order->short_code,
+                        'api_base' => url('/'),
+                    ];
+                    break;
+                }
+            }
+        }
+
         return view('profile.public', [
             'user' => $user,
             'order' => $order,
@@ -724,6 +769,8 @@ class PublicProfileController extends Controller
             'portfolio' => $portfolio ?? null,
             'appointmentSetting' => $appointmentSetting,
             'appointmentOrderId' => $appointmentOrderId,
+            'showPointageSlot' => $showPointageSlot,
+            'pointageBootstrap' => $pointageBootstrap,
         ]);
     }
 

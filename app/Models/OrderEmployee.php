@@ -19,6 +19,8 @@ class OrderEmployee extends Model
         'employee_group',
         'card_quantity',
         'is_configured',
+        'device_uuid',
+        'device_model',
         // Champs de profil individuels
         'profile_name',
         'profile_title',
@@ -66,5 +68,10 @@ class OrderEmployee extends Model
     public function employee()
     {
         return $this->belongsTo(User::class, 'employee_id');
+    }
+
+    public function pointages()
+    {
+        return $this->hasMany(OrderEmployeePointage::class);
     }
 }
