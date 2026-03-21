@@ -91,7 +91,7 @@ class EmployeeController extends Controller
 
          // Récupérer les employés avec leurs cartes
          $employees = $admin->employees()
-             ->select('id', 'name', 'email', 'username', 'email_verified_at', 'created_at')
+             ->select('id', 'name', 'email', 'username', 'email_verified_at', 'created_at', 'device_uuid', 'device_label')
              ->get()
              ->map(function ($employee) {
                  // Calculer le nombre total de cartes pour cet employé
@@ -103,6 +103,54 @@ class EmployeeController extends Controller
              });
 
          return response()->json($employees);
+    }
+
+    /**
+     * Réinitialise l'appareil lié à un employé pour une commande donnée (order_employees).
+     */
+    public function resetDevice(Request $request, User $employee)
+    {
+        $admin = $request->user();
+
+        if ($admin->role !== 'business_admin') {
+            return response()->json(['message' => 'Action non autorisée.'], 403);
+        }
+
+        if ($employee->business_admin_id !== $admin->id) {
+            return response()->json(['message' => 'Employé non trouvé ou non autorisé.'], 404);
+        }
+
+        $validated = $request->validate([
+            'order_id' => 'required|integer|exists:orders,id',
+        ]);
+
+        $order = \App\Models\Order::where('id', $validated['order_id'])
+            ->where('user_id', $admin->id)
+            ->where('order_type', 'business')
+            ->first();
+
+        if (!$order) {
+            return response()->json(['message' => 'Commande introuvable pour cet administrateur.'], 404);
+        }
+
+        $orderEmployee = \App\Models\OrderEmployee::where('order_id', $order->id)
+            ->where('employee_id', $employee->id)
+            ->first();
+
+        if (!$orderEmployee) {
+            return response()->json(['message' => 'Cet employé n\'est pas assigné à cette commande.'], 404);
+        }
+
+        $orderEmployee->device_uuid = null;
+        $orderEmployee->device_model = null;
+        $orderEmployee->save();
+
+        // Champs legacy sur users (non utilisés pour la logique par commande, nettoyage éventuel)
+        $employee->device_uuid = null;
+        $employee->device_label = null;
+        $employee->save();
+
+        return response()->json(['message' => 'Appareil réinitialisé avec succès.'], 200);
     }
 
      /**
@@ -720,6 +768,9 @@ class EmployeeController extends Controller
         $validated = $request->validate([
             'employee_name' => 'required|string|max:255',
             'employee_email' => 'required|email|max:255',
+            'employee_matricule' => 'nullable|string|max:255',
+            'employee_department' => 'nullable|string|max:255',
+            'employee_group' => 'nullable|string|max:255',
         ]);
 
         try {
@@ -922,6 +973,9 @@ if ($existingEmployee) {
                 [
                     'employee_email' => $employee->email,
                     'employee_name' => $employee->name,
+                    'employee_matricule' => $validated['employee_matricule'] ?? null,
+                    'employee_department' => $validated['employee_department'] ?? null,
+                    'employee_group' => $validated['employee_group'] ?? null,
                     'card_quantity' => max(1, $slots[$slotIndex]['cards_quantity']), // ✅ MINIMUM 1 carte
                     'is_configured' => false,
                 ]

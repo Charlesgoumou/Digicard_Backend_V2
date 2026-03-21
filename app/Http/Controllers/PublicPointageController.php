@@ -1,0 +1,389 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Order;
+use App\Models\OrderEmployee;
+use App\Models\OrderEmployeePointage;
+use App\Models\User;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
+
+/**
+ * Pointage public : arrivée / départ (appareil, polygone, horaires groupe).
+ */
+class PublicPointageController extends Controller
+{
+    public const STATUS_NOT_STARTED = 'NOT_STARTED';
+
+    public const STATUS_CHECKED_IN = 'CHECKED_IN';
+
+    public const STATUS_COMPLETED = 'COMPLETED';
+
+    public function verify(Request $request)
+    {
+        $validated = $request->validate([
+            'username' => 'required|string|max:255',
+            'device_uuid' => 'required|string|max:128',
+            'device_model' => 'required|string|max:255',
+            'order_id' => 'nullable|integer|exists:orders,id',
+            'access_token' => 'nullable|string|max:512',
+            'short_code' => 'nullable|string|max:64',
+        ]);
+
+        $ctx = $this->buildVerifiedContext($validated);
+        if ($ctx instanceof \Illuminate\Http\JsonResponse) {
+            return $ctx;
+        }
+
+        ['orderEmployee' => $orderEmployee, 'cfg' => $cfg, 'polygon' => $polygon] = $ctx;
+
+        $dayStatus = $this->resolveDayStatus($orderEmployee);
+        $payload = [
+            'ok' => true,
+            'day_status' => $dayStatus,
+            'calendar' => [
+                'weekdays' => $cfg['calendar']['weekdays'] ?? [],
+                'dailyWindow' => $cfg['calendar']['dailyWindow'] ?? ['start' => '08:00', 'end' => '18:00'],
+            ],
+        ];
+
+        if ($dayStatus !== self::STATUS_COMPLETED) {
+            $payload['polygon'] = $polygon;
+        } else {
+            $payload['polygon'] = null;
+        }
+
+        $todayRow = $this->todayPointage($orderEmployee);
+        if ($todayRow?->check_in_time) {
+            $payload['check_in_time'] = $todayRow->check_in_time->toIso8601String();
+        }
+        if ($todayRow?->check_out_time) {
+            $payload['check_out_time'] = $todayRow->check_out_time->toIso8601String();
+        }
+        if ($todayRow?->duration_minutes !== null) {
+            $payload['duration_minutes'] = $todayRow->duration_minutes;
+        }
+
+        return response()->json($payload);
+    }
+
+    /**
+     * Enregistre l'arrivée (jour courant, dans la zone).
+     */
+    public function checkIn(Request $request)
+    {
+        $validated = $request->validate([
+            'username' => 'required|string|max:255',
+            'device_uuid' => 'required|string|max:128',
+            'device_model' => 'required|string|max:255',
+            'order_id' => 'nullable|integer|exists:orders,id',
+            'access_token' => 'nullable|string|max:512',
+            'short_code' => 'nullable|string|max:64',
+            'latitude' => 'required|numeric|between:-90,90',
+            'longitude' => 'required|numeric|between:-180,180',
+        ]);
+
+        $ctx = $this->buildVerifiedContext($validated);
+        if ($ctx instanceof \Illuminate\Http\JsonResponse) {
+            return $ctx;
+        }
+
+        ['orderEmployee' => $orderEmployee, 'cfg' => $cfg, 'polygon' => $polygon] = $ctx;
+
+        if (!$this->isWithinSchedule($cfg)) {
+            return response()->json(['ok' => false, 'code' => 'outside_schedule'], 403);
+        }
+
+        $ring = $polygon['coordinates'][0] ?? [];
+        if (!$this->geoPointInRing((float) $validated['latitude'], (float) $validated['longitude'], $ring)) {
+            return response()->json(['ok' => false, 'code' => 'outside_polygon'], 403);
+        }
+
+        if ($this->resolveDayStatus($orderEmployee) !== self::STATUS_NOT_STARTED) {
+            return response()->json(['ok' => false, 'code' => 'already_checked_in'], 409);
+        }
+
+        $workDate = Carbon::today(config('app.timezone'))->toDateString();
+
+        $row = OrderEmployeePointage::firstOrNew([
+            'order_employee_id' => $orderEmployee->id,
+            'work_date' => $workDate,
+        ]);
+
+        if ($row->check_in_time) {
+            return response()->json(['ok' => false, 'code' => 'already_checked_in'], 409);
+        }
+
+        $row->check_in_time = Carbon::now(config('app.timezone'));
+        $row->check_in_lat = round((float) $validated['latitude'], 7);
+        $row->check_in_lng = round((float) $validated['longitude'], 7);
+        $row->save();
+
+        return response()->json([
+            'ok' => true,
+            'day_status' => self::STATUS_CHECKED_IN,
+            'check_in_time' => $row->check_in_time->toIso8601String(),
+        ]);
+    }
+
+    /**
+     * Pointage de départ : arrivée existante, pas encore de sortie, même sécurité.
+     */
+    public function processDeparture(Request $request)
+    {
+        $validated = $request->validate([
+            'username' => 'required|string|max:255',
+            'device_uuid' => 'required|string|max:128',
+            'device_model' => 'required|string|max:255',
+            'order_id' => 'nullable|integer|exists:orders,id',
+            'access_token' => 'nullable|string|max:512',
+            'short_code' => 'nullable|string|max:64',
+            'latitude' => 'required|numeric|between:-90,90',
+            'longitude' => 'required|numeric|between:-180,180',
+        ]);
+
+        $ctx = $this->buildVerifiedContext($validated);
+        if ($ctx instanceof \Illuminate\Http\JsonResponse) {
+            return $ctx;
+        }
+
+        ['orderEmployee' => $orderEmployee, 'cfg' => $cfg, 'polygon' => $polygon] = $ctx;
+
+        if (!$this->isWithinSchedule($cfg)) {
+            return response()->json(['ok' => false, 'code' => 'outside_schedule'], 403);
+        }
+
+        $ring = $polygon['coordinates'][0] ?? [];
+        if (!$this->geoPointInRing((float) $validated['latitude'], (float) $validated['longitude'], $ring)) {
+            return response()->json(['ok' => false, 'code' => 'outside_polygon'], 403);
+        }
+
+        $row = $this->todayPointage($orderEmployee);
+        if (!$row || !$row->check_in_time) {
+            return response()->json(['ok' => false, 'code' => 'no_check_in_today'], 422);
+        }
+        if ($row->check_out_time) {
+            return response()->json(['ok' => false, 'code' => 'already_checked_out'], 409);
+        }
+
+        $now = Carbon::now(config('app.timezone'));
+        $row->check_out_time = $now;
+        $row->check_out_lat = round((float) $validated['latitude'], 7);
+        $row->check_out_lng = round((float) $validated['longitude'], 7);
+        $row->duration_minutes = (int) $row->check_in_time->diffInMinutes($now);
+        $row->save();
+
+        return response()->json([
+            'ok' => true,
+            'day_status' => self::STATUS_COMPLETED,
+            'check_out_time' => $row->check_out_time->toIso8601String(),
+            'duration_minutes' => $row->duration_minutes,
+        ]);
+    }
+
+    /**
+     * @return array{order: Order, orderEmployee: OrderEmployee, cfg: array, polygon: array}|\Illuminate\Http\JsonResponse
+     */
+    private function buildVerifiedContext(array $validated)
+    {
+        $user = User::where('username', $validated['username'])->first();
+        if (!$user || $user->role !== 'employee') {
+            return response()->json(['ok' => false, 'code' => 'not_employee'], 404);
+        }
+
+        $order = $this->resolveOrder($validated);
+        if (!$order || $order->order_type !== 'business') {
+            return response()->json(['ok' => false, 'code' => 'order_not_found'], 404);
+        }
+
+        if ($order->status === 'cancelled') {
+            return response()->json(['ok' => false, 'code' => 'order_cancelled'], 400);
+        }
+
+        $orderEmployee = OrderEmployee::where('order_id', $order->id)
+            ->where('employee_id', $user->id)
+            ->first();
+
+        if (!$orderEmployee) {
+            return response()->json(['ok' => false, 'code' => 'not_assigned'], 404);
+        }
+
+        if (!$orderEmployee->is_configured) {
+            return response()->json(['ok' => false, 'code' => 'not_configured'], 403);
+        }
+
+        $groupName = trim((string) ($orderEmployee->employee_group ?? ''));
+        if ($groupName === '') {
+            return response()->json(['ok' => false, 'code' => 'no_group'], 403);
+        }
+
+        $cfg = $this->findGroupConfig($order, $groupName);
+        if (!$cfg) {
+            return response()->json(['ok' => false, 'code' => 'no_group_config'], 403);
+        }
+
+        if (empty($cfg['services']['pointage'])) {
+            return response()->json(['ok' => false, 'code' => 'pointage_disabled'], 403);
+        }
+
+        $polygon = $cfg['geofence']['polygonGeoJson'] ?? null;
+        if (!is_array($polygon) || ($polygon['type'] ?? '') !== 'Polygon') {
+            return response()->json(['ok' => false, 'code' => 'no_polygon'], 403);
+        }
+
+        $ring = $polygon['coordinates'][0] ?? [];
+        if (!is_array($ring) || count($ring) < 4) {
+            return response()->json(['ok' => false, 'code' => 'invalid_polygon'], 403);
+        }
+
+        $weekdays = $cfg['calendar']['weekdays'] ?? [];
+        if (!is_array($weekdays) || count($weekdays) < 1) {
+            return response()->json(['ok' => false, 'code' => 'no_schedule'], 403);
+        }
+
+        $serverUuid = $orderEmployee->device_uuid;
+        if (!$serverUuid || $serverUuid !== $validated['device_uuid']) {
+            return response()->json(['ok' => false, 'code' => 'device_mismatch'], 403);
+        }
+
+        if (!$this->deviceModelsMatch($orderEmployee->device_model, $validated['device_model'])) {
+            return response()->json(['ok' => false, 'code' => 'model_mismatch'], 403);
+        }
+
+        return [
+            'order' => $order,
+            'orderEmployee' => $orderEmployee,
+            'cfg' => $cfg,
+            'polygon' => $polygon,
+        ];
+    }
+
+    private function todayPointage(OrderEmployee $orderEmployee): ?OrderEmployeePointage
+    {
+        $workDate = Carbon::today(config('app.timezone'))->toDateString();
+
+        return OrderEmployeePointage::where('order_employee_id', $orderEmployee->id)
+            ->where('work_date', $workDate)
+            ->first();
+    }
+
+    private function resolveDayStatus(OrderEmployee $orderEmployee): string
+    {
+        $p = $this->todayPointage($orderEmployee);
+        if (!$p || !$p->check_in_time) {
+            return self::STATUS_NOT_STARTED;
+        }
+        if (!$p->check_out_time) {
+            return self::STATUS_CHECKED_IN;
+        }
+
+        return self::STATUS_COMPLETED;
+    }
+
+    private function isWithinSchedule(array $cfg): bool
+    {
+        $now = Carbon::now(config('app.timezone'));
+        $dow = (int) $now->format('N');
+        $weekdays = $cfg['calendar']['weekdays'] ?? [];
+        if (!is_array($weekdays) || !in_array($dow, $weekdays, true)) {
+            return false;
+        }
+
+        $start = $cfg['calendar']['dailyWindow']['start'] ?? '00:00';
+        $end = $cfg['calendar']['dailyWindow']['end'] ?? '23:59';
+        $partsS = explode(':', $start);
+        $partsE = explode(':', $end);
+        $sh = (int) ($partsS[0] ?? 0);
+        $sm = (int) ($partsS[1] ?? 0);
+        $eh = (int) ($partsE[0] ?? 23);
+        $em = (int) ($partsE[1] ?? 59);
+        $mins = $now->hour * 60 + $now->minute;
+        $startM = $sh * 60 + $sm;
+        $endM = $eh * 60 + $em;
+
+        return $mins >= $startM && $mins <= $endM;
+    }
+
+    /**
+     * Anneau GeoJSON [lng, lat][].
+     */
+    private function geoPointInRing(float $lat, float $lng, array $ring): bool
+    {
+        $inside = false;
+        $n = count($ring);
+        for ($i = 0, $j = $n - 1; $i < $n; $j = $i++) {
+            $xi = (float) $ring[$i][0];
+            $yi = (float) $ring[$i][1];
+            $xj = (float) $ring[$j][0];
+            $yj = (float) $ring[$j][1];
+            $denom = ($yj - $yi) ?: 1e-9;
+            $intersect = (($yi > $lat) !== ($yj > $lat))
+                && ($lng < ($xj - $xi) * ($lat - $yi) / $denom + $xi);
+            if ($intersect) {
+                $inside = !$inside;
+            }
+        }
+
+        return $inside;
+    }
+
+    private function resolveOrder(array $validated): ?Order
+    {
+        if (!empty($validated['order_id'])) {
+            return Order::find($validated['order_id']);
+        }
+        if (!empty($validated['short_code'])) {
+            return Order::where('short_code', $validated['short_code'])->first();
+        }
+        if (!empty($validated['access_token'])) {
+            $raw = $validated['access_token'];
+            $decoded = urldecode($raw);
+            $order = Order::where('access_token', $raw)->where('status', 'validated')->first();
+            if (!$order && $decoded !== $raw) {
+                $order = Order::where('access_token', $decoded)->where('status', 'validated')->first();
+            }
+
+            return $order;
+        }
+
+        return null;
+    }
+
+    private function findGroupConfig(Order $order, string $groupName): ?array
+    {
+        $groups = $order->security_groups ?? [];
+        $configs = $order->group_security_configs ?? [];
+        if (!is_array($groups) || !is_array($configs)) {
+            return null;
+        }
+        foreach ($groups as $i => $g) {
+            if (!isset($configs[$i]) || !is_array($configs[$i])) {
+                continue;
+            }
+            $name = is_string($g) ? trim($g) : '';
+            if ($name === $groupName) {
+                return $configs[$i];
+            }
+        }
+
+        return null;
+    }
+
+    private function deviceModelsMatch(?string $stored, string $incoming): bool
+    {
+        $a = strtolower(trim((string) $stored));
+        $b = strtolower(trim($incoming));
+        if ($a === '' || $b === '') {
+            return true;
+        }
+        if ($a === $b) {
+            return true;
+        }
+        if (str_contains($a, $b) || str_contains($b, $a)) {
+            return true;
+        }
+
+        return false;
+    }
+}

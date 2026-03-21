@@ -23,7 +23,7 @@ return [
         'http://localhost:5173',
         'http://localhost:5174', // ✅ Frontend Admin (port 5174)
         'http://localhost:8000', // ✅ AJOUT: Autoriser localhost:8000 pour les rechargements de page
-        'http://192.168.1.126:5173',
+        'http://192.168.2.100:5173',
         'https://digicard.arccenciel.com',
         'https://digicard-admin.arccenciel.com',
     ],
@@ -35,7 +35,8 @@ return [
 
     'allowed_headers' => ['*'], // Allows all headers
 
-    'exposed_headers' => [],
+    // Nécessaire pour les téléchargements (export CSV/PDF) en axios + blob cross-origin
+    'exposed_headers' => ['Content-Disposition', 'Content-Type'],
 
     'max_age' => 0,
 

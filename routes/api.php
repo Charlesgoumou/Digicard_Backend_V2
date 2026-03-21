@@ -25,6 +25,8 @@ use App\Http\Controllers\MarketplaceController;
 use App\Http\Controllers\UserPreferencesController;
 use App\Http\Controllers\ImageSearchController;
 use App\Http\Controllers\DashboardController as FrontendDashboardController;
+use App\Http\Controllers\PublicPointageController;
+use App\Http\Controllers\AttendanceReportController;
 
 /*
 |--------------------------------------------------------------------------
@@ -70,6 +72,17 @@ Route::post('/password/verify-token', [PasswordResetController::class, 'verifyTo
 
 // Formulaire de contact
 Route::post('/contact', [ContactController::class, 'sendMessage'])->name('contact.send');
+
+// Pointage — profil public (empreinte appareil + contexte commande)
+Route::post('/public/pointage/verify', [PublicPointageController::class, 'verify'])
+    ->middleware('throttle:60,1')
+    ->name('public.pointage.verify');
+Route::post('/public/pointage/check-in', [PublicPointageController::class, 'checkIn'])
+    ->middleware('throttle:60,1')
+    ->name('public.pointage.check-in');
+Route::post('/public/pointage/check-out', [PublicPointageController::class, 'processDeparture'])
+    ->middleware('throttle:60,1')
+    ->name('public.pointage.check-out');
 
 // Webhook pour Chap Chap Pay (publique, sans authentification)
 Route::post('/payment/webhook', [OrderController::class, 'paymentWebhook'])->name('api.payment.webhook');
@@ -130,6 +143,7 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::delete('/employees/{employee}', [EmployeeController::class, 'destroy'])->name('employees.destroy');
     Route::post('/employees/{employee}/add-card', [EmployeeController::class, 'addCard'])->name('employees.add-card');
     Route::post('/employees/{employee}/remove-card', [EmployeeController::class, 'removeCard'])->name('employees.remove-card');
+    Route::post('/employees/{employee}/reset-device', [EmployeeController::class, 'resetDevice'])->name('employees.reset-device');
     // Assigner un employé à un slot
     Route::post('/orders/{orderId}/slots/{slotNumber}/assign', [EmployeeController::class, 'assignSlot'])->name('orders.slots.assign');
 
@@ -145,7 +159,13 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::get('/orders/{order}/status', [OrderController::class, 'getOrderStatus'])->name('orders.status');
     Route::get('/additional-payments/{additionalPaymentId}/check-status', [OrderController::class, 'checkAdditionalPaymentStatus'])->name('additional-payments.check-status');
     Route::patch('/orders/{order}/configure', [OrderController::class, 'markAsConfigured'])->name('orders.configure');
+    Route::post('/orders/{order}/seal-device', [OrderController::class, 'sealDevice'])->name('orders.seal-device');
     Route::patch('/orders/{order}/profile', [OrderController::class, 'updateProfile'])->name('orders.profile.update');
+    Route::patch('/orders/{order}/security-groups', [OrderController::class, 'updateSecurityGroups'])->name('orders.security-groups.update');
+
+    // Rapports d'assiduité (pointage) — business_admin
+    Route::get('/business/reports/attendance', [AttendanceReportController::class, 'attendance'])->name('business.reports.attendance');
+    Route::get('/business/reports/attendance/export', [AttendanceReportController::class, 'export'])->name('business.reports.attendance.export');
     Route::post('/orders/{order}/avatar', [OrderController::class, 'uploadOrderAvatar'])->name('orders.avatar.upload');
     Route::post('/orders/{order}/use-profile-avatar', [OrderController::class, 'useProfileAvatar'])->name('orders.avatar.use-profile');
     Route::post('/orders/upload-custom-design', [OrderController::class, 'uploadCustomDesign'])->name('orders.upload-custom-design');

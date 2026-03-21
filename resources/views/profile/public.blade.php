@@ -264,6 +264,8 @@
         .social-icon.threads:hover { color: #000000; }
         .social-icon.calendar:hover { color: #0ea5e9; }
         .social-icon.exchange:hover { color: #10b981; }
+        .social-icon.pointage:hover { color: #fbbf24; }
+        .social-icon.pointage { position: relative; }
         /* Garantir que les icônes sont bien organisées et centrées */
         .social-icons-container {
             display: flex;
@@ -722,7 +724,8 @@
             // L'échange de contacts est toujours activé
             $shareContactEnabled = true;
             
-            // Afficher la section seulement s'il y a au moins une icône, le calendrier ou l'échange
+            // Afficher la section seulement s'il y a au moins une icône, le calendrier, l'échange ou le slot pointage
+            $showPointageSlot = !empty($showPointageSlot);
             $hasSocialIcons = $whatsapp || $linkedin || $facebook || $twitter || $youtube || $deezer || $spotify || $tiktok || $threads;
         @endphp
         @php
@@ -750,6 +753,7 @@
             $totalIconsCount = count($allIcons);
             if ($appointmentEnabled) $totalIconsCount++;
             if ($shareContactEnabled) $totalIconsCount++;
+            if ($showPointageSlot) $totalIconsCount++;
             
             // Déterminer la classe CSS selon le nombre d'icônes
             $iconsCountClass = '';
@@ -759,7 +763,7 @@
                 $iconsCountClass = 'icons-count-high'; // 7-8 icônes
             }
         @endphp
-        @if($hasSocialIcons || $appointmentEnabled || $shareContactEnabled)
+        @if($hasSocialIcons || $appointmentEnabled || $shareContactEnabled || $showPointageSlot)
             <hr class="border-gray-600 mb-4">
             <div class="social-icons-container {{ $iconsCountClass }}">
                 {{-- Groupe GAUCHE des icônes --}}
@@ -798,6 +802,26 @@
                             <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2zM9 14H7v-2h2v2zm4 0h-2v-2h2v2zm4 0h-2v-2h2v2zm-8 4H7v-2h2v2zm4 0h-2v-2h2v2zm4 0h-2v-2h2v2z"/>
                         </svg>
                         <span class="absolute -top-1 -right-1 w-3 h-3 bg-sky-500 rounded-full animate-pulse"></span>
+                    </button>
+                    @endif
+
+                    @if($showPointageSlot && !empty($pointageBootstrap))
+                    <button
+                        type="button"
+                        id="pointage-action-btn"
+                        class="social-icon pointage text-gray-400 relative cursor-pointer flex-col gap-0.5"
+                        style="display: none;"
+                        title="Pointer l’arrivée"
+                        aria-label="Pointer l’arrivée"
+                    >
+                        <svg fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" class="w-7 h-7 flex-shrink-0">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span id="pointage-btn-caption" class="text-[0.5rem] text-slate-500 text-center leading-tight max-w-[5.75rem] hidden sm:block select-none"></span>
+                        <span class="pointage-spinner hidden absolute inset-0 flex items-center justify-center bg-slate-900/60 rounded-md">
+                            <span class="w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></span>
+                        </span>
+                        <span class="absolute -top-1 -right-1 w-3 h-3 bg-amber-400 rounded-full animate-pulse"></span>
                     </button>
                     @endif
                     
@@ -1458,6 +1482,19 @@ document.addEventListener('click', function(e) {
     }
 });
 </script>
+@endif
+
+@if(!empty($showPointageSlot) && !empty($pointageBootstrap))
+{{-- Feedback pointage (géolocalisation / zone) --}}
+<div id="pointageFeedbackModal" class="fixed inset-0 bg-black bg-opacity-60 hidden items-center justify-center z-[60] p-4 backdrop-blur-sm" onclick="if(event.target===this && window.closePointageFeedbackModal) window.closePointageFeedbackModal()">
+    <div class="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl shadow-2xl w-full max-w-md border border-slate-700 p-6" onclick="event.stopPropagation()">
+        <h3 id="pointageFeedbackTitle" class="text-lg font-bold text-white mb-3">Pointage</h3>
+        <p id="pointageFeedbackBody" class="text-slate-200 text-sm whitespace-pre-wrap mb-6"></p>
+        <button type="button" onclick="window.closePointageFeedbackModal && window.closePointageFeedbackModal()" class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold transition-colors">OK</button>
+    </div>
+</div>
+<script type="application/json" id="pointage-bootstrap">@json($pointageBootstrap)</script>
+<script type="module" src="{{ asset('js/profile-pointage.js') }}"></script>
 @endif
 
 {{-- Modal d'Échange de Contact --}}
