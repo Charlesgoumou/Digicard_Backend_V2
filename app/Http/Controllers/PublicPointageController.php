@@ -47,13 +47,14 @@ class PublicPointageController extends Controller
         ['orderEmployee' => $orderEmployee, 'cfg' => $cfg, 'polygon' => $polygon] = $ctx;
 
         $dayStatus = $this->resolveDayStatus($orderEmployee);
+        $weekdaysNorm = $this->normalizeWeekdayBits($cfg['calendar']['weekdays'] ?? []);
         $payload = [
             'ok' => true,
             'day_status' => $dayStatus,
             'can_check_in' => $dayStatus === self::STATUS_NOT_STARTED,
             'can_check_out' => $dayStatus === self::STATUS_CHECKED_IN,
             'calendar' => [
-                'weekdays' => $cfg['calendar']['weekdays'] ?? [],
+                'weekdays' => $weekdaysNorm,
                 'dailyWindow' => $cfg['calendar']['dailyWindow'] ?? ['start' => '08:00', 'end' => '18:00'],
             ],
         ];
@@ -296,8 +297,8 @@ class PublicPointageController extends Controller
             return response()->json(['ok' => false, 'code' => 'invalid_polygon'], 403);
         }
 
-        $weekdays = $cfg['calendar']['weekdays'] ?? [];
-        if (!is_array($weekdays) || count($weekdays) < 1) {
+        $weekdays = $this->normalizeWeekdayBits($cfg['calendar']['weekdays'] ?? []);
+        if (count($weekdays) < 1) {
             return response()->json(['ok' => false, 'code' => 'no_schedule'], 403);
         }
 
@@ -360,12 +361,34 @@ class PublicPointageController extends Controller
         return self::STATUS_COMPLETED;
     }
 
+    /**
+     * Jours 1=lundi … 7=dimanche (ISO), entiers uniques (tolère chaînes JSON).
+     *
+     * @param  array<mixed>  $weekdays
+     * @return array<int, int>
+     */
+    private function normalizeWeekdayBits(array $weekdays): array
+    {
+        $out = [];
+        foreach ($weekdays as $w) {
+            if ($w === '' || $w === null) {
+                continue;
+            }
+            $n = (int) $w;
+            if ($n >= 1 && $n <= 7) {
+                $out[$n] = $n;
+            }
+        }
+
+        return array_values($out);
+    }
+
     private function isWithinSchedule(array $cfg): bool
     {
         $now = Carbon::now(config('app.timezone'));
         $dow = (int) $now->format('N');
-        $weekdays = $cfg['calendar']['weekdays'] ?? [];
-        if (!is_array($weekdays) || !in_array($dow, $weekdays, true)) {
+        $weekdays = $this->normalizeWeekdayBits($cfg['calendar']['weekdays'] ?? []);
+        if ($weekdays === [] || ! in_array($dow, $weekdays, true)) {
             return false;
         }
 
@@ -431,22 +454,7 @@ class PublicPointageController extends Controller
 
     private function findGroupConfig(Order $order, string $groupName): ?array
     {
-        $groups = $order->security_groups ?? [];
-        $configs = $order->group_security_configs ?? [];
-        if (!is_array($groups) || !is_array($configs)) {
-            return null;
-        }
-        foreach ($groups as $i => $g) {
-            if (!isset($configs[$i]) || !is_array($configs[$i])) {
-                continue;
-            }
-            $name = is_string($g) ? trim($g) : '';
-            if ($name === $groupName) {
-                return $configs[$i];
-            }
-        }
-
-        return null;
+        return $order->findGroupSecurityConfigByName($groupName);
     }
 
     private function deviceModelsMatch(?string $stored, string $incoming): bool

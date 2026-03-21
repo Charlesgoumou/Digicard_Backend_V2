@@ -716,45 +716,39 @@ class PublicProfileController extends Controller
         if ($user->role === 'employee' && $orderEmployee && $orderEmployee->is_configured && $order && ($order->order_type ?? '') === 'business') {
             $groupName = trim((string) ($orderEmployee->employee_group ?? ''));
             if ($groupName !== '') {
-                $secGroups = is_array($order->security_groups) ? $order->security_groups : [];
-                $secConfigs = is_array($order->group_security_configs) ? $order->group_security_configs : [];
-                foreach ($secGroups as $gi => $gLabel) {
-                    if (!isset($secConfigs[$gi]) || !is_array($secConfigs[$gi])) {
-                        continue;
-                    }
-                    $gn = is_string($gLabel) ? trim($gLabel) : '';
-                    if ($gn !== $groupName) {
-                        continue;
-                    }
-                    $cfg = $secConfigs[$gi];
-                    if (empty($cfg['services']['pointage'])) {
-                        break;
-                    }
+                $cfg = $order->findGroupSecurityConfigByName($groupName);
+                if (is_array($cfg) && ! empty($cfg['services']['pointage'])) {
                     $poly = $cfg['geofence']['polygonGeoJson'] ?? null;
-                    if (!is_array($poly) || ($poly['type'] ?? '') !== 'Polygon') {
-                        break;
+                    if (is_array($poly) && ($poly['type'] ?? '') === 'Polygon') {
+                        $ring = $poly['coordinates'][0] ?? [];
+                        if (is_array($ring) && count($ring) >= 4) {
+                            $wd = $cfg['calendar']['weekdays'] ?? [];
+                            $wdCount = 0;
+                            if (is_array($wd)) {
+                                foreach ($wd as $bit) {
+                                    if ($bit === '' || $bit === null) {
+                                        continue;
+                                    }
+                                    $n = (int) $bit;
+                                    if ($n >= 1 && $n <= 7) {
+                                        ++$wdCount;
+                                    }
+                                }
+                            }
+                            $dw = $cfg['calendar']['dailyWindow'] ?? null;
+                            if ($wdCount >= 1 && is_array($dw) && isset($dw['start'], $dw['end'])
+                                && trim((string) $dw['start']) !== '' && trim((string) $dw['end']) !== '') {
+                                $showPointageSlot = true;
+                                $pointageBootstrap = [
+                                    'username' => $user->username,
+                                    'order_id' => $order->id,
+                                    'access_token' => $accessToken,
+                                    'short_code' => $order->short_code,
+                                    'api_base' => url('/'),
+                                ];
+                            }
+                        }
                     }
-                    $ring = $poly['coordinates'][0] ?? [];
-                    if (!is_array($ring) || count($ring) < 4) {
-                        break;
-                    }
-                    $wd = $cfg['calendar']['weekdays'] ?? [];
-                    if (!is_array($wd) || count($wd) < 1) {
-                        break;
-                    }
-                    $dw = $cfg['calendar']['dailyWindow'] ?? null;
-                    if (!is_array($dw) || !isset($dw['start'], $dw['end']) || trim((string) $dw['start']) === '' || trim((string) $dw['end']) === '') {
-                        break;
-                    }
-                    $showPointageSlot = true;
-                    $pointageBootstrap = [
-                        'username' => $user->username,
-                        'order_id' => $order->id,
-                        'access_token' => $accessToken,
-                        'short_code' => $order->short_code,
-                        'api_base' => url('/'),
-                    ];
-                    break;
                 }
             }
         }
