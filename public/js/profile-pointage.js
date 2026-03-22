@@ -332,6 +332,51 @@ function closeModal() {
   }
 }
 
+/**
+ * Modale de confirmation (fin de journée) — remplace window.confirm.
+ * @returns {Promise<boolean>}
+ */
+function showPointageConfirmModal(title, message) {
+  return new Promise((resolve) => {
+    const m = document.getElementById("pointageConfirmModal");
+    const t = document.getElementById("pointageConfirmTitle");
+    const b = document.getElementById("pointageConfirmBody");
+    const btnCancel = document.getElementById("pointageConfirmBtnCancel");
+    const btnOk = document.getElementById("pointageConfirmBtnConfirm");
+    if (!m || !t || !b || !btnCancel || !btnOk) {
+      resolve(window.confirm(`${title}\n\n${message}`));
+      return;
+    }
+    let done = false;
+    function finish(value) {
+      if (done) return;
+      done = true;
+      m.classList.add("hidden");
+      m.classList.remove("flex");
+      btnCancel.removeEventListener("click", onCancel);
+      btnOk.removeEventListener("click", onConfirm);
+      m.removeEventListener("click", onBackdrop);
+      resolve(value);
+    }
+    function onCancel() {
+      finish(false);
+    }
+    function onConfirm() {
+      finish(true);
+    }
+    function onBackdrop(ev) {
+      if (ev.target === m) finish(false);
+    }
+    t.textContent = title;
+    b.textContent = message;
+    btnCancel.addEventListener("click", onCancel);
+    btnOk.addEventListener("click", onConfirm);
+    m.addEventListener("click", onBackdrop);
+    m.classList.remove("hidden");
+    m.classList.add("flex");
+  });
+}
+
 function formatTimeFrFromIso(iso) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -435,16 +480,8 @@ async function runSilentPointage() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
-      if (data.code === "outside_schedule" || data.code === "pointage_unavailable") {
-        return;
-      }
-      if (data.code === "device_mismatch" || data.code === "invalid_enrollment") {
-        showModal(
-          "Pointage",
-          "Cet appareil ne correspond pas à votre enregistrement ou le jeton n’est plus valide. Ouvrez votre espace personnel sur ce téléphone pour mettre à jour la liaison.",
-          true,
-        );
-      }
+      // Toujours silencieux sur le profil public : pas de modale pour les visiteurs ni pour un
+      // autre navigateur (device_mismatch, jeton invalide, hors horaire, etc.).
       return;
     }
     session = data;
@@ -475,6 +512,35 @@ async function runSilentPointage() {
   refreshVisibility();
   setInterval(refreshVisibility, 60 * 1000);
 
+  /** Resynchronise avec l’API (nouveau jour, début de plage le lendemain, etc.). */
+  async function syncPointageSession() {
+    try {
+      const res = await fetch(urlVerifyIdentity, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: pointageJsonFetchHeaders(),
+        body: JSON.stringify(devicePayload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        Object.assign(session, data);
+        if (!session.day_status) session.day_status = "NOT_STARTED";
+        refreshVisibility();
+        return;
+      }
+      if (data.code === "outside_schedule" || data.code === "pointage_unavailable") {
+        btn.style.display = "none";
+      }
+    } catch (e) {
+      console.warn("[pointage] sync session", e);
+    }
+  }
+
+  setInterval(syncPointageSession, 2 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) syncPointageSession();
+  });
+
   btn.addEventListener("click", async () => {
     if (btn.dataset.loading === "1") return;
     if (!session?.polygon) return;
@@ -487,7 +553,10 @@ async function runSilentPointage() {
 
     const isDeparture = session.day_status === "CHECKED_IN" || session.can_check_out === true;
     if (isDeparture) {
-      const ok = window.confirm("Confirmez-vous votre fin de service pour aujourd'hui ?");
+      const ok = await showPointageConfirmModal(
+        "Fin de journée",
+        "Confirmez-vous la fin de votre journée de travail ? L’icône de pointage disparaîtra jusqu’à demain, lorsque la plage horaire définie par votre entreprise le permettra (par ex. à partir de l’heure d’arrivée configurée).",
+      );
       if (!ok) return;
     }
 
@@ -589,6 +658,7 @@ async function runSilentPointage() {
         const outTime = formatTimeFrFromIso(cdata.check_out_time);
         showModal("Pointage", `Départ enregistré avec succès à ${outTime}. Bonne soirée !`, false);
         refreshVisibility();
+        syncPointageSession();
       }
     } catch (e) {
       console.warn("[pointage] action failed", e);

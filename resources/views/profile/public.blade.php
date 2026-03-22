@@ -1480,6 +1480,22 @@ document.addEventListener('click', function(e) {
         <button type="button" onclick="window.closePointageFeedbackModal && window.closePointageFeedbackModal()" class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold transition-colors">OK</button>
     </div>
 </div>
+{{-- Confirmation fin de journée (remplace window.confirm) --}}
+<div id="pointageConfirmModal" class="fixed inset-0 bg-black bg-opacity-60 hidden items-center justify-center z-[61] p-4 backdrop-blur-sm">
+    <div class="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl shadow-2xl w-full max-w-md border border-slate-700 p-6" role="dialog" aria-modal="true" aria-labelledby="pointageConfirmTitle" onclick="event.stopPropagation()">
+        <div class="flex items-center gap-3 mb-4">
+            <div class="w-12 h-12 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center flex-shrink-0">
+                <svg class="w-7 h-7 text-amber-400" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            </div>
+            <h3 id="pointageConfirmTitle" class="text-lg font-bold text-white leading-tight">Fin de service</h3>
+        </div>
+        <p id="pointageConfirmBody" class="text-slate-300 text-sm leading-relaxed mb-6"></p>
+        <div class="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
+            <button type="button" id="pointageConfirmBtnCancel" class="w-full sm:w-auto px-5 py-3 rounded-xl border border-slate-600 text-slate-200 hover:bg-slate-700/80 font-medium transition-colors">Annuler</button>
+            <button type="button" id="pointageConfirmBtnConfirm" class="w-full sm:w-auto px-5 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold transition-colors">Confirmer le départ</button>
+        </div>
+    </div>
+</div>
 <script type="module" src="{{ asset('js/profile-pointage.js') }}"></script>
 @endif
 
