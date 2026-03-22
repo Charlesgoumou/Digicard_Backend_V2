@@ -885,6 +885,39 @@ class OrderController extends Controller
     }
 
     /**
+     * Cookie partagé (sous-domaines) pour le jeton d’enrôlement : le profil public et le SPA n’ont pas le même localStorage.
+     */
+    private function withEmpAuthEnrollmentCookie(\Illuminate\Http\JsonResponse $response, int $orderId, ?string $token): \Illuminate\Http\JsonResponse
+    {
+        $domain = config('digicard.emp_auth_cookie_domain');
+        if ($token === null || $token === '' || ! is_string($domain) || trim($domain) === '') {
+            return $response;
+        }
+
+        $dom = trim($domain);
+        if ($dom !== '' && $dom !== 'null' && ! str_starts_with($dom, '.')) {
+            $dom = '.'.$dom;
+        }
+
+        $secureCfg = config('digicard.emp_auth_cookie_secure');
+        $secure = $secureCfg === null || $secureCfg === ''
+            ? request()->secure()
+            : filter_var($secureCfg, FILTER_VALIDATE_BOOLEAN);
+
+        return $response->withCookie(cookie(
+            'arcc_emp_o_'.$orderId,
+            $token,
+            60 * 24 * 400,
+            '/',
+            $dom,
+            $secure,
+            false,
+            false,
+            'lax'
+        ));
+    }
+
+    /**
      * Jeton longue durée pour reconnaissance silencieuse du profil public (stocké en localStorage employé).
      */
     private function issueEmpAuthTokenIfMissing(OrderEmployee $orderEmployee): void
@@ -935,9 +968,13 @@ class OrderController extends Controller
         $this->issueEmpAuthTokenIfMissing($orderEmployee);
         $orderEmployee->refresh();
 
-        return response()->json([
-            'emp_auth_token' => $orderEmployee->emp_auth_token,
-        ]);
+        return $this->withEmpAuthEnrollmentCookie(
+            response()->json([
+                'emp_auth_token' => $orderEmployee->emp_auth_token,
+            ]),
+            $order->id,
+            $orderEmployee->emp_auth_token
+        );
     }
 
     /**
@@ -989,11 +1026,15 @@ class OrderController extends Controller
             $this->issueEmpAuthTokenIfMissing($orderEmployee);
             $orderEmployee->refresh();
 
-            return response()->json([
-                'message' => 'Appareil déjà enregistré.',
-                'sealed' => true,
-                'emp_auth_token' => $orderEmployee->emp_auth_token,
-            ]);
+            return $this->withEmpAuthEnrollmentCookie(
+                response()->json([
+                    'message' => 'Appareil déjà enregistré.',
+                    'sealed' => true,
+                    'emp_auth_token' => $orderEmployee->emp_auth_token,
+                ]),
+                $order->id,
+                $orderEmployee->emp_auth_token
+            );
         }
 
         $storedModel = $orderEmployee->device_model;
@@ -1012,11 +1053,15 @@ class OrderController extends Controller
         $this->issueEmpAuthTokenIfMissing($orderEmployee);
         $orderEmployee->refresh();
 
-        return response()->json([
-            'message' => 'Appareil lié avec succès.',
-            'sealed' => true,
-            'emp_auth_token' => $orderEmployee->emp_auth_token,
-        ]);
+        return $this->withEmpAuthEnrollmentCookie(
+            response()->json([
+                'message' => 'Appareil lié avec succès.',
+                'sealed' => true,
+                'emp_auth_token' => $orderEmployee->emp_auth_token,
+            ]),
+            $order->id,
+            $orderEmployee->emp_auth_token
+        );
     }
 
     /**
@@ -1083,11 +1128,15 @@ class OrderController extends Controller
         $this->issueEmpAuthTokenIfMissing($orderEmployee);
         $orderEmployee->refresh();
 
-        return response()->json([
-            'message' => 'Identité appareil enregistrée.',
-            'sealed' => true,
-            'emp_auth_token' => $orderEmployee->emp_auth_token,
-        ]);
+        return $this->withEmpAuthEnrollmentCookie(
+            response()->json([
+                'message' => 'Identité appareil enregistrée.',
+                'sealed' => true,
+                'emp_auth_token' => $orderEmployee->emp_auth_token,
+            ]),
+            $order->id,
+            $orderEmployee->emp_auth_token
+        );
     }
 
     /**

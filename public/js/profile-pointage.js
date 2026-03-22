@@ -4,21 +4,45 @@
 /* global window, document, navigator, crypto */
 
 const EMP_AUTH_LS_KEY = "arcc_emp_access_token";
+const EMP_AUTH_COOKIE_PREFIX = "arcc_emp_o_";
+
+/**
+ * Même jeton que le SPA mais sur un domaine parent : le profil public est souvent une autre origine
+ * (ex. digicard-api.* vs digicard.*) où localStorage n’est pas partagé.
+ */
+function readEmpAuthTokenFromCookie(orderId) {
+  if (orderId == null || orderId === "") return null;
+  const key = `${EMP_AUTH_COOKIE_PREFIX}${String(orderId)}=`;
+  try {
+    const parts = document.cookie.split(";");
+    for (let i = 0; i < parts.length; i += 1) {
+      const p = parts[i].trim();
+      if (p.startsWith(key)) {
+        const v = decodeURIComponent(p.slice(key.length));
+        return typeof v === "string" && v.length > 0 ? v : null;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
 
 function readEmpAuthTokenForOrder(orderId) {
   if (orderId == null || orderId === "") return null;
   try {
     const raw = localStorage.getItem(EMP_AUTH_LS_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && parsed.byOrder) {
-      const t = parsed.byOrder[String(orderId)];
-      return typeof t === "string" && t.length > 0 ? t : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && parsed.byOrder) {
+        const t = parsed.byOrder[String(orderId)];
+        if (typeof t === "string" && t.length > 0) return t;
+      }
     }
-    return null;
   } catch {
-    return null;
+    /* fall through */
   }
+  return readEmpAuthTokenFromCookie(orderId);
 }
 
 async function sha256Hex(input) {
