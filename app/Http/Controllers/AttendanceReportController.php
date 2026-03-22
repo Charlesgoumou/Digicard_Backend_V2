@@ -20,6 +20,9 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
  */
 class AttendanceReportController extends Controller
 {
+    /** Tolérances retard autorisées (minutes après l’heure d’arrivée). */
+    private const LATE_TOLERANCE_MINUTES_ALLOWED = [15, 30, 60, 120];
+
     private function canAccessOrder(User $user, Order $order): bool
     {
         if ($user->role === 'employee') {
@@ -79,7 +82,7 @@ class AttendanceReportController extends Controller
             $gname = is_string($gRaw) ? trim($gRaw) : '';
             $cfg = isset($groupConfigs[$i]) && is_array($groupConfigs[$i]) ? $groupConfigs[$i] : [];
             $isWorkingDay = $this->isGroupWorkingDay($cfg, $dow);
-            $deadline = $this->groupDeadlineCarbon($dateStr, $cfg, $tz);
+            $lateLimit = $this->groupLateLimitCarbon($dateStr, $cfg, $tz);
 
             $members = $orderEmployees->filter(function ($oe) use ($gname) {
                 return trim((string) $oe->employee_group) === $gname;
@@ -95,7 +98,7 @@ class AttendanceReportController extends Controller
 
             foreach ($members as $oe) {
                 $pt = $pointages->get($oe->id);
-                $row = $this->buildEmployeeRow($oe, $pt, $tz, $isWorkingDay, $deadline);
+                $row = $this->buildEmployeeRow($oe, $pt, $tz, $isWorkingDay, $lateLimit);
                 $rows[] = $row;
 
                 if ($oe->is_configured && $isWorkingDay) {
@@ -116,6 +119,7 @@ class AttendanceReportController extends Controller
                     : sprintf('Groupe %d', $groupNumber),
                 'is_working_day' => $isWorkingDay,
                 'daily_window_start' => $cfg['calendar']['dailyWindow']['start'] ?? '08:00',
+                'late_tolerance_minutes' => $this->normalizeLateToleranceMinutes($cfg),
                 'presence_ratio' => [
                     'present' => $presentInGroup,
                     'expected' => $expectedInGroup,
@@ -131,7 +135,7 @@ class AttendanceReportController extends Controller
         if ($unplaced->isNotEmpty()) {
             $fallbackCfg = $this->defaultGroupConfig();
             $isWorkingDay = $this->isGroupWorkingDay($fallbackCfg, $dow);
-            $deadline = $this->groupDeadlineCarbon($dateStr, $fallbackCfg, $tz);
+            $lateLimit = $this->groupLateLimitCarbon($dateStr, $fallbackCfg, $tz);
 
             $rows = [];
             $presentInGroup = 0;
@@ -139,7 +143,7 @@ class AttendanceReportController extends Controller
 
             foreach ($unplaced as $oe) {
                 $pt = $pointages->get($oe->id);
-                $row = $this->buildEmployeeRow($oe, $pt, $tz, $isWorkingDay, $deadline);
+                $row = $this->buildEmployeeRow($oe, $pt, $tz, $isWorkingDay, $lateLimit);
                 $rows[] = $row;
 
                 if ($oe->is_configured && $isWorkingDay) {
@@ -158,6 +162,7 @@ class AttendanceReportController extends Controller
                 'title' => 'Employés non assignés à un groupe de sécurité',
                 'is_working_day' => $isWorkingDay,
                 'daily_window_start' => $fallbackCfg['calendar']['dailyWindow']['start'] ?? '08:00',
+                'late_tolerance_minutes' => $this->normalizeLateToleranceMinutes($fallbackCfg),
                 'presence_ratio' => [
                     'present' => $presentInGroup,
                     'expected' => $expectedInGroup,
@@ -421,8 +426,8 @@ class AttendanceReportController extends Controller
             foreach ($orderEmployees as $oe) {
                 $pt = $ptsForDay->get($oe->id);
                 [$cfg, $isWorkingDay] = $this->resolveConfigForEmployee($oe, $securityGroups, $groupConfigs, $dow);
-                $deadline = $this->groupDeadlineCarbon($dateStr, $cfg, $tz);
-                $row = $this->buildEmployeeRow($oe, $pt, $tz, $isWorkingDay, $deadline);
+                $lateLimit = $this->groupLateLimitCarbon($dateStr, $cfg, $tz);
+                $row = $this->buildEmployeeRow($oe, $pt, $tz, $isWorkingDay, $lateLimit);
 
                 $out[] = [
                     'date' => $dateStr,
@@ -434,6 +439,7 @@ class AttendanceReportController extends Controller
                     'departure' => $row['departure'] !== null && $row['departure'] !== '' ? $row['departure'] : '--:--',
                     'status' => $row['status'],
                     'status_label' => $this->statusLabelFr($row['status']),
+                    'hours_worked' => $row['hours_worked'] ?? '',
                     'late_label' => $row['is_late'] ? 'Oui' : 'Non',
                     'gps_in' => $this->formatGpsCell($row['gps']['check_in'] ?? null),
                     'gps_out' => $this->formatGpsCell($row['gps']['check_out'] ?? null),
@@ -481,7 +487,7 @@ class AttendanceReportController extends Controller
             $out = fopen('php://output', 'w');
             fprintf($out, chr(0xEF).chr(0xBB).chr(0xBF));
             fputcsv($out, [
-                'Date', 'Groupe', 'Employé', 'Email', 'Matricule', 'Arrivée', 'Départ', 'Statut', 'Retard', 'GPS entrée', 'GPS sortie',
+                'Date', 'Groupe', 'Employé', 'Email', 'Matricule', 'Arrivée', 'Départ', 'Statut', 'Heures (jour)', 'Retard', 'GPS entrée', 'GPS sortie',
             ], ';');
             foreach ($rows as $r) {
                 fputcsv($out, [
@@ -493,6 +499,7 @@ class AttendanceReportController extends Controller
                     $r['arrival'],
                     $r['departure'],
                     $r['status_label'],
+                    $r['hours_worked'] ?? '',
                     $r['late_label'],
                     $r['gps_in'],
                     $r['gps_out'],
@@ -514,7 +521,7 @@ class AttendanceReportController extends Controller
         $sheet->setTitle('Assiduite');
 
         $table = [
-            ['Date', 'Groupe', 'Employé', 'Email', 'Matricule', 'Arrivée', 'Départ', 'Statut', 'Retard', 'GPS entrée', 'GPS sortie'],
+            ['Date', 'Groupe', 'Employé', 'Email', 'Matricule', 'Arrivée', 'Départ', 'Statut', 'Heures (jour)', 'Retard', 'GPS entrée', 'GPS sortie'],
         ];
         foreach ($rows as $r) {
             $table[] = [
@@ -526,6 +533,7 @@ class AttendanceReportController extends Controller
                 $r['arrival'],
                 $r['departure'],
                 $r['status_label'],
+                $r['hours_worked'] ?? '',
                 $r['late_label'],
                 $r['gps_in'],
                 $r['gps_out'],
@@ -533,7 +541,7 @@ class AttendanceReportController extends Controller
         }
         $sheet->fromArray($table, null, 'A1', false);
 
-        foreach (range('A', 'K') as $col) {
+        foreach (range('A', 'L') as $col) {
             $sheet->getColumnDimension($col)->setAutoSize(true);
         }
 
@@ -609,12 +617,12 @@ class AttendanceReportController extends Controller
 
             [$cfg, $isWorkingDay] = $this->resolveConfigForEmployee($oe, $securityGroups, $groupConfigs, $dow);
             if ($isWorkingDay) {
-                $deadline = $this->groupDeadlineCarbon($dateStr, $cfg, $tz);
+                $lateLimit = $this->groupLateLimitCarbon($dateStr, $cfg, $tz);
                 $checkIn = $pt->check_in_time instanceof Carbon
                     ? $pt->check_in_time->copy()->timezone($tz)
                     : Carbon::parse($pt->check_in_time, $tz);
 
-                if ($checkIn->gt($deadline)) {
+                if ($checkIn->gt($lateLimit)) {
                     ++$stats['late'];
                 }
             }
@@ -653,7 +661,51 @@ class AttendanceReportController extends Controller
             'calendar' => [
                 'weekdays' => [1, 2, 3, 4, 5],
                 'dailyWindow' => ['start' => '08:00', 'end' => '18:00'],
+                'lateToleranceMinutes' => 15,
             ],
+        ];
+    }
+
+    /**
+     * Minutes après l’heure d’arrivée avant de compter un retard (15, 30, 60 ou 120).
+     */
+    private function normalizeLateToleranceMinutes(array $cfg): int
+    {
+        $cal = $cfg['calendar'] ?? [];
+        $v = $cal['lateToleranceMinutes'] ?? $cal['late_tolerance_minutes'] ?? null;
+        $n = is_numeric($v) ? (int) $v : 15;
+
+        return in_array($n, self::LATE_TOLERANCE_MINUTES_ALLOWED, true) ? $n : 15;
+    }
+
+    /**
+     * Date/heure limite d’arrivée sans être marqué en retard (début de journée + tolérance).
+     */
+    private function groupLateLimitCarbon(string $dateStr, array $cfg, string $tz): Carbon
+    {
+        $start = $this->groupDeadlineCarbon($dateStr, $cfg, $tz);
+
+        return $start->copy()->addMinutes($this->normalizeLateToleranceMinutes($cfg));
+    }
+
+    /**
+     * @return array{decimal: float|null, label: string|null}
+     */
+    private function computeHoursWorked(?Carbon $checkIn, ?Carbon $checkOut): array
+    {
+        if (!$checkIn || !$checkOut) {
+            return ['decimal' => null, 'label' => null];
+        }
+        $mins = $checkIn->diffInMinutes($checkOut, false);
+        if ($mins < 0) {
+            return ['decimal' => null, 'label' => null];
+        }
+        $h = intdiv($mins, 60);
+        $m = $mins % 60;
+
+        return [
+            'decimal' => round($mins / 60, 2),
+            'label' => sprintf('%d h %02d', $h, $m),
         ];
     }
 
@@ -682,7 +734,7 @@ class AttendanceReportController extends Controller
         ?OrderEmployeePointage $pt,
         string $tz,
         bool $isWorkingDay,
-        Carbon $deadline
+        Carbon $lateLimit
     ): array {
         $checkIn = $pt && $pt->check_in_time
             ? ($pt->check_in_time instanceof Carbon
@@ -698,8 +750,10 @@ class AttendanceReportController extends Controller
 
         $late = false;
         if ($checkIn && $isWorkingDay) {
-            $late = $checkIn->gt($deadline);
+            $late = $checkIn->gt($lateLimit);
         }
+
+        $worked = $this->computeHoursWorked($checkIn, $checkOut);
 
         $status = $this->resolveStatus($oe, $checkIn, $checkOut, $isWorkingDay, $late);
 
@@ -720,6 +774,8 @@ class AttendanceReportController extends Controller
             'departure' => $checkOut ? $checkOut->format('H:i') : null,
             'check_in_time' => $checkIn ? $checkIn->toIso8601String() : null,
             'check_out_time' => $checkOut ? $checkOut->toIso8601String() : null,
+            'hours_worked' => $worked['label'],
+            'hours_worked_decimal' => $worked['decimal'],
             'status' => $status,
             'is_late' => $late,
             'is_working_day' => $isWorkingDay,
