@@ -105,6 +105,10 @@ return [
     | 
     | ✅ IMPORTANT: Pour localhost, laissez cette valeur à null (ne pas définir SESSION_DOMAIN dans .env)
     | Définir un domaine peut causer des problèmes avec les cookies sur localhost
+    |
+    | Production multi-sous-domaines (ex. digicard.* et digicard-api.* sur arccenciel.com) :
+    |   SESSION_DOMAIN=.arccenciel.com
+    | (pointe aussi EMP_AUTH_COOKIE_DOMAIN par défaut dans config/digicard.php si non surchargé)
     */
     'domain' => env('SESSION_DOMAIN', null),
 
