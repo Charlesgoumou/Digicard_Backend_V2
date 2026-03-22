@@ -1496,7 +1496,7 @@ document.addEventListener('click', function(e) {
         </div>
     </div>
 </div>
-<script type="module" src="{{ asset('js/profile-pointage.js') }}"></script>
+<script type="module" src="{{ asset('js/profile-pointage.js?v=' . time()) }}"></script>
 @endif
 
 {{-- Modal d'Échange de Contact --}}
