@@ -29,6 +29,13 @@ return Application::configure(basePath: dirname(__DIR__))
             'api/payment/simulate-webhook/*', // Routes de simulation pour développement
             'api/payment/simulate-success/*', // Routes de simulation pour développement
             'payment/*',           // Sécurité supplémentaire
+            // Pointage public : auth par emp_auth_token + appareil dans le corps JSON (pas la session).
+            // Évite 419 si l’en-tête X-CSRF-TOKEN n’est pas envoyé depuis profile-pointage.js.
+            'api/public/pointage/verify',
+            'api/public/pointage/verify-identity',
+            'api/public/pointage/check-in',
+            'api/public/pointage/check-out',
+            'api/public/device/bind',
         ]);
 
         // 2. Proxies (Votre config existante - Ne pas toucher)

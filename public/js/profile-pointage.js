@@ -9,12 +9,11 @@ const EMP_AUTH_COOKIE_PREFIX = "arcc_emp_o_";
 const DEVICE_SEAL_COOKIE_PREFIX = "arcc_dev_o_";
 
 /**
- * Même jeton que le SPA mais sur un domaine parent : le profil public est souvent une autre origine
- * (ex. digicard-api.* vs digicard.*) où localStorage n’est pas partagé.
+ * Lit un cookie par nom exact (utilisé pour arcc_emp_o_{orderId}, arcc_dev_o_{orderId}, etc.).
  */
-function readEmpAuthTokenFromCookie(orderId) {
-  if (orderId == null || orderId === "") return null;
-  const key = `${EMP_AUTH_COOKIE_PREFIX}${String(orderId)}=`;
+function getCookie(name) {
+  if (name == null || name === "" || typeof name !== "string") return null;
+  const key = `${name}=`;
   try {
     const parts = document.cookie.split(";");
     for (let i = 0; i < parts.length; i += 1) {
@@ -28,6 +27,39 @@ function readEmpAuthTokenFromCookie(orderId) {
     /* ignore */
   }
   return null;
+}
+
+/**
+ * Jeton d’enrôlement posé par l’API sur Domain=.parent (ex. arcc_emp_o_42).
+ */
+function readEmpAuthTokenFromCookie(orderId) {
+  if (orderId == null || orderId === "") return null;
+  return getCookie(`${EMP_AUTH_COOKIE_PREFIX}${String(orderId)}`);
+}
+
+/**
+ * Jeton CSRF de la page Blade (`<meta name="csrf-token">`).
+ * Requis pour les POST /api/* quand Sanctum traite digicard-api.* comme origine « stateful »
+ * (middleware EnsureFrontendRequestsAreStateful → VerifyCsrfToken).
+ */
+function getPageCsrfToken() {
+  try {
+    const el = document.querySelector('meta[name="csrf-token"]');
+    const t = el?.getAttribute("content");
+    return typeof t === "string" && t.length > 0 ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+function pointageJsonFetchHeaders() {
+  const headers = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+  const csrf = getPageCsrfToken();
+  if (csrf) headers["X-CSRF-TOKEN"] = csrf;
+  return headers;
 }
 
 function readEmpAuthTokenForOrder(orderId) {
@@ -219,19 +251,13 @@ function looksLikeStoredDeviceUuid(s) {
 
 function readDeviceSealFromCookie(orderId) {
   if (orderId == null || orderId === "") return null;
-  const key = `${DEVICE_SEAL_COOKIE_PREFIX}${String(orderId)}=`;
+  const raw = getCookie(`${DEVICE_SEAL_COOKIE_PREFIX}${String(orderId)}`);
+  if (!raw) return null;
   try {
-    const parts = document.cookie.split(";");
-    for (let i = 0; i < parts.length; i += 1) {
-      const p = parts[i].trim();
-      if (p.startsWith(key)) {
-        const raw = decodeURIComponent(p.slice(key.length));
-        const o = JSON.parse(raw);
-        if (o && typeof o.u === "string" && looksLikeStoredDeviceUuid(o.u)) {
-          const model = typeof o.m === "string" ? o.m.slice(0, 250) : "";
-          return { uuid: o.u.trim(), model };
-        }
-      }
+    const o = JSON.parse(raw);
+    if (o && typeof o.u === "string" && looksLikeStoredDeviceUuid(o.u)) {
+      const model = typeof o.m === "string" ? o.m.slice(0, 250) : "";
+      return { uuid: o.u.trim(), model };
     }
   } catch {
     /* ignore */
@@ -403,10 +429,8 @@ async function runSilentPointage() {
 
     const res = await fetch(urlVerifyIdentity, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
+      credentials: "same-origin",
+      headers: pointageJsonFetchHeaders(),
       body: JSON.stringify(devicePayload),
     });
     const data = await res.json().catch(() => ({}));
@@ -501,7 +525,8 @@ async function runSilentPointage() {
       if (!isDeparture) {
         const res = await fetch(urlCheckIn, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          credentials: "same-origin",
+          headers: pointageJsonFetchHeaders(),
           body: JSON.stringify(apiBody),
         });
         const cdata = await res.json().catch(() => ({}));
@@ -542,7 +567,8 @@ async function runSilentPointage() {
       } else {
         const res = await fetch(urlCheckOut, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          credentials: "same-origin",
+          headers: pointageJsonFetchHeaders(),
           body: JSON.stringify(apiBody),
         });
         const cdata = await res.json().catch(() => ({}));
