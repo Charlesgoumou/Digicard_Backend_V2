@@ -29,6 +29,7 @@
                 <th>Arrivée</th>
                 <th>Départ</th>
                 <th>Statut</th>
+                <th>Heures (jour)</th>
                 <th>Retard</th>
                 <th>GPS entrée</th>
                 <th>GPS sortie</th>
@@ -45,6 +46,7 @@
                 <td>{{ $r['arrival'] }}</td>
                 <td>{{ $r['departure'] }}</td>
                 <td>{{ $r['status_label'] }}</td>
+                <td>{{ $r['hours_worked'] ?? '' }}</td>
                 <td>{{ $r['late_label'] }}</td>
                 <td>{{ $r['gps_in'] }}</td>
                 <td>{{ $r['gps_out'] }}</td>
