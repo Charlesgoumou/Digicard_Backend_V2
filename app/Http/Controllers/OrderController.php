@@ -563,6 +563,9 @@ class OrderController extends Controller
                 if (isset($slot['employee_id']) && isset($orderEmployees[$slot['employee_id']])) {
                     $orderEmployee = $orderEmployees[$slot['employee_id']];
                     $slot['is_configured'] = $orderEmployee->is_configured;
+                    // Pointage / modale admin : identifiant appareil lié à cette commande
+                    $slot['device_uuid'] = $orderEmployee->device_uuid;
+                    $slot['device_model'] = $orderEmployee->device_model;
 
                     // Ajouter le username si manquant (pour les anciens slots)
                     if (!isset($slot['employee_username']) && $orderEmployee->employee) {
@@ -993,6 +996,16 @@ class OrderController extends Controller
             ]);
         }
 
+        $storedModel = $orderEmployee->device_model;
+        if (is_string($storedModel) && trim($storedModel) !== '') {
+            if (! $this->deviceModelsCompatible($storedModel, $validated['device_model'])) {
+                return response()->json([
+                    'message' => 'Veuillez contacter votre administrateur pour changer d\'appareil de pointage.',
+                    'code' => 'device_model_mismatch',
+                ], 422);
+            }
+        }
+
         $orderEmployee->device_uuid = $validated['device_uuid'];
         $orderEmployee->device_model = $validated['device_model'];
         $orderEmployee->save();
@@ -1004,6 +1017,131 @@ class OrderController extends Controller
             'sealed' => true,
             'emp_auth_token' => $orderEmployee->emp_auth_token,
         ]);
+    }
+
+    /**
+     * Migration : enregistre l’UUID uniquement si la colonne device_uuid est encore vide.
+     * Refuse si un modèle était déjà stocké et ne correspond pas au terminal actuel.
+     */
+    public function updateDeviceIdentity(Request $request)
+    {
+        $user = $request->user();
+
+        $validated = $request->validate([
+            'order_id' => 'required|integer|exists:orders,id',
+            'device_uuid' => 'required|string|max:128',
+            'device_model' => 'required|string|max:255',
+        ]);
+
+        $order = Order::findOrFail($validated['order_id']);
+
+        if (! $this->canAccessOrder($user, $order)) {
+            return response()->json(['message' => 'Commande non trouvée.'], 404);
+        }
+
+        if ($order->status === 'cancelled') {
+            return response()->json(['message' => 'Cette commande a été annulée.'], 400);
+        }
+
+        $ot = (string) ($order->order_type ?? '');
+        if ($ot !== 'business' && $ot !== 'entreprise') {
+            return response()->json(['message' => 'Non applicable.'], 422);
+        }
+
+        $orderEmployee = OrderEmployee::where('order_id', $order->id)
+            ->where('employee_id', $user->id)
+            ->first();
+
+        if (! $orderEmployee) {
+            return response()->json(['message' => 'Aucune assignation pour cette commande.'], 404);
+        }
+
+        if (! $orderEmployee->is_configured) {
+            return response()->json(['message' => 'Configurez d\'abord votre carte avant de lier un appareil.'], 422);
+        }
+
+        if ($orderEmployee->device_uuid) {
+            return response()->json([
+                'message' => 'Un appareil est déjà enregistré pour cette commande.',
+                'code' => 'device_already_bound',
+            ], 422);
+        }
+
+        $storedModel = $orderEmployee->device_model;
+        if (is_string($storedModel) && trim($storedModel) !== '') {
+            if (! $this->deviceModelsCompatible($storedModel, $validated['device_model'])) {
+                return response()->json([
+                    'message' => 'Veuillez contacter votre administrateur pour changer d\'appareil de pointage.',
+                    'code' => 'device_model_mismatch',
+                ], 422);
+            }
+        }
+
+        $orderEmployee->device_uuid = $validated['device_uuid'];
+        $orderEmployee->device_model = $validated['device_model'];
+        $orderEmployee->save();
+        $this->issueEmpAuthTokenIfMissing($orderEmployee);
+        $orderEmployee->refresh();
+
+        return response()->json([
+            'message' => 'Identité appareil enregistrée.',
+            'sealed' => true,
+            'emp_auth_token' => $orderEmployee->emp_auth_token,
+        ]);
+    }
+
+    /**
+     * Indique si le libellé « modèle » courant correspond au modèle historique (sans UUID).
+     */
+    private function deviceModelsCompatible(?string $stored, string $incoming): bool
+    {
+        $stored = $stored !== null ? trim($stored) : '';
+        $incoming = trim($incoming);
+
+        if ($stored === '') {
+            return true;
+        }
+
+        $a = mb_strtolower(preg_replace('/\s+/u', ' ', $stored));
+        $b = mb_strtolower(preg_replace('/\s+/u', ' ', $incoming));
+
+        if ($a === $b) {
+            return true;
+        }
+
+        if (str_contains($b, $a) || str_contains($a, $b)) {
+            return true;
+        }
+
+        $iosA = (bool) preg_match('/\b(iphone|ipad|ios|ipados)\b/u', $a);
+        $iosB = (bool) preg_match('/\b(iphone|ipad|ios|ipados)\b/u', $b);
+        $andA = (bool) preg_match('/\bandroid\b/u', $a);
+        $andB = (bool) preg_match('/\bandroid\b/u', $b);
+
+        if (($iosA && $andB) || ($iosB && $andA)) {
+            return false;
+        }
+
+        preg_match_all('/[a-z0-9][a-z0-9\.\-]{2,}/iu', $a, $ma);
+        $skip = ['android', 'linux', 'arm64', 'arm', 'aarch64', 'web', 'mobile', 'like', 'gecko'];
+
+        foreach (array_unique($ma[0] ?? []) as $t) {
+            $tl = mb_strtolower($t);
+            if (mb_strlen($tl) >= 4 && ! in_array($tl, $skip, true) && str_contains($b, $tl)) {
+                return true;
+            }
+        }
+
+        preg_match_all('/[a-z0-9][a-z0-9\.\-]{2,}/iu', $b, $mb);
+
+        foreach (array_unique($mb[0] ?? []) as $t) {
+            $tl = mb_strtolower($t);
+            if (mb_strlen($tl) >= 4 && ! in_array($tl, $skip, true) && str_contains($a, $tl)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
