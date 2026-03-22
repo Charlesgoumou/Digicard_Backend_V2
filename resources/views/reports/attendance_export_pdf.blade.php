@@ -29,7 +29,7 @@
                 <th>Arrivée</th>
                 <th>Départ</th>
                 <th>Statut</th>
-                <th>Heures (jour)</th>
+                <th>Temps de travail</th>
                 <th>Retard</th>
                 <th>GPS entrée</th>
                 <th>GPS sortie</th>

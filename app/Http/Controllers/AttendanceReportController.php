@@ -487,7 +487,7 @@ class AttendanceReportController extends Controller
             $out = fopen('php://output', 'w');
             fprintf($out, chr(0xEF).chr(0xBB).chr(0xBF));
             fputcsv($out, [
-                'Date', 'Groupe', 'Employé', 'Email', 'Matricule', 'Arrivée', 'Départ', 'Statut', 'Heures (jour)', 'Retard', 'GPS entrée', 'GPS sortie',
+                'Date', 'Groupe', 'Employé', 'Email', 'Matricule', 'Arrivée', 'Départ', 'Statut', 'Temps de travail', 'Retard', 'GPS entrée', 'GPS sortie',
             ], ';');
             foreach ($rows as $r) {
                 fputcsv($out, [
@@ -521,7 +521,7 @@ class AttendanceReportController extends Controller
         $sheet->setTitle('Assiduite');
 
         $table = [
-            ['Date', 'Groupe', 'Employé', 'Email', 'Matricule', 'Arrivée', 'Départ', 'Statut', 'Heures (jour)', 'Retard', 'GPS entrée', 'GPS sortie'],
+            ['Date', 'Groupe', 'Employé', 'Email', 'Matricule', 'Arrivée', 'Départ', 'Statut', 'Temps de travail', 'Retard', 'GPS entrée', 'GPS sortie'],
         ];
         foreach ($rows as $r) {
             $table[] = [
@@ -689,6 +689,24 @@ class AttendanceReportController extends Controller
     }
 
     /**
+     * Affichage durée travail : 4h, 0,5h, 1,5h (virgule décimale, unité h).
+     */
+    private function formatWorkDurationHoursFr(?float $hoursTotal): ?string
+    {
+        if ($hoursTotal === null || ! is_finite($hoursTotal) || $hoursTotal < 0) {
+            return null;
+        }
+        $rounded = round($hoursTotal, 1);
+        $intPart = (int) floor($rounded + 1e-9);
+        $frac = $rounded - $intPart;
+        if ($frac < 0.05) {
+            return $intPart.'h';
+        }
+
+        return number_format($rounded, 1, ',', '').'h';
+    }
+
+    /**
      * @return array{decimal: float|null, label: string|null}
      */
     private function computeHoursWorked(?Carbon $checkIn, ?Carbon $checkOut): array
@@ -700,12 +718,11 @@ class AttendanceReportController extends Controller
         if ($mins < 0) {
             return ['decimal' => null, 'label' => null];
         }
-        $h = intdiv($mins, 60);
-        $m = $mins % 60;
+        $hoursExact = $mins / 60.0;
 
         return [
-            'decimal' => round($mins / 60, 2),
-            'label' => sprintf('%d h %02d', $h, $m),
+            'decimal' => round($hoursExact, 2),
+            'label' => $this->formatWorkDurationHoursFr(round($hoursExact, 1)),
         ];
     }
 
