@@ -9,8 +9,9 @@ return [
     |
     | Le jeton d’enrôlement est lu sur le profil public (souvent un sous-domaine
     | différent du SPA, ex. digicard-api.* vs digicard.*). Le localStorage n’étant
-    | pas partagé entre origines, on duplique le jeton dans un cookie avec un
-    | domaine parent commun (ex. .arccenciel.com), lisible par JavaScript
+    | pas partagé entre origines, on duplique le jeton (arcc_emp_o_{orderId}) et
+    | l’identité appareil en base (arcc_dev_o_{orderId}, JSON u/m) dans des cookies
+    | avec un domaine parent commun (ex. .arccenciel.com), lisibles par JavaScript
     | (httpOnly=false), même modèle de risque que le localStorage.
     |
     | Exemple production : EMP_AUTH_COOKIE_DOMAIN=.arccenciel.com

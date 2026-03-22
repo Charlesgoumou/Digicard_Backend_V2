@@ -885,12 +885,20 @@ class OrderController extends Controller
     }
 
     /**
-     * Cookie partagé (sous-domaines) pour le jeton d’enrôlement : le profil public et le SPA n’ont pas le même localStorage.
+     * Cookies partagés (sous-domaines) pour le profil public sur une autre origine que le SPA :
+     * - jeton d’enrôlement (arcc_emp_o_*)
+     * - UUID + modèle enregistrés en base (arcc_dev_o_*) : sans cela, le profil recalcule une empreinte
+     *   différente du device_uuid stocké → verify-identity renvoie device_mismatch.
      */
-    private function withEmpAuthEnrollmentCookie(\Illuminate\Http\JsonResponse $response, int $orderId, ?string $token): \Illuminate\Http\JsonResponse
-    {
+    private function withPointageProfileCookies(
+        \Illuminate\Http\JsonResponse $response,
+        int $orderId,
+        ?string $token,
+        ?string $deviceUuid = null,
+        ?string $deviceModel = null
+    ): \Illuminate\Http\JsonResponse {
         $domain = config('digicard.emp_auth_cookie_domain');
-        if ($token === null || $token === '' || ! is_string($domain) || trim($domain) === '') {
+        if (! is_string($domain) || trim($domain) === '') {
             return $response;
         }
 
@@ -904,17 +912,45 @@ class OrderController extends Controller
             ? request()->secure()
             : filter_var($secureCfg, FILTER_VALIDATE_BOOLEAN);
 
-        return $response->withCookie(cookie(
-            'arcc_emp_o_'.$orderId,
-            $token,
-            60 * 24 * 400,
-            '/',
-            $dom,
-            $secure,
-            false,
-            false,
-            'lax'
-        ));
+        $minutes = 60 * 24 * 400;
+
+        if ($token !== null && $token !== '') {
+            $response = $response->withCookie(cookie(
+                'arcc_emp_o_'.$orderId,
+                $token,
+                $minutes,
+                '/',
+                $dom,
+                $secure,
+                false,
+                false,
+                'lax'
+            ));
+        }
+
+        $uuid = is_string($deviceUuid) ? trim($deviceUuid) : '';
+        if ($uuid !== '') {
+            $model = is_string($deviceModel) ? $deviceModel : '';
+            $payload = json_encode(
+                ['u' => $uuid, 'm' => $model],
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+            );
+            if ($payload !== false) {
+                $response = $response->withCookie(cookie(
+                    'arcc_dev_o_'.$orderId,
+                    $payload,
+                    $minutes,
+                    '/',
+                    $dom,
+                    $secure,
+                    false,
+                    false,
+                    'lax'
+                ));
+            }
+        }
+
+        return $response;
     }
 
     /**
@@ -968,12 +1004,14 @@ class OrderController extends Controller
         $this->issueEmpAuthTokenIfMissing($orderEmployee);
         $orderEmployee->refresh();
 
-        return $this->withEmpAuthEnrollmentCookie(
+        return $this->withPointageProfileCookies(
             response()->json([
                 'emp_auth_token' => $orderEmployee->emp_auth_token,
             ]),
             $order->id,
-            $orderEmployee->emp_auth_token
+            $orderEmployee->emp_auth_token,
+            $orderEmployee->device_uuid,
+            $orderEmployee->device_model
         );
     }
 
@@ -1026,14 +1064,16 @@ class OrderController extends Controller
             $this->issueEmpAuthTokenIfMissing($orderEmployee);
             $orderEmployee->refresh();
 
-            return $this->withEmpAuthEnrollmentCookie(
+            return $this->withPointageProfileCookies(
                 response()->json([
                     'message' => 'Appareil déjà enregistré.',
                     'sealed' => true,
                     'emp_auth_token' => $orderEmployee->emp_auth_token,
                 ]),
                 $order->id,
-                $orderEmployee->emp_auth_token
+                $orderEmployee->emp_auth_token,
+                $orderEmployee->device_uuid,
+                $orderEmployee->device_model
             );
         }
 
@@ -1053,14 +1093,16 @@ class OrderController extends Controller
         $this->issueEmpAuthTokenIfMissing($orderEmployee);
         $orderEmployee->refresh();
 
-        return $this->withEmpAuthEnrollmentCookie(
+        return $this->withPointageProfileCookies(
             response()->json([
                 'message' => 'Appareil lié avec succès.',
                 'sealed' => true,
                 'emp_auth_token' => $orderEmployee->emp_auth_token,
             ]),
             $order->id,
-            $orderEmployee->emp_auth_token
+            $orderEmployee->emp_auth_token,
+            $orderEmployee->device_uuid,
+            $orderEmployee->device_model
         );
     }
 
@@ -1128,14 +1170,16 @@ class OrderController extends Controller
         $this->issueEmpAuthTokenIfMissing($orderEmployee);
         $orderEmployee->refresh();
 
-        return $this->withEmpAuthEnrollmentCookie(
+        return $this->withPointageProfileCookies(
             response()->json([
                 'message' => 'Identité appareil enregistrée.',
                 'sealed' => true,
                 'emp_auth_token' => $orderEmployee->emp_auth_token,
             ]),
             $order->id,
-            $orderEmployee->emp_auth_token
+            $orderEmployee->emp_auth_token,
+            $orderEmployee->device_uuid,
+            $orderEmployee->device_model
         );
     }
 

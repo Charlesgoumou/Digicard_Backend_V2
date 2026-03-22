@@ -5,6 +5,8 @@
 
 const EMP_AUTH_LS_KEY = "arcc_emp_access_token";
 const EMP_AUTH_COOKIE_PREFIX = "arcc_emp_o_";
+/** JSON {"u":"device_uuid","m":"device_model"} — même domaine parent que le jeton (profil public ≠ origine du SPA). */
+const DEVICE_SEAL_COOKIE_PREFIX = "arcc_dev_o_";
 
 /**
  * Même jeton que le SPA mais sur un domaine parent : le profil public est souvent une autre origine
@@ -208,14 +210,49 @@ function writeStoredSeal(orderId, uuid, model) {
   }
 }
 
+function looksLikeStoredDeviceUuid(s) {
+  if (typeof s !== "string") return false;
+  const t = s.trim();
+  if (t.length < 8 || t.length > 128) return false;
+  return /^[0-9a-f:-]+$/i.test(t);
+}
+
+function readDeviceSealFromCookie(orderId) {
+  if (orderId == null || orderId === "") return null;
+  const key = `${DEVICE_SEAL_COOKIE_PREFIX}${String(orderId)}=`;
+  try {
+    const parts = document.cookie.split(";");
+    for (let i = 0; i < parts.length; i += 1) {
+      const p = parts[i].trim();
+      if (p.startsWith(key)) {
+        const raw = decodeURIComponent(p.slice(key.length));
+        const o = JSON.parse(raw);
+        if (o && typeof o.u === "string" && looksLikeStoredDeviceUuid(o.u)) {
+          const model = typeof o.m === "string" ? o.m.slice(0, 250) : "";
+          return { uuid: o.u.trim(), model };
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 async function getOrCreateDeviceIdentity(orderId) {
   if (orderId == null || orderId === "") {
     return computeDeviceIdentity();
   }
   const stored = readStoredSeal(orderId);
   const modelFresh = (await getCommercialDeviceModel()).slice(0, 250);
-  if (stored?.uuid && /^[0-9a-f-]{36}$/i.test(stored.uuid)) {
+  if (stored?.uuid && looksLikeStoredDeviceUuid(stored.uuid)) {
     return { uuid: stored.uuid, model: modelFresh };
+  }
+  const fromCookie = readDeviceSealFromCookie(orderId);
+  if (fromCookie) {
+    const model = fromCookie.model.length > 0 ? fromCookie.model : modelFresh;
+    writeStoredSeal(orderId, fromCookie.uuid, model);
+    return { uuid: fromCookie.uuid, model };
   }
   const fresh = await computeDeviceIdentity();
   writeStoredSeal(orderId, fresh.uuid, fresh.model);
