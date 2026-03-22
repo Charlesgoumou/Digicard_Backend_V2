@@ -173,6 +173,8 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::get('/additional-payments/{additionalPaymentId}/check-status', [OrderController::class, 'checkAdditionalPaymentStatus'])->name('additional-payments.check-status');
     Route::patch('/orders/{order}/configure', [OrderController::class, 'markAsConfigured'])->name('orders.configure');
     Route::post('/orders/{order}/seal-device', [OrderController::class, 'sealDevice'])->name('orders.seal-device');
+    /** Migration UUID : uniquement si device_uuid encore vide (employé / même logique d’accès que seal-device). */
+    Route::patch('/personnel/update-device-identity', [OrderController::class, 'updateDeviceIdentity'])->name('personnel.update-device-identity');
     Route::get('/orders/{order}/emp-auth-token', [OrderController::class, 'getEmpAuthToken'])->name('orders.emp-auth-token');
     Route::patch('/orders/{order}/profile', [OrderController::class, 'updateProfile'])->name('orders.profile.update');
     Route::patch('/orders/{order}/security-groups', [OrderController::class, 'updateSecurityGroups'])->name('orders.security-groups.update');
