@@ -55,9 +55,12 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         // 4. Web Middleware (Votre config existante - Ne pas toucher)
-        $middleware->web(append: [
-            HandleCors::class,
-        ]);
+        $middleware->web(
+            append: [HandleCors::class],
+            replace: [
+                \Illuminate\Cookie\Middleware\EncryptCookies::class => \App\Http\Middleware\EncryptCookies::class,
+            ],
+        );
 
         // 5. Config API & Alias (Votre config existante - Ne pas toucher)
         $middleware->group('api', [
