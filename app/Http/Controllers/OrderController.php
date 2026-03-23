@@ -1591,6 +1591,95 @@ class OrderController extends Controller
     }
 
     /**
+     * Affecter un employé existant à un groupe de sécurité d'une commande business.
+     */
+    public function updateEmployeeGroup(Request $request, Order $order)
+    {
+        $user = $request->user();
+
+        // Autoriser uniquement le propriétaire de la commande (business_admin)
+        if ($user->role !== 'business_admin' || $order->user_id !== $user->id) {
+            return response()->json(['message' => 'Commande non trouvée.'], 404);
+        }
+
+        if ($order->status === 'cancelled') {
+            return response()->json(['message' => "Cette commande a été annulée et ne peut plus être modifiée."], 400);
+        }
+
+        if ($order->order_type !== 'business' && $order->order_type !== 'entreprise') {
+            return response()->json(['message' => "Action non autorisée pour ce type de commande."], 403);
+        }
+
+        $validated = $request->validate([
+            'order_employee_id' => 'required|integer|exists:order_employees,id',
+            'employee_group' => 'required|string|max:80',
+        ]);
+
+        $orderEmployee = OrderEmployee::where('id', $validated['order_employee_id'])
+            ->where('order_id', $order->id)
+            ->first();
+
+        if (! $orderEmployee) {
+            return response()->json(['message' => 'Employé introuvable pour cette commande.'], 404);
+        }
+
+        $targetGroup = trim((string) $validated['employee_group']);
+        if ($targetGroup === '') {
+            return response()->json(['message' => 'Le groupe est requis.'], 422);
+        }
+
+        $securityGroups = is_array($order->security_groups) ? $order->security_groups : [];
+        $groupConfigs = is_array($order->group_security_configs) ? $order->group_security_configs : [];
+
+        $allowedGroups = [];
+        foreach ($securityGroups as $index => $rawName) {
+            $name = trim((string) $rawName);
+            if ($name === '') {
+                continue;
+            }
+            $cfg = $groupConfigs[$index] ?? null;
+            if (! is_array($cfg) || $cfg === []) {
+                continue;
+            }
+            $allowedGroups[] = $name;
+        }
+
+        if (! in_array($targetGroup, $allowedGroups, true)) {
+            return response()->json([
+                'message' => 'Ce groupe n’est pas disponible pour cette commande.',
+                'allowed_groups' => $allowedGroups,
+            ], 422);
+        }
+
+        $orderEmployee->employee_group = $targetGroup;
+        $orderEmployee->save();
+
+        // Garder aussi employee_slots synchronisé pour les écrans qui lisent encore ce JSON.
+        $slots = is_array($order->employee_slots) ? $order->employee_slots : [];
+        $slotUpdated = false;
+        foreach ($slots as $idx => $slot) {
+            $slotEmployeeId = isset($slot['employee_id']) ? (int) $slot['employee_id'] : null;
+            if ($slotEmployeeId !== null && $slotEmployeeId === (int) $orderEmployee->employee_id) {
+                $slots[$idx]['employee_group'] = $targetGroup;
+                $slotUpdated = true;
+                break;
+            }
+        }
+        if ($slotUpdated) {
+            $order->employee_slots = $slots;
+            $order->save();
+        }
+
+        return response()->json([
+            'message' => 'Employé affecté au groupe avec succès.',
+            'order_employee_id' => $orderEmployee->id,
+            'employee_id' => $orderEmployee->employee_id,
+            'employee_group' => $orderEmployee->employee_group,
+            'allowed_groups' => $allowedGroups,
+        ], 200);
+    }
+
+    /**
      * Uploader un design personnalisé pour une commande
      */
     public function uploadCustomDesign(Request $request)
