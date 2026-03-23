@@ -717,7 +717,8 @@ class PublicProfileController extends Controller
             'api_base' => url('/'),
             'order_id' => null,
         ];
-        $isBusinessLikeOrder = $order && in_array((string) ($order->order_type ?? ''), ['business', 'entreprise'], true);
+        $orderType = strtolower(trim((string) ($order->order_type ?? '')));
+        $isBusinessLikeOrder = $order && in_array($orderType, ['business', 'entreprise', 'enterprise'], true);
         if (in_array((string) $user->role, ['employee', 'business_admin'], true) && $orderEmployee && $orderEmployee->is_configured && $isBusinessLikeOrder) {
             $groupName = trim((string) ($orderEmployee->employee_group ?? ''));
             if ($groupName !== '') {
