@@ -562,10 +562,12 @@ class OrderController extends Controller
             $enrichedSlots = array_map(function($slot) use ($orderEmployees) {
                 if (isset($slot['employee_id']) && isset($orderEmployees[$slot['employee_id']])) {
                     $orderEmployee = $orderEmployees[$slot['employee_id']];
+                    $resolvedDeviceUuid = $orderEmployee->device_uuid ?: ($orderEmployee->employee->device_uuid ?? null);
+                    $resolvedDeviceModel = $orderEmployee->device_model ?: ($orderEmployee->employee->device_label ?? null);
                     $slot['is_configured'] = $orderEmployee->is_configured;
                     // Pointage / modale admin : identifiant appareil lié à cette commande
-                    $slot['device_uuid'] = $orderEmployee->device_uuid;
-                    $slot['device_model'] = $orderEmployee->device_model;
+                    $slot['device_uuid'] = $resolvedDeviceUuid;
+                    $slot['device_model'] = $resolvedDeviceModel;
 
                     // Ajouter le username si manquant (pour les anciens slots)
                     if (!isset($slot['employee_username']) && $orderEmployee->employee) {
@@ -724,8 +726,8 @@ class OrderController extends Controller
                 ]);
             }
 
-            $employeeProfile['device_uuid'] = $orderEmployee->device_uuid;
-            $employeeProfile['device_model'] = $orderEmployee->device_model;
+            $employeeProfile['device_uuid'] = $orderEmployee->device_uuid ?: ($orderEmployee->employee->device_uuid ?? null);
+            $employeeProfile['device_model'] = $orderEmployee->device_model ?: ($orderEmployee->employee->device_label ?? null);
 
             // Assigner employee_profile à l'order après toutes les modifications
             $order->employee_profile = $employeeProfile;
@@ -747,6 +749,8 @@ class OrderController extends Controller
         // On s'assure que les deux formats sont disponibles pour compatibilité
         if ($order->relationLoaded('orderEmployees')) {
             $order->order_employees = $order->orderEmployees->map(function ($oe) {
+                $resolvedDeviceUuid = $oe->device_uuid ?: ($oe->employee->device_uuid ?? null);
+                $resolvedDeviceModel = $oe->device_model ?: ($oe->employee->device_label ?? null);
                 return [
                     'id' => $oe->id,
                     'order_id' => $oe->order_id,
@@ -755,8 +759,8 @@ class OrderController extends Controller
                     'employee_email' => $oe->employee_email,
                     'card_quantity' => $oe->card_quantity,
                     'is_configured' => $oe->is_configured,
-                    'device_uuid' => $oe->device_uuid,
-                    'device_model' => $oe->device_model,
+                    'device_uuid' => $resolvedDeviceUuid,
+                    'device_model' => $resolvedDeviceModel,
                     'employee_group' => $oe->employee_group,
                     'employee_matricule' => $oe->employee_matricule,
                     'employee_department' => $oe->employee_department,
