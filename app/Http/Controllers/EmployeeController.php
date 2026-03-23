@@ -116,7 +116,8 @@ class EmployeeController extends Controller
             return response()->json(['message' => 'Action non autorisée.'], 403);
         }
 
-        if ($employee->business_admin_id !== $admin->id) {
+        $isSelfBusinessAdmin = ($employee->id === $admin->id);
+        if (!$isSelfBusinessAdmin && $employee->business_admin_id !== $admin->id) {
             return response()->json(['message' => 'Employé non trouvé ou non autorisé.'], 404);
         }
 
