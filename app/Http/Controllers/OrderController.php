@@ -131,6 +131,10 @@ class OrderController extends Controller
                         'card_design_number' => $orderEmployee->card_design_number,
                         'card_design_custom_url' => $orderEmployee->card_design_custom_url,
                         'no_design_yet' => $orderEmployee->no_design_yet,
+                        // Exposer l'état d'appareil pour persistance UI /mon-compte
+                        'device_uuid' => $orderEmployee->device_uuid,
+                        'device_model' => $orderEmployee->device_model,
+                        'is_configured' => $orderEmployee->is_configured,
                         // Ajouter le username pour les liens de profil
                         'username' => $user->username ?? null,
                     ];
@@ -249,6 +253,7 @@ class OrderController extends Controller
                     // ✅ CORRECTION : Charger aussi les colonnes de profil pour détecter si l'admin est inclus
                     $q->select('id', 'order_id', 'employee_id', 'employee_name', 'employee_email',
                               'card_quantity', 'is_configured',
+                              'device_uuid', 'device_model',
                               'profile_name', 'profile_title', 'employee_avatar_url', 'profile_border_color',
                               'card_design_type', 'card_design_number', 'card_design_custom_url', 'no_design_yet',
                               'created_at')
@@ -308,6 +313,10 @@ class OrderController extends Controller
                                 'card_design_number' => $orderEmployee->card_design_number,
                                 'card_design_custom_url' => $orderEmployee->card_design_custom_url,
                                 'no_design_yet' => $orderEmployee->no_design_yet,
+                                // Exposer l'état d'appareil pour persistance UI /mon-compte
+                                'device_uuid' => $orderEmployee->device_uuid,
+                                'device_model' => $orderEmployee->device_model,
+                                'is_configured' => $orderEmployee->is_configured,
                             ];
 
                             if ($user->username) {
