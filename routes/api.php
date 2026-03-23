@@ -178,6 +178,7 @@ Route::middleware(['auth:sanctum', 'not_suspended'])->group(function () {
     Route::get('/orders/{order}/emp-auth-token', [OrderController::class, 'getEmpAuthToken'])->name('orders.emp-auth-token');
     Route::patch('/orders/{order}/profile', [OrderController::class, 'updateProfile'])->name('orders.profile.update');
     Route::patch('/orders/{order}/security-groups', [OrderController::class, 'updateSecurityGroups'])->name('orders.security-groups.update');
+    Route::patch('/orders/{order}/employee-groups', [OrderController::class, 'updateEmployeeGroup'])->name('orders.employee-groups.update');
 
     // Rapports d'assiduité (pointage) — business_admin
     Route::get('/business/reports/attendance', [AttendanceReportController::class, 'attendance'])->name('business.reports.attendance');
