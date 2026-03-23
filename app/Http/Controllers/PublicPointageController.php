@@ -8,6 +8,7 @@ use App\Models\OrderEmployeePointage;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Pointage public : arrivée / départ (appareil, polygone, horaires groupe).
@@ -63,8 +64,18 @@ class PublicPointageController extends Controller
             'device_model' => 'required|string|max:255',
         ]);
 
+        $diag = [
+            'username' => (string) ($validated['username'] ?? ''),
+            'order_id' => (int) ($validated['order_id'] ?? 0),
+        ];
+
         $user = User::where('username', $validated['username'])->first();
         if (! $user || ! in_array((string) $user->role, ['employee', 'business_admin'], true)) {
+            Log::info('PublicPointage.verifyIdentity denied: unauthorized', $diag + [
+                'code' => 'unauthorized',
+                'user_found' => (bool) $user,
+                'user_role' => $user?->role,
+            ]);
             return response()->json(['ok' => false, 'code' => 'unauthorized'], 403);
         }
 
@@ -73,19 +84,45 @@ class PublicPointageController extends Controller
             ->first();
 
         if (! $orderEmployee || ! $orderEmployee->is_configured) {
+            Log::info('PublicPointage.verifyIdentity denied: unauthorized assignment/config', $diag + [
+                'code' => 'unauthorized',
+                'user_id' => $user->id,
+                'user_role' => $user->role,
+                'order_employee_found' => (bool) $orderEmployee,
+                'is_configured' => (bool) ($orderEmployee?->is_configured),
+            ]);
             return response()->json(['ok' => false, 'code' => 'unauthorized'], 403);
         }
 
         $storedToken = (string) ($orderEmployee->emp_auth_token ?? '');
         if ($storedToken === '' || ! hash_equals($storedToken, $validated['emp_auth_token'])) {
+            Log::info('PublicPointage.verifyIdentity denied: invalid enrollment', $diag + [
+                'code' => 'invalid_enrollment',
+                'user_id' => $user->id,
+                'order_employee_id' => $orderEmployee->id,
+                'stored_token_exists' => $storedToken !== '',
+            ]);
             return response()->json(['ok' => false, 'code' => 'invalid_enrollment'], 403);
         }
 
         if (! $orderEmployee->device_uuid || $orderEmployee->device_uuid !== $validated['device_uuid']) {
+            Log::info('PublicPointage.verifyIdentity denied: device mismatch', $diag + [
+                'code' => 'device_mismatch',
+                'user_id' => $user->id,
+                'order_employee_id' => $orderEmployee->id,
+                'server_has_uuid' => ! empty($orderEmployee->device_uuid),
+            ]);
             return response()->json(['ok' => false, 'code' => 'device_mismatch'], 403);
         }
 
         if (! $this->deviceModelsMatch($orderEmployee->device_model, $validated['device_model'])) {
+            Log::info('PublicPointage.verifyIdentity denied: model mismatch', $diag + [
+                'code' => 'model_mismatch',
+                'user_id' => $user->id,
+                'order_employee_id' => $orderEmployee->id,
+                'server_model' => (string) ($orderEmployee->device_model ?? ''),
+                'incoming_model' => (string) ($validated['device_model'] ?? ''),
+            ]);
             return response()->json(['ok' => false, 'code' => 'model_mismatch'], 403);
         }
 
@@ -100,17 +137,37 @@ class PublicPointageController extends Controller
 
         $ctx = $this->resolvePointageContext($pseudo);
         if ($ctx instanceof \Illuminate\Http\JsonResponse) {
+            Log::info('PublicPointage.verifyIdentity denied: pointage unavailable', $diag + [
+                'code' => 'pointage_unavailable',
+                'user_id' => $user->id,
+                'order_employee_id' => $orderEmployee->id,
+            ]);
             return response()->json(['ok' => false, 'code' => 'pointage_unavailable'], 403);
         }
 
         ['orderEmployee' => $oe, 'cfg' => $cfg, 'polygon' => $polygon] = $ctx;
 
         if (! $this->isWithinSchedule($cfg)) {
+            Log::info('PublicPointage.verifyIdentity denied: outside schedule', $diag + [
+                'code' => 'outside_schedule',
+                'user_id' => $user->id,
+                'order_employee_id' => $orderEmployee->id,
+                'weekdays' => $cfg['calendar']['weekdays'] ?? [],
+                'daily_window' => $cfg['calendar']['dailyWindow'] ?? null,
+            ]);
             return response()->json(['ok' => false, 'code' => 'outside_schedule'], 403);
         }
 
         $payload = $this->buildVerifySuccessPayload($oe, $cfg, $polygon);
         $payload['within_schedule'] = true;
+
+        Log::info('PublicPointage.verifyIdentity success', $diag + [
+            'ok' => true,
+            'user_id' => $user->id,
+            'user_role' => $user->role,
+            'order_employee_id' => $orderEmployee->id,
+            'day_status' => (string) ($payload['day_status'] ?? ''),
+        ]);
 
         return response()->json($payload);
     }
