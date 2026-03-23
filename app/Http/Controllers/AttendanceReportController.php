@@ -161,8 +161,9 @@ class AttendanceReportController extends Controller
                 'name' => '__ungrouped__',
                 'title' => 'Employés non assignés à un groupe de sécurité',
                 'is_working_day' => $isWorkingDay,
-                'daily_window_start' => $fallbackCfg['calendar']['dailyWindow']['start'] ?? '08:00',
-                'late_tolerance_minutes' => $this->normalizeLateToleranceMinutes($fallbackCfg),
+                // Pas de référence horaire/tolérance tant qu'aucun groupe réel n'est affecté.
+                'daily_window_start' => null,
+                'late_tolerance_minutes' => null,
                 'presence_ratio' => [
                     'present' => $presentInGroup,
                     'expected' => $expectedInGroup,

@@ -1630,6 +1630,7 @@ class OrderController extends Controller
 
         $securityGroups = is_array($order->security_groups) ? $order->security_groups : [];
         $groupConfigs = is_array($order->group_security_configs) ? $order->group_security_configs : [];
+        $targetGroupConfig = [];
 
         $allowedGroups = [];
         foreach ($securityGroups as $index => $rawName) {
@@ -1642,6 +1643,9 @@ class OrderController extends Controller
                 continue;
             }
             $allowedGroups[] = $name;
+            if ($name === $targetGroup) {
+                $targetGroupConfig = $cfg;
+            }
         }
 
         if (! in_array($targetGroup, $allowedGroups, true)) {
@@ -1668,6 +1672,51 @@ class OrderController extends Controller
         if ($slotUpdated) {
             $order->employee_slots = $slots;
             $order->save();
+        }
+
+        // Email d'information à l'utilisateur affecté (employé ou business admin inclus comme order_employee).
+        $recipient = trim((string) ($orderEmployee->employee_email ?? ''));
+        if ($recipient !== '' && filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
+            try {
+                $adminName = trim((string) ($user->name ?? 'Business Admin'));
+                if ($adminName === '') {
+                    $adminName = 'Business Admin';
+                } elseif (! str_starts_with(mb_strtolower($adminName), 'm.')) {
+                    $adminName = 'M. '.$adminName;
+                }
+
+                $employeeName = trim((string) ($orderEmployee->employee_name ?? ''));
+                if ($employeeName === '') {
+                    $employeeName = trim((string) ($orderEmployee->profile_name ?? ''));
+                }
+                if ($employeeName === '') {
+                    $employeeName = $recipient;
+                }
+
+                $companyName = null;
+                if ($order->relationLoaded('user') && $order->user) {
+                    $companyName = $order->user->name;
+                } elseif (isset($order->user_id)) {
+                    $owner = User::find($order->user_id);
+                    $companyName = $owner?->name;
+                }
+
+                \Mail::to($recipient)->send(new \App\Mail\EmployeeGroupAssignmentMail(
+                    employeeName: $employeeName,
+                    groupName: $targetGroup,
+                    adminName: $adminName,
+                    companyName: $companyName,
+                    groupConfig: $targetGroupConfig,
+                    deviceModel: $orderEmployee->device_model
+                ));
+            } catch (\Throwable $e) {
+                Log::warning('OrderController::updateEmployeeGroup email not sent', [
+                    'order_id' => $order->id,
+                    'order_employee_id' => $orderEmployee->id,
+                    'recipient' => $recipient,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
         return response()->json([
