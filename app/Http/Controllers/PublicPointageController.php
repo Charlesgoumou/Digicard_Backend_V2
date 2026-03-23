@@ -324,8 +324,8 @@ class PublicPointageController extends Controller
         }
 
         $order = $this->resolveOrder($validated);
-        $ot = $order ? (string) ($order->order_type ?? '') : '';
-        if (!$order || ($ot !== 'business' && $ot !== 'entreprise')) {
+        $ot = $order ? strtolower(trim((string) ($order->order_type ?? ''))) : '';
+        if (!$order || !in_array($ot, ['business', 'entreprise', 'enterprise'], true)) {
             return response()->json(['ok' => false, 'code' => 'order_not_found'], 404);
         }
 
