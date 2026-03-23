@@ -16,6 +16,7 @@ class EmployeeGroupAssignmentMail extends Mailable
     public string $groupName;
     public string $adminName;
     public string $companyName;
+    public string $orderNumber;
     public string $workdaysLabel;
     public string $startTime;
     public string $endTime;
@@ -26,6 +27,7 @@ class EmployeeGroupAssignmentMail extends Mailable
         string $employeeName,
         string $groupName,
         string $adminName,
+        string $orderNumber,
         ?string $companyName = null,
         array $groupConfig = [],
         ?string $deviceModel = null
@@ -33,6 +35,7 @@ class EmployeeGroupAssignmentMail extends Mailable
         $this->employeeName = trim($employeeName) !== '' ? $employeeName : 'Employé';
         $this->groupName = trim($groupName);
         $this->adminName = trim($adminName);
+        $this->orderNumber = trim($orderNumber) !== '' ? trim($orderNumber) : '-';
         $this->companyName = trim((string) $companyName) !== '' ? trim((string) $companyName) : 'votre entreprise';
 
         $calendar = is_array($groupConfig['calendar'] ?? null) ? $groupConfig['calendar'] : [];
