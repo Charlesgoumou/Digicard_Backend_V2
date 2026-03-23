@@ -64,7 +64,7 @@ class PublicPointageController extends Controller
         ]);
 
         $user = User::where('username', $validated['username'])->first();
-        if (! $user || $user->role !== 'employee') {
+        if (! $user || ! in_array((string) $user->role, ['employee', 'business_admin'], true)) {
             return response()->json(['ok' => false, 'code' => 'unauthorized'], 403);
         }
 
@@ -319,7 +319,7 @@ class PublicPointageController extends Controller
     private function resolvePointageContext(array $validated)
     {
         $user = User::where('username', $validated['username'])->first();
-        if (!$user || $user->role !== 'employee') {
+        if (!$user || ! in_array((string) $user->role, ['employee', 'business_admin'], true)) {
             return response()->json(['ok' => false, 'code' => 'not_employee'], 404);
         }
 

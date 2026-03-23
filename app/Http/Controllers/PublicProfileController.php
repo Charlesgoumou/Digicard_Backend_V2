@@ -718,7 +718,7 @@ class PublicProfileController extends Controller
             'order_id' => null,
         ];
         $isBusinessLikeOrder = $order && in_array((string) ($order->order_type ?? ''), ['business', 'entreprise'], true);
-        if ($user->role === 'employee' && $orderEmployee && $orderEmployee->is_configured && $isBusinessLikeOrder) {
+        if (in_array((string) $user->role, ['employee', 'business_admin'], true) && $orderEmployee && $orderEmployee->is_configured && $isBusinessLikeOrder) {
             $groupName = trim((string) ($orderEmployee->employee_group ?? ''));
             if ($groupName !== '') {
                 $cfg = $order->findGroupSecurityConfigByName($groupName);
