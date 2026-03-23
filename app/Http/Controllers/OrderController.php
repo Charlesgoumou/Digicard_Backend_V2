@@ -1092,6 +1092,7 @@ class OrderController extends Controller
         $orderEmployee->save();
         $this->issueEmpAuthTokenIfMissing($orderEmployee);
         $orderEmployee->refresh();
+        $this->sendDevicePointageRestrictionEmail($order, $orderEmployee);
 
         return $this->withPointageProfileCookies(
             response()->json([
@@ -1169,6 +1170,7 @@ class OrderController extends Controller
         $orderEmployee->save();
         $this->issueEmpAuthTokenIfMissing($orderEmployee);
         $orderEmployee->refresh();
+        $this->sendDevicePointageRestrictionEmail($order, $orderEmployee);
 
         return $this->withPointageProfileCookies(
             response()->json([
@@ -1694,7 +1696,9 @@ class OrderController extends Controller
                 }
 
                 $companyName = null;
-                if ($order->relationLoaded('user') && $order->user) {
+                if (is_string($order->profile_name ?? null) && trim((string) $order->profile_name) !== '') {
+                    $companyName = trim((string) $order->profile_name);
+                } elseif ($order->relationLoaded('user') && $order->user) {
                     $companyName = $order->user->name;
                 } elseif (isset($order->user_id)) {
                     $owner = User::find($order->user_id);
@@ -1705,6 +1709,7 @@ class OrderController extends Controller
                     employeeName: $employeeName,
                     groupName: $targetGroup,
                     adminName: $adminName,
+                    orderNumber: (string) ($order->order_number ?? $order->id),
                     companyName: $companyName,
                     groupConfig: $targetGroupConfig,
                     deviceModel: $orderEmployee->device_model
@@ -1726,6 +1731,48 @@ class OrderController extends Controller
             'employee_group' => $orderEmployee->employee_group,
             'allowed_groups' => $allowedGroups,
         ], 200);
+    }
+
+    private function sendDevicePointageRestrictionEmail(Order $order, OrderEmployee $orderEmployee): void
+    {
+        $recipient = trim((string) ($orderEmployee->employee_email ?? ''));
+        if ($recipient === '' || ! filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
+            return;
+        }
+
+        $employeeName = trim((string) ($orderEmployee->employee_name ?? ''));
+        if ($employeeName === '') {
+            $employeeName = trim((string) ($orderEmployee->profile_name ?? ''));
+        }
+        if ($employeeName === '') {
+            $employeeName = $recipient;
+        }
+
+        $companyName = null;
+        if (is_string($order->profile_name ?? null) && trim((string) $order->profile_name) !== '') {
+            $companyName = trim((string) $order->profile_name);
+        } elseif ($order->relationLoaded('user') && $order->user) {
+            $companyName = $order->user->name;
+        } elseif (isset($order->user_id)) {
+            $owner = User::find($order->user_id);
+            $companyName = $owner?->name;
+        }
+
+        try {
+            \Mail::to($recipient)->send(new \App\Mail\EmployeeDevicePointageRestrictionMail(
+                employeeName: $employeeName,
+                deviceModel: (string) ($orderEmployee->device_model ?? ''),
+                orderNumber: (string) ($order->order_number ?? $order->id),
+                companyName: $companyName
+            ));
+        } catch (\Throwable $e) {
+            Log::warning('OrderController::sendDevicePointageRestrictionEmail failed', [
+                'order_id' => $order->id,
+                'order_employee_id' => $orderEmployee->id,
+                'recipient' => $recipient,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

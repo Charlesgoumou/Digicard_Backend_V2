@@ -21,7 +21,7 @@
         <p>Bonjour {{ $employeeName }},</p>
         <p>
             Vous avez été affecté(e) au groupe <strong>{{ $groupName }}</strong> par
-            <strong>{{ $adminName }}</strong> (business admin).
+            <strong>{{ $adminName }}</strong> (business admin de la commande N° {{ $orderNumber }} pour l'entreprise {{ $companyName }}).
         </p>
 
         <div class="box">
