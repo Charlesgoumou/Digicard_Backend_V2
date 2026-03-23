@@ -1699,14 +1699,22 @@ class OrderController extends Controller
                     $employeeName = $recipient;
                 }
 
-                $companyName = null;
-                if (is_string($order->profile_name ?? null) && trim((string) $order->profile_name) !== '') {
-                    $companyName = trim((string) $order->profile_name);
-                } elseif ($order->relationLoaded('user') && $order->user) {
-                    $companyName = $order->user->name;
+                $owner = null;
+                if ($order->relationLoaded('user') && $order->user) {
+                    $owner = $order->user;
                 } elseif (isset($order->user_id)) {
                     $owner = User::find($order->user_id);
-                    $companyName = $owner?->name;
+                }
+
+                $companyName = null;
+                if (is_string($owner?->company_name ?? null) && trim((string) $owner->company_name) !== '') {
+                    // Priorité au nom d'entreprise défini à la création du compte business.
+                    $companyName = trim((string) $owner->company_name);
+                } elseif (is_string($order->profile_name ?? null) && trim((string) $order->profile_name) !== '') {
+                    // Fallback legacy (anciens enregistrements).
+                    $companyName = trim((string) $order->profile_name);
+                } elseif (is_string($owner?->name ?? null) && trim((string) $owner->name) !== '') {
+                    $companyName = trim((string) $owner->name);
                 }
 
                 \Mail::to($recipient)->send(new \App\Mail\EmployeeGroupAssignmentMail(
@@ -1752,14 +1760,20 @@ class OrderController extends Controller
             $employeeName = $recipient;
         }
 
-        $companyName = null;
-        if (is_string($order->profile_name ?? null) && trim((string) $order->profile_name) !== '') {
-            $companyName = trim((string) $order->profile_name);
-        } elseif ($order->relationLoaded('user') && $order->user) {
-            $companyName = $order->user->name;
+        $owner = null;
+        if ($order->relationLoaded('user') && $order->user) {
+            $owner = $order->user;
         } elseif (isset($order->user_id)) {
             $owner = User::find($order->user_id);
-            $companyName = $owner?->name;
+        }
+
+        $companyName = null;
+        if (is_string($owner?->company_name ?? null) && trim((string) $owner->company_name) !== '') {
+            $companyName = trim((string) $owner->company_name);
+        } elseif (is_string($order->profile_name ?? null) && trim((string) $order->profile_name) !== '') {
+            $companyName = trim((string) $order->profile_name);
+        } elseif (is_string($owner?->name ?? null) && trim((string) $owner->name) !== '') {
+            $companyName = trim((string) $owner->name);
         }
 
         try {
