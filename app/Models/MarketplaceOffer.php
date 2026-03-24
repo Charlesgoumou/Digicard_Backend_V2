@@ -16,11 +16,46 @@ class MarketplaceOffer extends Model
         'title',
         'description',
         'type',
+        'category',
         'price',
         'currency',
         'image_url',
         'is_active',
     ];
+
+    /** @return list<string> */
+    public static function allowedCategoryKeys(): array
+    {
+        return [
+            'electronique_informatique',
+            'commerce_vente',
+            'services_pro',
+            'alimentation',
+            'transport_logistique',
+            'immobilier',
+            'formation_education',
+            'sante_beaute',
+            'art_culture_loisirs',
+            'autre',
+        ];
+    }
+
+    public static function categoryLabel(?string $key): string
+    {
+        return match ($key) {
+            'electronique_informatique' => 'Électronique & informatique',
+            'commerce_vente' => 'Commerce & vente',
+            'services_pro' => 'Services professionnels',
+            'alimentation' => 'Alimentation',
+            'transport_logistique' => 'Transport & logistique',
+            'immobilier' => 'Immobilier',
+            'formation_education' => 'Formation & éducation',
+            'sante_beaute' => 'Santé & beauté',
+            'art_culture_loisirs' => 'Art, culture & loisirs',
+            'autre', null, '' => 'Autre / divers',
+            default => 'Autre / divers',
+        };
+    }
 
     protected $casts = [
         'price' => 'decimal:2',

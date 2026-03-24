@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\UserPortfolio;
 use App\Models\Order;
+use App\Models\MarketplaceUserNeed;
+use App\Jobs\ProcessMarketplaceMatching;
 use App\Services\GeminiService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -826,6 +828,67 @@ class UserPortfolioController extends Controller
                 return response()->json([
                     'message' => 'Erreur lors de l\'analyse du texte. Le document n\'a pas pu être analysé correctement. Veuillez réessayer ou vérifier que le document contient des informations exploitables.'
                 ], 500);
+            }
+
+            // ✅ Marketplace: si pas de site web, extraire des besoins (keywords) depuis le document + titre/poste
+            try {
+                $hasWebsite = !empty($user->website_url);
+                if (!$hasWebsite) {
+                    $needsData = $geminiService->extractMarketplaceNeedsFromText($extractedText, $user->title ?? null);
+                    if ($needsData && is_array($needsData)) {
+                        $keywords = $needsData['keywords'] ?? [];
+                        if (!is_array($keywords)) {
+                            $keywords = [];
+                        }
+
+                        MarketplaceUserNeed::updateOrCreate(
+                            ['user_id' => $user->id, 'source' => 'gemini_document'],
+                            [
+                                'source_ref' => $file->getClientOriginalName(),
+                                'keywords' => array_values(array_unique(array_filter(array_map('strtolower', $keywords)))),
+                                'needs' => $needsData['needs'] ?? null,
+                                'last_error' => empty($keywords) ? 'Gemini: aucun keyword retourné (document)' : null,
+                                'last_extracted_at' => now(),
+                            ]
+                        );
+
+                        if (config('queue.default') === 'sync') {
+                            (new ProcessMarketplaceMatching($user->id))->handle();
+                        } else {
+                            ProcessMarketplaceMatching::dispatch($user->id);
+                        }
+                    } else {
+                        MarketplaceUserNeed::updateOrCreate(
+                            ['user_id' => $user->id, 'source' => 'gemini_document'],
+                            [
+                                'source_ref' => $file->getClientOriginalName(),
+                                'keywords' => [],
+                                'needs' => null,
+                                'last_error' => 'Gemini: extraction besoins impossible (document)',
+                                'last_extracted_at' => now(),
+                            ]
+                        );
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::error('UserPortfolioController: Marketplace needs (Gemini) - erreur', [
+                    'user_id' => $user->id,
+                    'error' => $e->getMessage(),
+                ]);
+                try {
+                    MarketplaceUserNeed::updateOrCreate(
+                        ['user_id' => $user->id, 'source' => 'gemini_document'],
+                        [
+                            'source_ref' => $file->getClientOriginalName(),
+                            'keywords' => [],
+                            'needs' => null,
+                            'last_error' => $e->getMessage(),
+                            'last_extracted_at' => now(),
+                        ]
+                    );
+                } catch (\Throwable $ignored) {
+                    // noop
+                }
             }
 
             return response()->json([
