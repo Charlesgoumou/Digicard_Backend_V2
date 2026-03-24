@@ -541,6 +541,13 @@ class PublicPointageController extends Controller
      */
     private function geoPointInRing(float $lat, float $lng, array $ring): bool
     {
+        // Tolérance GPS (mètres) pour éviter les faux "hors zone" près des bords.
+        $edgeToleranceMeters = 20.0;
+
+        if ($this->isPointNearRingEdge($lat, $lng, $ring, $edgeToleranceMeters)) {
+            return true;
+        }
+
         $inside = false;
         $n = count($ring);
         for ($i = 0, $j = $n - 1; $i < $n; $j = $i++) {
@@ -557,6 +564,82 @@ class PublicPointageController extends Controller
         }
 
         return $inside;
+    }
+
+    /**
+     * Considère "dans la zone" un point sur/près d'une arête (tolérance GPS).
+     */
+    private function isPointNearRingEdge(float $lat, float $lng, array $ring, float $toleranceMeters): bool
+    {
+        $n = count($ring);
+        if ($n < 2) {
+            return false;
+        }
+
+        for ($i = 0, $j = $n - 1; $i < $n; $j = $i++) {
+            $ax = (float) ($ring[$j][0] ?? 0.0); // lng
+            $ay = (float) ($ring[$j][1] ?? 0.0); // lat
+            $bx = (float) ($ring[$i][0] ?? 0.0); // lng
+            $by = (float) ($ring[$i][1] ?? 0.0); // lat
+
+            $d = $this->pointToSegmentDistanceMeters($lat, $lng, $ay, $ax, $by, $bx);
+            if ($d <= $toleranceMeters) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Distance approximative (mètres) entre un point et un segment géographique.
+     * Projection équirectangulaire locale, suffisante à petite échelle.
+     */
+    private function pointToSegmentDistanceMeters(
+        float $plat,
+        float $plng,
+        float $alat,
+        float $alng,
+        float $blat,
+        float $blng
+    ): float {
+        $earth = 6371000.0;
+        $rad = M_PI / 180.0;
+        $lat0 = (($alat + $blat + $plat) / 3.0) * $rad;
+        $cosLat0 = cos($lat0);
+
+        $ax = $earth * $alng * $rad * $cosLat0;
+        $ay = $earth * $alat * $rad;
+        $bx = $earth * $blng * $rad * $cosLat0;
+        $by = $earth * $blat * $rad;
+        $px = $earth * $plng * $rad * $cosLat0;
+        $py = $earth * $plat * $rad;
+
+        $abx = $bx - $ax;
+        $aby = $by - $ay;
+        $apx = $px - $ax;
+        $apy = $py - $ay;
+        $ab2 = $abx * $abx + $aby * $aby;
+
+        if ($ab2 <= 1e-9) {
+            $dx = $px - $ax;
+            $dy = $py - $ay;
+            return sqrt($dx * $dx + $dy * $dy);
+        }
+
+        $t = ($apx * $abx + $apy * $aby) / $ab2;
+        if ($t < 0.0) {
+            $t = 0.0;
+        } elseif ($t > 1.0) {
+            $t = 1.0;
+        }
+
+        $cx = $ax + $t * $abx;
+        $cy = $ay + $t * $aby;
+        $dx = $px - $cx;
+        $dy = $py - $cy;
+
+        return sqrt($dx * $dx + $dy * $dy);
     }
 
     private function resolveOrder(array $validated): ?Order
