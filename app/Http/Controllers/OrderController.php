@@ -58,8 +58,9 @@ class OrderController extends Controller
                     if ($isBusinessAdmin) {
                         // Pour les business_admin, charger uniquement les données minimales nécessaires
                         // Note: slot_number n'existe pas dans order_employees, il est dans employee_slots (JSON) de orders
+                        // device_* : nécessaires pour /mon-compte (verrouillage appareil de pointage)
                         $q->select('id', 'order_id', 'employee_id', 'employee_name', 'employee_email',
-                                  'card_quantity', 'is_configured', 'created_at');
+                                  'card_quantity', 'is_configured', 'device_uuid', 'device_model', 'created_at');
                     }
                     // ✅ OPTIMISATION : Charger uniquement les colonnes essentielles de l'employee
                     $q->with(['employee' => function ($empQuery) use ($isBusinessAdmin) {
