@@ -15,6 +15,7 @@ class UserPortfolio extends Model
         'name',
         'photo_url',
         'hero_headline',
+        'restaurant_location',
         'bio',
         'skills',
         'skills_title',

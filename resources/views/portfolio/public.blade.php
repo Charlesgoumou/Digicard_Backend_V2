@@ -151,15 +151,17 @@
                             @endif
                             {{-- Bouton Menu du jour pour profil Restaurant --}}
                             @if($portfolio->profile_type === 'restaurant' && $portfolio->menu && (isset($portfolio->menu['dishes']) || isset($portfolio->menu['drinks'])))
-                                <button
-                                    onclick="openMenuModal()"
+                                <a
+                                    href="{{ route('user-portfolio.menu', ['username' => $user->username]) }}"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
                                     class="group flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white rounded-xl transition-all hover:scale-105 shadow-lg shadow-orange-500/30 relative"
                                     aria-label="Menu du jour"
                                     title="Menu du jour"
                                 >
                                     <i class="fas fa-utensils"></i>
                                     <span class="text-sm font-medium">Menu du jour</span>
-                                </button>
+                                </a>
                             @endif
                             {{-- Bouton Appelez pour commander (Restaurant) ou Appeler (autres profils) --}}
                             @if($portfolio->phone)

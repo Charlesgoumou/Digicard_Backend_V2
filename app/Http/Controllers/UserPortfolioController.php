@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\MarketplaceUserNeed;
 use App\Jobs\ProcessMarketplaceMatching;
 use App\Services\GeminiService;
+use App\Services\ImageCompressionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
@@ -42,9 +43,11 @@ class UserPortfolioController extends Controller
             ]
         );
 
-        // Toujours mettre à jour le nom, headline et photo avec les valeurs les plus récentes de la section "Ma Carte"
-        $portfolio->name = $user->name;
-        $portfolio->hero_headline = $user->title;
+        // Synchroniser nom / titre avec « Ma Carte », sauf profil restaurant (nom du lieu, accroche et titre menu sont gérés dans le formulaire)
+        if ($portfolio->profile_type !== 'restaurant') {
+            $portfolio->name = $user->name;
+            $portfolio->hero_headline = $user->title;
+        }
 
         // Si formations est vide mais timeline contient des données, essayer de séparer automatiquement
         // (pour les portfolios créés avant la séparation formations/timeline)
@@ -152,8 +155,11 @@ class UserPortfolioController extends Controller
             ->orderBy('created_at', 'desc')
             ->first();
 
+        // Photo par défaut depuis la carte seulement si aucune photo portfolio déjà enregistrée
         if ($order && $order->order_avatar_url) {
-            $portfolio->photo_url = $order->order_avatar_url;
+            if (empty(trim((string) $portfolio->photo_url))) {
+                $portfolio->photo_url = $order->order_avatar_url;
+            }
         }
 
         // Récupérer les couleurs depuis la carte utilisateur
@@ -242,6 +248,7 @@ class UserPortfolioController extends Controller
             'menu.drinks.*.available' => 'nullable|boolean',
             'name' => 'nullable|string|max:255',
             'hero_headline' => 'nullable|string|max:255',
+            'restaurant_location' => 'nullable|string|max:512',
             'bio' => 'nullable|string',
             'skills' => 'nullable|array',
             'skills.*.icon' => 'required_with:skills|string',
@@ -272,6 +279,7 @@ class UserPortfolioController extends Controller
             'projects_title' => 'nullable|string',
             'formations_title' => 'nullable|string',
             'timeline_title' => 'nullable|string',
+            'photo_url' => 'nullable|string|max:2048',
         ]);
 
         // Dédupliquer le menu avant de sauvegarder si c'est un profil restaurant
@@ -291,8 +299,10 @@ class UserPortfolioController extends Controller
             ->first();
 
         if ($order && $order->order_avatar_url && !$request->has('photo_url')) {
-            $portfolio->photo_url = $order->order_avatar_url;
-            $portfolio->save();
+            if (empty(trim((string) $portfolio->photo_url))) {
+                $portfolio->photo_url = $order->order_avatar_url;
+                $portfolio->save();
+            }
         }
 
         return response()->json([
@@ -302,7 +312,7 @@ class UserPortfolioController extends Controller
     }
 
     /**
-     * Upload de photo (utilise la photo de la carte utilisateur)
+     * Upload d'une photo dédiée au portfolio (menu public, en-tête restaurant, etc.)
      */
     public function uploadPhoto(Request $request)
     {
@@ -312,27 +322,55 @@ class UserPortfolioController extends Controller
             return response()->json(['message' => 'Accès non autorisé.'], 403);
         }
 
-        // Au lieu d'uploader une nouvelle photo, on récupère celle de la commande
-        $order = Order::where('user_id', $user->id)
-            ->where('status', '!=', 'cancelled')
-            ->orderBy('created_at', 'desc')
-            ->first();
+        $request->validate([
+            'photo' => 'required|image|max:5120',
+        ]);
 
-        if (!$order || !$order->order_avatar_url) {
-            return response()->json([
-                'message' => 'Aucune photo disponible. Veuillez d\'abord configurer votre carte.',
-            ], 404);
-        }
-
-        // Mettre à jour le portfolio avec la photo
-        $portfolio = UserPortfolio::updateOrCreate(
+        $portfolio = UserPortfolio::firstOrCreate(
             ['user_id' => $user->id],
-            ['photo_url' => $order->order_avatar_url]
+            [
+                'name' => $user->name,
+                'hero_headline' => $user->title,
+                'primary_color' => $user->profile_border_color ?? '#6366f1',
+                'secondary_color' => '#ffffff',
+                'skills' => [],
+                'projects' => [],
+                'timeline' => [],
+                'formations' => [],
+                'formations_title' => 'Mes Formations',
+                'timeline_title' => 'Mon Parcours Professionnel',
+            ]
         );
 
+        if ($portfolio->photo_url) {
+            $oldPath = preg_replace('#^/api/storage/#', '', (string) $portfolio->photo_url);
+            $oldPath = preg_replace('#^/storage/#', '', $oldPath);
+            $oldPath = preg_replace('#^https?://[^/]+/(api/)?storage/#', '', $oldPath);
+            if (str_starts_with($oldPath, 'portfolio_photos/') && Storage::disk('public')->exists($oldPath)) {
+                Storage::disk('public')->delete($oldPath);
+            }
+        }
+
+        $compressionService = new ImageCompressionService();
+        $result = $compressionService->compressImage($request->file('photo'), 'portfolio_photos');
+
+        if (!isset($result['path']) || !Storage::disk('public')->exists($result['path'])) {
+            Log::error('UserPortfolioController::uploadPhoto - Fichier non créé après compression', [
+                'result' => $result,
+                'user_id' => $user->id,
+            ]);
+            return response()->json([
+                'message' => 'Erreur lors du stockage de la photo.',
+            ], 500);
+        }
+
+        $relativeUrl = Storage::disk('public')->url($result['path']);
+        $portfolio->photo_url = $relativeUrl;
+        $portfolio->save();
+
         return response()->json([
-            'message' => 'Photo récupérée avec succès depuis votre carte.',
-            'photo_url' => url($portfolio->photo_url),
+            'message' => 'Photo uploadée avec succès.',
+            'photo_url' => url($relativeUrl),
         ]);
     }
 
@@ -472,8 +510,10 @@ class UserPortfolioController extends Controller
                 ->first();
 
             if ($order && $order->order_avatar_url) {
-                $portfolio->photo_url = $order->order_avatar_url;
-                $portfolio->save();
+                if (empty(trim((string) $portfolio->photo_url))) {
+                    $portfolio->photo_url = $order->order_avatar_url;
+                    $portfolio->save();
+                }
             }
 
             return response()->json([
