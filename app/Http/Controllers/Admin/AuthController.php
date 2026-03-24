@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use App\Models\User;
+use App\Services\AdminPermissionService;
 
 class AuthController extends Controller
 {
@@ -63,6 +64,7 @@ class AuthController extends Controller
             'name' => $user->name,
             'email' => $user->email,
             'role' => $user->role,
+            'permissions' => AdminPermissionService::permissionsForUser($user),
         ], 200);
     }
 

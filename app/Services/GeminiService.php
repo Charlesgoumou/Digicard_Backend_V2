@@ -777,8 +777,7 @@ PROMPT;
                 $generatedText = preg_replace('/```\s*$/', '', $generatedText);
                 $generatedText = trim($generatedText);
 
-                // Remplacer les caractères de contrôle (retours à la ligne, tabulations littérales, etc.)
-                // qui invalident le JSON (erreur "Control character error, possibly incorrectly encoded")
+                // Remplacer les caractères de contrôle qui invalident le JSON
                 $generatedText = preg_replace('/[\x00-\x1F\x7F]/u', ' ', $generatedText);
 
                 Log::info('Texte généré par Gemini pour extraction: ' . $generatedText);
@@ -787,16 +786,103 @@ PROMPT;
 
                 if (json_last_error() === JSON_ERROR_NONE) {
                     return $extractedData;
-                } else {
-                    Log::error('Erreur JSON lors de l\'extraction: ' . json_last_error_msg());
-                    return null;
                 }
-            } else {
-                Log::error('Erreur API Gemini lors de l\'analyse du texte: ' . $response->body());
+
+                Log::error('Erreur JSON lors de l\'extraction: ' . json_last_error_msg());
                 return null;
             }
+
+            Log::error('Erreur API Gemini lors de l\'analyse du texte: ' . $response->body());
+            return null;
         } catch (\Exception $e) {
             Log::error('Exception lors de l\'analyse du texte: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Marketplace matching: extraire les besoins (keywords + catégories) à partir d’un document (texte extrait),
+     * en tenant compte du titre/poste du user.
+     */
+    public function extractMarketplaceNeedsFromText(string $text, ?string $userTitle = null): ?array
+    {
+        try {
+            if (empty($this->apiKey)) {
+                Log::error('Clé API Gemini non définie (MarketplaceNeeds)');
+                return null;
+            }
+
+            $titleLine = $userTitle ? "Titre/Poste de l'utilisateur: {$userTitle}\n" : "";
+            $prompt = <<<PROMPT
+Tu es un expert en analyse de besoins business (B2B/B2C) pour recommander des offres sur une marketplace.
+
+{$titleLine}
+Texte extrait d'un document de présentation (brochure / catalogue / présentation):
+{$text}
+
+Objectif:
+1) Identifier le domaine d'activité et les services/produits proposés
+2) Déduire les besoins complémentaires (approvisionnement, partenariats/sous-traitance, expertise/outils, opportunités/appels d'offres)
+3) Retourner une liste de mots-clés utiles pour matcher des annonces pertinentes
+
+Retourne UNIQUEMENT un JSON valide, sans markdown, sans texte avant/après, avec cette structure EXACTE:
+{
+  "services_identified": ["..."],
+  "needs": {
+    "supply_chain": ["..."],
+    "partnerships": ["..."],
+    "expertise": ["..."],
+    "opportunities": ["..."]
+  },
+  "keywords": ["..."]
+}
+PROMPT;
+
+            $timeout = config('gemini.timeout', 180);
+            $connectTimeout = config('gemini.connect_timeout', 30);
+            $response = Http::connectTimeout($connectTimeout)->timeout($timeout)->post($this->apiUrl . '?key=' . $this->apiKey, [
+                'contents' => [[
+                    'parts' => [[ 'text' => $prompt ]]
+                ]],
+                'generationConfig' => [
+                    'temperature' => 0.3,
+                    'topK' => 40,
+                    'topP' => 0.95,
+                    'maxOutputTokens' => 4096,
+                ],
+            ]);
+
+            if (!$response->successful()) {
+                Log::error('Gemini MarketplaceNeeds: erreur API', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+                return null;
+            }
+
+            $result = $response->json();
+            $generatedText = $result['candidates'][0]['content']['parts'][0]['text'] ?? '';
+            $generatedText = preg_replace('/```json\s*/', '', (string) $generatedText);
+            $generatedText = preg_replace('/```\s*$/', '', (string) $generatedText);
+            $generatedText = trim((string) $generatedText);
+
+            // Nettoyage minimal des caractères de contrôle
+            $generatedText = preg_replace('/[\x00-\x1F\x7F]/u', ' ', $generatedText);
+
+            $data = json_decode($generatedText, true);
+            if (json_last_error() !== JSON_ERROR_NONE || !is_array($data)) {
+                Log::error('Gemini MarketplaceNeeds: JSON invalide', [
+                    'error' => json_last_error_msg(),
+                    'preview' => substr($generatedText, 0, 500),
+                ]);
+                return null;
+            }
+
+            return $data;
+        } catch (\Throwable $e) {
+            Log::error('Gemini MarketplaceNeeds: exception', [
+                'message' => $e->getMessage(),
+            ]);
             return null;
         }
     }
